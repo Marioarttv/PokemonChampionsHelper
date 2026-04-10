@@ -7,6 +7,7 @@ The first implemented feature is a defensive type calculator inspired by solo-ty
 - team matchup overviews
 - offensive coverage summaries
 - damage calculation flows backed by external Pokemon data APIs
+- a local offline-capable Pokemon species database
 
 ## Stack
 
@@ -28,6 +29,18 @@ npm run dev
 ```bash
 npm run build
 ```
+
+## Local Pokemon database
+
+The app now includes a reproducible local species dataset generated from `@pkmn/dex` into `public/data/pokemon-db.json`.
+
+Generate or refresh it with:
+
+```bash
+npm run generate:data
+```
+
+This keeps the project independent from live runtime API requests for core Pokemon species, typing, and stat data.
 
 ## GitHub Pages
 

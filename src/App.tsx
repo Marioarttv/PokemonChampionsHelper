@@ -1,11 +1,43 @@
-import { useState, type CSSProperties } from "react";
-import { TYPE_META, TYPE_ORDER, getTypeIconUrl, type PokemonType } from "./data/typeChart";
-import { bucketDefenseEntries, getDefenseEntries, getTypeLabel } from "./lib/effectiveness";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent } from "react";
+import {
+  TYPE_META,
+  TYPE_ORDER,
+  getTypeFromLabel,
+  getTypeIconUrl,
+  type PokemonType,
+} from "./data/typeChart";
+import {
+  bucketAttackEntries,
+  bucketDefenseEntries,
+  getCoveredDefendingTypes,
+  getDefenseEntries,
+  formatMultiplier,
+  getMultiplier,
+  getTypeLabel,
+} from "./lib/effectiveness";
+import {
+  getPokemonBaseSpriteUrl,
+  getPokemonSpriteUrl,
+  loadPokemonDatabase,
+  type PokemonRecord,
+} from "./lib/pokemonDb";
+import {
+  deleteSavedTeam,
+  listSavedTeams,
+  saveTeam,
+  type PersistedOpenerSelection,
+  type PersistedTeam,
+  type PersistedTeamSlot,
+} from "./lib/savedTeams";
+
+type SiteMode = "calculator" | "team";
+type CalculatorMode = "defense" | "attack";
 
 type TypePoolProps = {
   selectedTypes: PokemonType[];
   onToggle: (type: PokemonType) => void;
   onClear: () => void;
+  mode: CalculatorMode;
 };
 
 type MatchupGroupProps = {
@@ -16,23 +48,352 @@ type MatchupGroupProps = {
   compact?: boolean;
 };
 
-const DEFAULT_PRIMARY: PokemonType = "water";
+type TeamSlotState = {
+  query: string;
+  pokemonId: string | null;
+  attackTypes: PokemonType[];
+};
 
-function TypePool({ selectedTypes, onToggle, onClear }: TypePoolProps) {
+type TeamMatrixMode = "defense" | "offense";
+type LeadSummary = {
+  slotIndex: number;
+  pokemon: PokemonRecord;
+  weakTypes: PokemonType[];
+  resistTypes: PokemonType[];
+  immuneTypes: PokemonType[];
+  coverTypes: PokemonType[];
+  attackTypes: PokemonType[];
+};
+type OpenerSelection = [number | null, number | null];
+type OpenerSummary = {
+  label: string;
+  members: LeadSummary[];
+  sharedWeakTypes: PokemonType[];
+  pivotCoverTypes: PokemonType[];
+  sharedResistTypes: PokemonType[];
+  combinedCoverTypes: PokemonType[];
+  speedTiers: Array<{
+    pokemonId: string;
+    name: string;
+    speed: number;
+  }>;
+};
+
+const DEFAULT_PRIMARY: PokemonType = "water";
+const TEAM_SIZE = 6;
+const MAX_ATTACK_TYPES_PER_SLOT = 4;
+const MAX_OPPONENT_SCOUT_SLOTS = 6;
+
+function createEmptyTeamSlot(): TeamSlotState {
+  return {
+    query: "",
+    pokemonId: null,
+    attackTypes: [],
+  };
+}
+
+function getPokemonDefensiveMultiplier(pokemon: PokemonRecord, attackType: PokemonType) {
+  const firstType = getTypeFromLabel(pokemon.types[0]);
+  const secondType = pokemon.types[1] ? getTypeFromLabel(pokemon.types[1]) : null;
+
+  if (!firstType) {
+    return null;
+  }
+
+  return getMultiplier(attackType, firstType, secondType);
+}
+
+function getBestOffensiveMultiplier(attackTypes: PokemonType[], defendingType: PokemonType) {
+  if (attackTypes.length === 0) {
+    return null;
+  }
+
+  return attackTypes.reduce((best, attackType) => {
+    const multiplier = getMultiplier(attackType, defendingType);
+    return multiplier > best ? multiplier : best;
+  }, 0);
+}
+
+function getBestAttackMultiplierAgainstPokemon(
+  attackTypes: PokemonType[],
+  pokemon: PokemonRecord,
+): { multiplier: number | null; attackTypes: PokemonType[] } {
+  const firstType = getTypeFromLabel(pokemon.types[0]);
+  const secondType = pokemon.types[1] ? getTypeFromLabel(pokemon.types[1]) : null;
+
+  if (!firstType || attackTypes.length === 0) {
+    return { multiplier: null, attackTypes: [] };
+  }
+
+  let bestMultiplier = 0;
+  let bestTypes: PokemonType[] = [];
+
+  for (const attackType of attackTypes) {
+    const multiplier = getMultiplier(attackType, firstType, secondType);
+
+    if (multiplier > bestMultiplier) {
+      bestMultiplier = multiplier;
+      bestTypes = [attackType];
+    } else if (multiplier === bestMultiplier) {
+      bestTypes.push(attackType);
+    }
+  }
+
+  return {
+    multiplier: bestMultiplier === 0 ? 0 : bestMultiplier,
+    attackTypes: bestTypes,
+  };
+}
+
+function formatMatrixCell(multiplier: number | null, mode: TeamMatrixMode) {
+  if (multiplier === null) {
+    return "";
+  }
+
+  if (multiplier === 1) {
+    return "";
+  }
+
+  if (multiplier === 0) {
+    return mode === "defense" ? "Immune" : "0x";
+  }
+
+  return formatMultiplier(multiplier);
+}
+
+function getMatrixCellTone(multiplier: number | null) {
+  if (multiplier === null) {
+    return "empty";
+  }
+
+  if (multiplier === 0) {
+    return "immune";
+  }
+
+  if (multiplier >= 4) {
+    return "ultra";
+  }
+
+  if (multiplier > 1) {
+    return "strong";
+  }
+
+  if (multiplier < 1) {
+    return "resist";
+  }
+
+  return "neutral";
+}
+
+function buildLeadSummary(
+  slotIndex: number,
+  pokemon: PokemonRecord,
+  attackTypes: PokemonType[],
+): LeadSummary | null {
+  const weakTypes: PokemonType[] = [];
+  const resistTypes: PokemonType[] = [];
+  const immuneTypes: PokemonType[] = [];
+
+  for (const attackType of TYPE_ORDER) {
+    const multiplier = getPokemonDefensiveMultiplier(pokemon, attackType);
+
+    if (multiplier === null) {
+      continue;
+    }
+
+    if (multiplier === 0) {
+      immuneTypes.push(attackType);
+    } else if (multiplier > 1) {
+      weakTypes.push(attackType);
+    } else if (multiplier < 1) {
+      resistTypes.push(attackType);
+    }
+  }
+
+  return {
+    slotIndex,
+    pokemon,
+    weakTypes,
+    resistTypes,
+    immuneTypes,
+    coverTypes: getCoveredDefendingTypes(attackTypes),
+    attackTypes,
+  };
+}
+
+function buildOpenerSummary(label: string, members: LeadSummary[]): OpenerSummary | null {
+  if (members.length === 0) {
+    return null;
+  }
+
+  const sharedWeakTypes: PokemonType[] = [];
+  const pivotCoverTypes: PokemonType[] = [];
+  const sharedResistTypes: PokemonType[] = [];
+
+  for (const attackType of TYPE_ORDER) {
+    const memberMultipliers = members
+      .map((member) => getPokemonDefensiveMultiplier(member.pokemon, attackType))
+      .filter((value): value is number => value !== null);
+
+    if (memberMultipliers.length !== members.length) {
+      continue;
+    }
+
+    const allWeak = memberMultipliers.every((multiplier) => multiplier > 1);
+    const allResistOrImmune = memberMultipliers.every((multiplier) => multiplier < 1);
+    const hasWeakMember = memberMultipliers.some((multiplier) => multiplier > 1);
+    const hasResistOrImmuneMember = memberMultipliers.some((multiplier) => multiplier < 1);
+
+    if (allWeak) {
+      sharedWeakTypes.push(attackType);
+    }
+
+    if (allResistOrImmune) {
+      sharedResistTypes.push(attackType);
+    }
+
+    if (hasWeakMember && hasResistOrImmuneMember) {
+      pivotCoverTypes.push(attackType);
+    }
+  }
+
+  return {
+    label,
+    members,
+    sharedWeakTypes,
+    pivotCoverTypes,
+    sharedResistTypes,
+    combinedCoverTypes: Array.from(new Set(members.flatMap((member) => member.coverTypes))),
+    speedTiers: [...members]
+      .sort((left, right) => right.pokemon.baseStats.spe - left.pokemon.baseStats.spe)
+      .map((member) => ({
+        pokemonId: member.pokemon.id,
+        name: member.pokemon.name,
+        speed: member.pokemon.baseStats.spe,
+      })),
+  };
+}
+
+type PokemonSpriteProps = {
+  pokemon: Pick<PokemonRecord, "id" | "name" | "baseSpecies">;
+  className?: string;
+};
+
+function PokemonSprite({ pokemon, className }: PokemonSpriteProps) {
+  const [src, setSrc] = useState(() => getPokemonSpriteUrl(pokemon.id));
+
+  useEffect(() => {
+    setSrc(getPokemonSpriteUrl(pokemon.id));
+  }, [pokemon.id]);
+
+  return (
+    <img
+      className={className}
+      src={src}
+      alt={pokemon.name}
+      loading="lazy"
+      onError={() => {
+        const fallbackSrc = getPokemonBaseSpriteUrl(pokemon.baseSpecies);
+        if (src !== fallbackSrc) {
+          setSrc(fallbackSrc);
+        }
+      }}
+    />
+  );
+}
+
+function normalizeOpenerSelection(
+  selection: OpenerSelection,
+  availableIndices: number[],
+  preferredOffset: number,
+): OpenerSelection {
+  if (availableIndices.length === 0) {
+    return [null, null];
+  }
+
+  const fallbackFirst = availableIndices[preferredOffset] ?? availableIndices[0] ?? null;
+  const fallbackSecond =
+    availableIndices[preferredOffset + 1] ??
+    availableIndices.find((index) => index !== fallbackFirst) ??
+    fallbackFirst;
+
+  const first =
+    selection[0] !== null && availableIndices.includes(selection[0]) ? selection[0] : fallbackFirst;
+  let second =
+    selection[1] !== null && availableIndices.includes(selection[1]) ? selection[1] : fallbackSecond;
+
+  if (availableIndices.length > 1 && second === first) {
+    second = availableIndices.find((index) => index !== first) ?? second;
+  }
+
+  return [first, second];
+}
+
+function normalizeTeamSlots(slots: PersistedTeamSlot[]) {
+  return Array.from({ length: TEAM_SIZE }, (_, index) => {
+    const slot = slots[index];
+
+    if (!slot) {
+      return createEmptyTeamSlot();
+    }
+
+    return {
+      query: slot.query ?? "",
+      pokemonId: slot.pokemonId ?? null,
+      attackTypes: slot.attackTypes ?? [],
+    };
+  });
+}
+
+function normalizePersistedOpenerSelections(
+  openerSelections?: PersistedOpenerSelection[],
+): [OpenerSelection, OpenerSelection] {
+  const fallback: [OpenerSelection, OpenerSelection] = [
+    [null, null],
+    [null, null],
+  ];
+
+  if (!Array.isArray(openerSelections)) {
+    return fallback;
+  }
+
+  return fallback.map((pair, pairIndex) => {
+    const candidate = openerSelections[pairIndex];
+
+    if (!Array.isArray(candidate)) {
+      return pair;
+    }
+
+    return [
+      typeof candidate[0] === "number" ? candidate[0] : null,
+      typeof candidate[1] === "number" ? candidate[1] : null,
+    ];
+  }) as [OpenerSelection, OpenerSelection];
+}
+
+function createEmptyOpponentSlots() {
+  return Array.from({ length: MAX_OPPONENT_SCOUT_SLOTS }, () => "");
+}
+
+function TypePool({ selectedTypes, onToggle, onClear, mode }: TypePoolProps) {
+  const slotCount = mode === "defense" ? 2 : 1;
+
   return (
     <section className="selector-panel">
       <div className="selector-topbar">
         <div className="selector-copy">
-          <p className="eyebrow">Type Calculator</p>
-          <h2>Pick one or two types</h2>
+          <p className="eyebrow">{mode === "defense" ? "Type Calculator" : "Attack Coverage"}</p>
+          <h2>{mode === "defense" ? "Pick one or two types" : "Pick one attacking type"}</h2>
           <p className="selector-note">
-            One type gives a mono-type profile. Two types combine into the final defensive matchup.
+            {mode === "defense"
+              ? "One type gives a mono-type profile. Two types combine into the final defensive matchup."
+              : "Select a move type to see what it hits super effectively, neutrally, poorly, or not at all."}
           </p>
         </div>
 
         <div className="selector-actions">
           <div className="selected-slots" aria-label="Selected types">
-            {[0, 1].map((slotIndex) => {
+            {Array.from({ length: slotCount }, (_, slotIndex) => {
               const type = selectedTypes[slotIndex] ?? null;
 
               return (
@@ -127,7 +488,323 @@ function MatchupGroup({ label, multiplier, tone, entries, compact = false }: Mat
   );
 }
 
-function App() {
+type TeamSlotCardProps = {
+  slot: TeamSlotState & { pokemon: PokemonRecord | null };
+  slotIndex: number;
+  databaseLoaded: boolean;
+  loadError: string | null;
+  onQueryChange: (slotIndex: number, query: string) => void;
+  onClear: (slotIndex: number) => void;
+  onApplyAttackTypes: (slotIndex: number, attackTypes: PokemonType[]) => void;
+};
+
+function TeamSlotCard({
+  slot,
+  slotIndex,
+  databaseLoaded,
+  loadError,
+  onQueryChange,
+  onClear,
+  onApplyAttackTypes,
+}: TeamSlotCardProps) {
+  const [isEditingAttacks, setIsEditingAttacks] = useState(false);
+  const [showStatsDetails, setShowStatsDetails] = useState(false);
+  const [draftAttackTypes, setDraftAttackTypes] = useState<PokemonType[]>(slot.attackTypes);
+
+  useEffect(() => {
+    setDraftAttackTypes(slot.attackTypes);
+  }, [slot.attackTypes, slot.pokemonId]);
+
+  useEffect(() => {
+    setShowStatsDetails(false);
+  }, [slot.pokemonId]);
+
+  const pokemon = slot.pokemon;
+  const coveredTypes = useMemo(
+    () => getCoveredDefendingTypes(slot.attackTypes),
+    [slot.attackTypes],
+  );
+  const weakTypes = useMemo(() => {
+    if (!pokemon) {
+      return [];
+    }
+
+    return TYPE_ORDER.filter(
+      (attackType) => (getPokemonDefensiveMultiplier(pokemon, attackType) ?? 1) > 1,
+    );
+  }, [pokemon]);
+
+  const toggleDraftAttackType = (attackType: PokemonType) => {
+    setDraftAttackTypes((current) => {
+      if (current.includes(attackType)) {
+        return current.filter((type) => type !== attackType);
+      }
+
+      if (current.length === MAX_ATTACK_TYPES_PER_SLOT) {
+        return [...current.slice(1), attackType];
+      }
+
+      return [...current, attackType];
+    });
+  };
+
+  const applyAttackTypes = () => {
+    onApplyAttackTypes(slotIndex, draftAttackTypes);
+    setIsEditingAttacks(false);
+  };
+
+  const cancelAttackEdit = () => {
+    setDraftAttackTypes(slot.attackTypes);
+    setIsEditingAttacks(false);
+  };
+
+  return (
+    <article className="team-slot-card">
+      <div className="team-slot-header">
+        <div>
+          <p className="eyebrow">Slot {slotIndex + 1}</p>
+          <h3>{pokemon ? pokemon.name : "Choose a Pokemon"}</h3>
+        </div>
+        <button type="button" className="clear-slot-button" onClick={() => onClear(slotIndex)}>
+          Clear
+        </button>
+      </div>
+
+      <label className="team-input-label" htmlFor={`team-slot-${slotIndex}`}>
+        Pokemon
+      </label>
+      <div className="team-input-row">
+        <input
+          id={`team-slot-${slotIndex}`}
+          className="team-pokemon-input"
+          list="pokemon-options"
+          placeholder={databaseLoaded ? "Start typing a Pokemon name" : "Loading local database..."}
+          value={slot.query}
+          onChange={(event) => onQueryChange(slotIndex, event.target.value)}
+          disabled={!databaseLoaded}
+        />
+        <div className={`pokemon-sprite-frame ${pokemon ? "filled" : ""}`}>
+          {pokemon ? (
+            <PokemonSprite pokemon={pokemon} />
+          ) : (
+            <span>?</span>
+          )}
+        </div>
+      </div>
+
+      {pokemon ? (
+        <>
+          <div className="team-pokemon-meta">
+            <div className="team-type-list">
+              {pokemon.types.map((typeLabel) => {
+                const type = getTypeFromLabel(typeLabel);
+                if (!type) {
+                  return null;
+                }
+
+                return (
+                  <span
+                    key={type}
+                    className="inline-type-pill"
+                    style={
+                      {
+                        "--type-color": TYPE_META[type].color,
+                        "--type-accent": TYPE_META[type].accent,
+                      } as CSSProperties
+                    }
+                  >
+                    <img src={getTypeIconUrl(type)} alt="" aria-hidden="true" loading="lazy" />
+                    {typeLabel}
+                  </span>
+                );
+              })}
+            </div>
+
+            <div className="team-stat-row">
+              <span>Spe {pokemon.baseStats.spe}</span>
+              <span>BST {pokemon.bst}</span>
+              <button
+                type="button"
+                className="stats-toggle-button"
+                onClick={() => setShowStatsDetails((current) => !current)}
+              >
+                {showStatsDetails ? "Hide Stats" : "Show Stats"}
+              </button>
+            </div>
+
+            {showStatsDetails ? (
+              <div className="pokemon-stats-panel">
+                <div className="pokemon-stats-grid">
+                  <span className="pokemon-stat-chip">
+                    <strong>HP</strong>
+                    <em>{pokemon.baseStats.hp}</em>
+                  </span>
+                  <span className="pokemon-stat-chip">
+                    <strong>Atk</strong>
+                    <em>{pokemon.baseStats.atk}</em>
+                  </span>
+                  <span className="pokemon-stat-chip">
+                    <strong>Def</strong>
+                    <em>{pokemon.baseStats.def}</em>
+                  </span>
+                  <span className="pokemon-stat-chip">
+                    <strong>SpA</strong>
+                    <em>{pokemon.baseStats.spa}</em>
+                  </span>
+                  <span className="pokemon-stat-chip">
+                    <strong>SpD</strong>
+                    <em>{pokemon.baseStats.spd}</em>
+                  </span>
+                  <span className="pokemon-stat-chip">
+                    <strong>Spe</strong>
+                    <em>{pokemon.baseStats.spe}</em>
+                  </span>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="coverage-preview">
+            <div className="coverage-preview-header">
+              <p className="eyebrow">Weak To</p>
+              <span>{weakTypes.length}</span>
+            </div>
+            <div className="coverage-chip-list">
+              {weakTypes.length > 0 ? (
+                weakTypes.map((type) => (
+                  <span
+                    key={`${pokemon.id}-weak-${type}`}
+                    className="mini-type-pill"
+                    style={
+                      {
+                        "--type-color": TYPE_META[type].color,
+                        "--type-accent": TYPE_META[type].accent,
+                      } as CSSProperties
+                    }
+                  >
+                    {TYPE_META[type].label}
+                  </span>
+                ))
+              ) : (
+                <span className="subtle-empty">No weaknesses.</span>
+              )}
+            </div>
+          </div>
+
+          <div className="attack-type-section">
+            <div className="attack-type-header">
+              <p className="eyebrow">Attack Types</p>
+              <div className="attack-type-actions">
+                <span>{slot.attackTypes.length} / 4</span>
+                <button
+                  type="button"
+                  className="edit-attacks-button"
+                  onClick={() => setIsEditingAttacks((current) => !current)}
+                >
+                  {isEditingAttacks ? "Close" : "Edit"}
+                </button>
+              </div>
+            </div>
+
+            <div className="team-type-list">
+              {slot.attackTypes.length > 0 ? (
+                slot.attackTypes.map((type) => (
+                  <span
+                    key={type}
+                    className="inline-type-pill"
+                    style={
+                      {
+                        "--type-color": TYPE_META[type].color,
+                        "--type-accent": TYPE_META[type].accent,
+                      } as CSSProperties
+                    }
+                  >
+                    <img src={getTypeIconUrl(type)} alt="" aria-hidden="true" loading="lazy" />
+                    {TYPE_META[type].label}
+                  </span>
+                ))
+              ) : (
+                <span className="subtle-empty">No attack types set.</span>
+              )}
+            </div>
+
+            {isEditingAttacks ? (
+              <div className="attack-editor">
+                <div className="attack-type-grid">
+                  {TYPE_ORDER.map((type) => {
+                    const meta = TYPE_META[type];
+                    const selected = draftAttackTypes.includes(type);
+
+                    return (
+                      <button
+                        key={type}
+                        type="button"
+                        className={`attack-type-token ${selected ? "selected" : ""}`}
+                        style={
+                          {
+                            "--type-color": meta.color,
+                            "--type-accent": meta.accent,
+                          } as CSSProperties
+                        }
+                        onClick={() => toggleDraftAttackType(type)}
+                      >
+                        <img src={getTypeIconUrl(type)} alt="" aria-hidden="true" loading="lazy" />
+                        <span>{meta.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="attack-editor-actions">
+                  <button type="button" className="secondary-button" onClick={cancelAttackEdit}>
+                    Cancel
+                  </button>
+                  <button type="button" className="primary-button" onClick={applyAttackTypes}>
+                    Apply
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="coverage-preview">
+              <div className="coverage-preview-header">
+                <p className="eyebrow">Covered Types</p>
+                <span>{coveredTypes.length}</span>
+              </div>
+              <div className="coverage-chip-list">
+                {coveredTypes.length > 0 ? (
+                  coveredTypes.map((type) => (
+                    <span
+                      key={type}
+                      className="mini-type-pill"
+                      style={
+                        {
+                          "--type-color": TYPE_META[type].color,
+                          "--type-accent": TYPE_META[type].accent,
+                        } as CSSProperties
+                      }
+                    >
+                      {TYPE_META[type].label}
+                    </span>
+                  ))
+                ) : (
+                  <span className="subtle-empty">No super-effective coverage yet.</span>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="team-slot-empty">
+          {loadError ? loadError : "Select a Pokemon to start adding attack types for this slot."}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function CalculatorView() {
+  const [mode, setMode] = useState<CalculatorMode>("defense");
   const [selectedTypes, setSelectedTypes] = useState<PokemonType[]>([DEFAULT_PRIMARY]);
 
   const toggleType = (type: PokemonType) => {
@@ -140,6 +817,10 @@ function App() {
         return [current[1], type];
       }
 
+      if (mode === "attack") {
+        return [type];
+      }
+
       return [...current, type];
     });
   };
@@ -148,83 +829,1204 @@ function App() {
     setSelectedTypes([]);
   };
 
+  const switchMode = (nextMode: CalculatorMode) => {
+    setMode(nextMode);
+    setSelectedTypes((current) => {
+      if (nextMode === "attack") {
+        return current[0] ? [current[0]] : [];
+      }
+
+      return current;
+    });
+  };
+
   const primaryType = selectedTypes[0] ?? null;
   const secondaryType = selectedTypes[1] ?? null;
   const entries = primaryType ? getDefenseEntries(primaryType, secondaryType) : [];
   const buckets = bucketDefenseEntries(entries);
+  const attackBuckets = primaryType ? bucketAttackEntries(primaryType) : null;
 
-  const profileLabel = primaryType
-    ? secondaryType
-      ? `${getTypeLabel(primaryType)} / ${getTypeLabel(secondaryType)}`
-      : getTypeLabel(primaryType)
-    : "No type selected";
+  const profileLabel =
+    mode === "defense"
+      ? primaryType
+        ? secondaryType
+          ? `${getTypeLabel(primaryType)} / ${getTypeLabel(secondaryType)}`
+          : getTypeLabel(primaryType)
+        : "No type selected"
+      : primaryType
+        ? getTypeLabel(primaryType)
+        : "No type selected";
+
+  return (
+    <>
+      <section className="mode-tabs" aria-label="Calculator modes">
+        <button
+          type="button"
+          className={`mode-tab ${mode === "defense" ? "active" : ""}`}
+          onClick={() => switchMode("defense")}
+        >
+          Defense
+        </button>
+        <button
+          type="button"
+          className={`mode-tab ${mode === "attack" ? "active" : ""}`}
+          onClick={() => switchMode("attack")}
+        >
+          Attack
+        </button>
+      </section>
+
+      <TypePool
+        selectedTypes={selectedTypes}
+        onToggle={toggleType}
+        onClear={clearTypes}
+        mode={mode}
+      />
+
+      <section className="board-panel">
+        <div className="board-header">
+          <div>
+            <p className="eyebrow">{mode === "defense" ? "Defensive Matchups" : "Attacking Coverage"}</p>
+            <h2>{profileLabel}</h2>
+          </div>
+          <p className="board-note">
+            {mode === "defense"
+              ? "Matchups are grouped by damage taken, with the most dangerous categories first."
+              : "Coverage is grouped by how each defending type responds to the chosen attack type."}
+          </p>
+        </div>
+
+        {!primaryType ? (
+          <div className="matchup-empty-board">
+            {mode === "defense"
+              ? "Pick one or two types to see the matchup board."
+              : "Pick one attack type to see its offensive coverage."}
+          </div>
+        ) : mode === "defense" ? (
+          <>
+            <div className="matchup-grid matchup-grid-primary">
+              <MatchupGroup
+                label="Quad Weak"
+                multiplier="4x"
+                tone="danger"
+                compact
+                entries={buckets.ultraWeak.map((entry) => entry.attackType)}
+              />
+              <MatchupGroup
+                label="Weak"
+                multiplier="2x"
+                tone="warn"
+                entries={buckets.weak.map((entry) => entry.attackType)}
+              />
+              <MatchupGroup
+                label="Neutral"
+                multiplier="1x"
+                tone="neutral"
+                entries={buckets.neutral.map((entry) => entry.attackType)}
+              />
+              <MatchupGroup
+                label="Resist"
+                multiplier="0.5x"
+                tone="good"
+                entries={buckets.resist.map((entry) => entry.attackType)}
+              />
+              <MatchupGroup
+                label="Hard Resist"
+                multiplier="0.25x"
+                tone="great"
+                compact
+                entries={buckets.quarter.map((entry) => entry.attackType)}
+              />
+            </div>
+            <div className="matchup-grid matchup-grid-secondary">
+              <MatchupGroup
+                label="Immune"
+                multiplier="0x"
+                tone="muted"
+                compact
+                entries={buckets.immune.map((entry) => entry.attackType)}
+              />
+            </div>
+          </>
+        ) : attackBuckets ? (
+          <div className="matchup-grid matchup-grid-attack">
+            <MatchupGroup
+              label="Super Effective"
+              multiplier="2x"
+              tone="good"
+              entries={attackBuckets.effective}
+            />
+            <MatchupGroup
+              label="Neutral"
+              multiplier="1x"
+              tone="neutral"
+              entries={attackBuckets.neutral}
+            />
+            <MatchupGroup
+              label="Resisted"
+              multiplier="0.5x"
+              tone="warn"
+              entries={attackBuckets.resisted}
+            />
+            <MatchupGroup
+              label="No Effect"
+              multiplier="0x"
+              tone="muted"
+              compact
+              entries={attackBuckets.noEffect}
+            />
+          </div>
+        ) : null}
+      </section>
+    </>
+  );
+}
+
+function TeamBuilderView() {
+  const [teamMatrixMode, setTeamMatrixMode] = useState<TeamMatrixMode>("defense");
+  const [openerSelections, setOpenerSelections] = useState<[OpenerSelection, OpenerSelection]>([
+    [null, null],
+    [null, null],
+  ]);
+  const [opponentQueries, setOpponentQueries] = useState<string[]>(createEmptyOpponentSlots);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+  const [database, setDatabase] = useState<PokemonRecord[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [teamName, setTeamName] = useState("My Team");
+  const [savedTeams, setSavedTeams] = useState<PersistedTeam[]>([]);
+  const [storageMessage, setStorageMessage] = useState<string | null>(null);
+  const [storageError, setStorageError] = useState<string | null>(null);
+  const [activeSavedTeamId, setActiveSavedTeamId] = useState<string | null>(null);
+  const [teamSlots, setTeamSlots] = useState<TeamSlotState[]>(
+    Array.from({ length: TEAM_SIZE }, createEmptyTeamSlot),
+  );
+
+  useEffect(() => {
+    let active = true;
+
+    loadPokemonDatabase()
+      .then((db) => {
+        if (active) {
+          setDatabase(db.pokemon);
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setLoadError(error instanceof Error ? error.message : "Failed to load Pokemon database.");
+        }
+      });
+
+    listSavedTeams()
+      .then((teams) => {
+        if (active) {
+          setSavedTeams(teams);
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setStorageError(error instanceof Error ? error.message : "Failed to load saved teams.");
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const pokemonByKey = useMemo(() => {
+    const map = new Map<string, PokemonRecord>();
+
+    for (const pokemon of database ?? []) {
+      map.set(pokemon.id, pokemon);
+      map.set(pokemon.name.toLowerCase(), pokemon);
+      map.set(String(pokemon.num), pokemon);
+    }
+
+    return map;
+  }, [database]);
+
+  const team = useMemo(
+    () =>
+      teamSlots.map((slot) => {
+        const pokemon = slot.pokemonId ? pokemonByKey.get(slot.pokemonId) ?? null : null;
+
+        return {
+          ...slot,
+          pokemon,
+        };
+      }),
+    [pokemonByKey, teamSlots],
+  );
+
+  const selectedPokemon = team
+    .map((slot) => slot.pokemon)
+    .filter((pokemon): pokemon is PokemonRecord => Boolean(pokemon));
+
+  const selectedAttackTypes = useMemo(
+    () => Array.from(new Set(team.flatMap((slot) => slot.attackTypes))),
+    [team],
+  );
+
+  const opponentEntries = useMemo(
+    () =>
+      opponentQueries
+        .map((query, slotIndex) => {
+          const trimmed = query.trim();
+          if (!trimmed) {
+            return null;
+          }
+
+          const pokemon = pokemonByKey.get(trimmed.toLowerCase()) ?? pokemonByKey.get(trimmed) ?? null;
+
+          return pokemon
+            ? {
+                slotIndex,
+                query,
+                pokemon,
+              }
+            : null;
+        })
+        .filter(
+          (
+            entry,
+          ): entry is {
+            slotIndex: number;
+            query: string;
+            pokemon: PokemonRecord;
+          } => Boolean(entry),
+        ),
+    [opponentQueries, pokemonByKey],
+  );
+
+  const filledLeadOptions = useMemo(
+    () =>
+      team
+        .map((slot, index) => ({ slot, index }))
+        .filter((entry): entry is { slot: (typeof team)[number]; index: number } => Boolean(entry.slot.pokemon)),
+    [team],
+  );
+
+  const defenseMatrixRows = useMemo(
+    () =>
+      TYPE_ORDER.map((attackType) => {
+        const cells = team.map((slot) =>
+          slot.pokemon ? getPokemonDefensiveMultiplier(slot.pokemon, attackType) : null,
+        );
+
+        return {
+          type: attackType,
+          cells,
+          totalStrong: cells.filter((value) => value !== null && value > 1).length,
+          totalResist: cells.filter((value) => value !== null && value < 1).length,
+        };
+      }),
+    [team],
+  );
+
+  const offenseMatrixRows = useMemo(
+    () =>
+      TYPE_ORDER.map((defendingType) => {
+        const cells = team.map((slot) =>
+          slot.pokemon ? getBestOffensiveMultiplier(slot.attackTypes, defendingType) : null,
+        );
+
+        return {
+          type: defendingType,
+          cells,
+          totalStrong: cells.filter((value) => value !== null && value > 1).length,
+          totalResist: cells.filter((value) => value === 0).length,
+        };
+      }),
+    [team],
+  );
+
+  const updateSlotQuery = (slotIndex: number, nextQuery: string) => {
+    const match = pokemonByKey.get(nextQuery.trim().toLowerCase()) ?? pokemonByKey.get(nextQuery.trim()) ?? null;
+
+    setTeamSlots((current) =>
+      current.map((slot, index) =>
+        index === slotIndex
+          ? {
+              ...slot,
+              query: nextQuery,
+              pokemonId: match?.id ?? null,
+              attackTypes: match ? slot.attackTypes : [],
+            }
+          : slot,
+      ),
+    );
+  };
+
+  const clearSlot = (slotIndex: number) => {
+    setTeamSlots((current) =>
+      current.map((slot, index) => (index === slotIndex ? createEmptyTeamSlot() : slot)),
+    );
+  };
+
+  const applySlotAttackTypes = (slotIndex: number, attackTypes: PokemonType[]) => {
+    setTeamSlots((current) =>
+      current.map((slot, index) => {
+        if (index !== slotIndex) {
+          return slot;
+        }
+
+        return {
+          ...slot,
+          attackTypes,
+        };
+      }),
+    );
+  };
+
+  const refreshSavedTeams = async () => {
+    const teams = await listSavedTeams();
+    setSavedTeams(teams);
+  };
+
+  const saveCurrentTeam = async () => {
+    try {
+      setStorageError(null);
+      const saved = await saveTeam({
+        id: activeSavedTeamId ?? undefined,
+        name: teamName.trim() || "My Team",
+        slots: teamSlots,
+        openerSelections,
+      });
+      setActiveSavedTeamId(saved.id);
+      setTeamName(saved.name);
+      await refreshSavedTeams();
+      setStorageMessage(`Saved "${saved.name}" locally.`);
+    } catch (error) {
+      setStorageError(error instanceof Error ? error.message : "Failed to save team.");
+    }
+  };
+
+  const loadSavedTeamIntoBuilder = (savedTeam: PersistedTeam) => {
+    setTeamName(savedTeam.name);
+    setActiveSavedTeamId(savedTeam.id);
+    setTeamSlots(normalizeTeamSlots(savedTeam.slots));
+    setOpenerSelections(normalizePersistedOpenerSelections(savedTeam.openerSelections));
+    setStorageMessage(`Loaded "${savedTeam.name}".`);
+    setStorageError(null);
+  };
+
+  const removeSavedTeam = async (savedTeam: PersistedTeam) => {
+    try {
+      setStorageError(null);
+      await deleteSavedTeam(savedTeam.id);
+      await refreshSavedTeams();
+
+      if (activeSavedTeamId === savedTeam.id) {
+        setActiveSavedTeamId(null);
+      }
+
+      setStorageMessage(`Deleted "${savedTeam.name}".`);
+    } catch (error) {
+      setStorageError(error instanceof Error ? error.message : "Failed to delete team.");
+    }
+  };
+
+  const exportCurrentTeam = () => {
+    const payload: PersistedTeam = {
+      id: activeSavedTeamId ?? "exported-team",
+      name: teamName.trim() || "My Team",
+      updatedAt: new Date().toISOString(),
+      version: 2,
+      slots: teamSlots,
+      openerSelections,
+    };
+
+    const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    const fileName = `${payload.name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "team"}.json`;
+
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setStorageMessage(`Exported "${payload.name}" to JSON.`);
+    setStorageError(null);
+  };
+
+  const openImportPicker = () => {
+    importInputRef.current?.click();
+  };
+
+  const importTeamFromFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as Partial<PersistedTeam>;
+
+      if (!parsed || !Array.isArray(parsed.slots)) {
+        throw new Error("Invalid team file.");
+      }
+
+      setTeamName(parsed.name?.trim() || "Imported Team");
+      setActiveSavedTeamId(null);
+      setTeamSlots(normalizeTeamSlots(parsed.slots));
+      setOpenerSelections(normalizePersistedOpenerSelections(parsed.openerSelections));
+      setStorageMessage(`Imported "${parsed.name?.trim() || "Imported Team"}". Save it to keep it locally.`);
+      setStorageError(null);
+    } catch (error) {
+      setStorageError(error instanceof Error ? error.message : "Failed to import team.");
+    } finally {
+      event.target.value = "";
+    }
+  };
+
+  useEffect(() => {
+    if (filledLeadOptions.length === 0) {
+      setOpenerSelections([
+        [null, null],
+        [null, null],
+      ]);
+      return;
+    }
+
+    const availableIndices = filledLeadOptions.map((entry) => entry.index);
+    setOpenerSelections((current) => [
+      normalizeOpenerSelection(current[0], availableIndices, 0),
+      normalizeOpenerSelection(current[1], availableIndices, 2),
+    ]);
+  }, [filledLeadOptions]);
+
+  const openerSummaries = useMemo(
+    () =>
+      openerSelections.map((selection, openerIndex) => {
+        const members = selection
+          .map((slotIndex) => {
+            if (slotIndex === null) {
+              return null;
+            }
+
+            const slot = team[slotIndex];
+            return slot?.pokemon ? buildLeadSummary(slotIndex, slot.pokemon, slot.attackTypes) : null;
+          })
+          .filter((member): member is LeadSummary => Boolean(member));
+
+        return buildOpenerSummary(`Opener ${openerIndex === 0 ? "A" : "B"}`, members);
+      }),
+    [openerSelections, team],
+  );
+
+  const opponentCoverageMap = useMemo(
+    () =>
+      new Map(
+        opponentEntries.map((entry) => [
+          entry.slotIndex,
+          team
+            .map((slot, index) => {
+              if (!slot.pokemon) {
+                return null;
+              }
+
+              const coverage = getBestAttackMultiplierAgainstPokemon(slot.attackTypes, entry.pokemon);
+
+              return {
+                slotIndex: index,
+                pokemon: slot.pokemon,
+                multiplier: coverage.multiplier,
+                attackTypes: coverage.attackTypes,
+                speedDelta: slot.pokemon.baseStats.spe - entry.pokemon.baseStats.spe,
+              };
+            })
+            .filter(
+              (
+                coverageEntry,
+              ): coverageEntry is {
+                slotIndex: number;
+                pokemon: PokemonRecord;
+                multiplier: number | null;
+                attackTypes: PokemonType[];
+                speedDelta: number;
+              } => Boolean(coverageEntry),
+            )
+            .sort((left, right) => (right.multiplier ?? 0) - (left.multiplier ?? 0)),
+        ]),
+      ),
+    [opponentEntries, team],
+  );
+
+  const updateOpenerSelection = (openerIndex: number, memberIndex: 0 | 1, slotIndex: number) => {
+    setOpenerSelections((current) => {
+      const next = [...current] as [OpenerSelection, OpenerSelection];
+      const pair: OpenerSelection = [...next[openerIndex]] as OpenerSelection;
+
+      pair[memberIndex] = slotIndex;
+
+      if (filledLeadOptions.length > 1 && pair[0] === pair[1]) {
+        const fallback = filledLeadOptions.find((entry) => entry.index !== slotIndex)?.index ?? slotIndex;
+        pair[memberIndex === 0 ? 1 : 0] = fallback;
+      }
+
+      next[openerIndex] = pair;
+      return next;
+    });
+  };
+
+  const updateOpponentQuery = (slotIndex: number, query: string) => {
+    setOpponentQueries((current) => current.map((entry, index) => (index === slotIndex ? query : entry)));
+  };
+
+  const clearOpponentTeam = () => {
+    setOpponentQueries(createEmptyOpponentSlots());
+  };
+
+  return (
+    <>
+      <section className="team-builder-hero">
+        <div>
+          <p className="eyebrow">Team Coverage</p>
+          <h2>Build a six-Pokemon squad</h2>
+          <p className="selector-note">
+            Pick six Pokemon from the local database, then add move types for each slot to inspect
+            both defensive pressure and offensive coverage.
+          </p>
+        </div>
+        <div className="team-builder-meta">
+          <span>{selectedPokemon.length} / 6 selected</span>
+          <span>{selectedAttackTypes.length} unique attack types</span>
+        </div>
+      </section>
+
+      <section className="team-storage-panel">
+        <div className="team-storage-controls">
+          <label className="team-input-label" htmlFor="team-name">
+            Team Name
+          </label>
+          <input
+            id="team-name"
+            className="team-pokemon-input"
+            value={teamName}
+            onChange={(event) => setTeamName(event.target.value)}
+            placeholder="My Team"
+          />
+          <div className="storage-button-row">
+            <button type="button" className="primary-button" onClick={saveCurrentTeam}>
+              Save Team
+            </button>
+            <button type="button" className="secondary-button" onClick={exportCurrentTeam}>
+              Export JSON
+            </button>
+            <button type="button" className="secondary-button" onClick={openImportPicker}>
+              Import JSON
+            </button>
+          </div>
+          <input
+            ref={importInputRef}
+            className="hidden-file-input"
+            type="file"
+            accept="application/json"
+            onChange={importTeamFromFile}
+          />
+          {storageMessage ? <p className="storage-message success">{storageMessage}</p> : null}
+          {storageError ? <p className="storage-message error">{storageError}</p> : null}
+        </div>
+
+        <div className="saved-teams-panel">
+          <div className="saved-teams-header">
+            <p className="eyebrow">Saved Locally</p>
+            <span>{savedTeams.length}</span>
+          </div>
+          {savedTeams.length > 0 ? (
+            <div className="saved-teams-list">
+              {savedTeams.map((savedTeam) => (
+                <article
+                  key={savedTeam.id}
+                  className={`saved-team-card ${activeSavedTeamId === savedTeam.id ? "active" : ""}`}
+                >
+                  <div>
+                    <strong>{savedTeam.name}</strong>
+                    <p>{new Date(savedTeam.updatedAt).toLocaleString()}</p>
+                  </div>
+                  <div className="saved-team-actions">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => loadSavedTeamIntoBuilder(savedTeam)}
+                    >
+                      Load
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => removeSavedTeam(savedTeam)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="team-slot-empty">No saved teams yet. Save one locally to keep it offline.</div>
+          )}
+        </div>
+      </section>
+
+      <section className="team-grid">
+        {team.map((slot, slotIndex) => (
+          <TeamSlotCard
+            key={slotIndex}
+            slot={slot}
+            slotIndex={slotIndex}
+            databaseLoaded={Boolean(database)}
+            loadError={loadError}
+            onQueryChange={updateSlotQuery}
+            onClear={clearSlot}
+            onApplyAttackTypes={applySlotAttackTypes}
+          />
+        ))}
+      </section>
+
+      <section className="team-analysis-layout">
+        <section className="board-panel team-matrix-panel">
+          <div className="board-header">
+            <div>
+              <p className="eyebrow">Team Matchup Grid</p>
+              <h2>{teamMatrixMode === "defense" ? "Defensive Coverage" : "Offensive Coverage"}</h2>
+            </div>
+            <div className="matrix-mode-tabs" aria-label="Team matrix modes">
+              <button
+                type="button"
+                className={`mode-tab ${teamMatrixMode === "defense" ? "active" : ""}`}
+                onClick={() => setTeamMatrixMode("defense")}
+              >
+                Defense Grid
+              </button>
+              <button
+                type="button"
+                className={`mode-tab ${teamMatrixMode === "offense" ? "active" : ""}`}
+                onClick={() => setTeamMatrixMode("offense")}
+              >
+                Attack Grid
+              </button>
+            </div>
+          </div>
+
+          {selectedPokemon.length === 0 ? (
+            <div className="matchup-empty-board">Add Pokemon to start the team matchup matrix.</div>
+          ) : teamMatrixMode === "offense" && selectedAttackTypes.length === 0 ? (
+            <div className="matchup-empty-board">
+              Add attack types to your team slots to see the offensive coverage matrix.
+            </div>
+          ) : (
+            <div className="team-matrix-scroll">
+              <div className="team-matrix-table">
+                <div className="team-matrix-header type-corner">
+                  <span>{teamMatrixMode === "defense" ? "Move" : "Target"}</span>
+                </div>
+
+                {team.map((slot, slotIndex) => (
+                  <div key={`header-${slotIndex}`} className="team-matrix-header pokemon-column-header">
+                    {slot.pokemon ? (
+                      <>
+                        <PokemonSprite pokemon={slot.pokemon} />
+                        <span>{slot.pokemon.name}</span>
+                      </>
+                    ) : (
+                      <span className="empty-column-label">Slot {slotIndex + 1}</span>
+                    )}
+                  </div>
+                ))}
+
+                <div className="team-matrix-header total-column-header">
+                  <span>{teamMatrixMode === "defense" ? "Total Weak" : "Can Hit"}</span>
+                </div>
+                <div className="team-matrix-header total-column-header">
+                  <span>{teamMatrixMode === "defense" ? "Total Resist" : "No Effect"}</span>
+                </div>
+
+                {(teamMatrixMode === "defense" ? defenseMatrixRows : offenseMatrixRows).map((row) => (
+                  <div key={row.type} className="team-matrix-row">
+                    <div className="team-matrix-type-cell">
+                      <img src={getTypeIconUrl(row.type)} alt={getTypeLabel(row.type)} loading="lazy" />
+                      <span>{getTypeLabel(row.type)}</span>
+                    </div>
+
+                    {row.cells.map((multiplier, index) => (
+                      <div
+                        key={`${row.type}-${index}`}
+                        className={`team-matrix-value ${getMatrixCellTone(multiplier)}`}
+                      >
+                        {formatMatrixCell(multiplier, teamMatrixMode)}
+                      </div>
+                    ))}
+
+                    <div className="team-matrix-total strong">{row.totalStrong}</div>
+                    <div className="team-matrix-total resist">{row.totalResist}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+
+        <aside className="board-panel lead-panel">
+          <div className="lead-panel-header">
+            <p className="eyebrow">Possible Leads</p>
+            <span className="lead-available-count">{filledLeadOptions.length} Available</span>
+          </div>
+
+          {filledLeadOptions.length === 0 ? (
+            <div className="matchup-empty-board">Add Pokemon to choose lead combinations.</div>
+          ) : (
+            <>
+              <div className="lead-control-panel">
+                {(["A", "B"] as const).map((label, openerIndex) => (
+                  <div key={label} className="opener-builder">
+                    <div className="lead-controls-header">
+                      <span>Opener {label}</span>
+                    </div>
+                    <div className="lead-selectors">
+                      {[0, 1].map((memberIndex) => (
+                        <label key={`${label}-${memberIndex}`} className="lead-select">
+                          <span>{memberIndex === 0 ? "Slot 1" : "Slot 2"}</span>
+                          <select
+                            value={openerSelections[openerIndex][memberIndex] ?? ""}
+                            onChange={(event) =>
+                              updateOpenerSelection(openerIndex, memberIndex as 0 | 1, Number(event.target.value))
+                            }
+                          >
+                            {filledLeadOptions.map(({ index, slot }) => (
+                              <option key={`${label}-${memberIndex}-${index}`} value={index}>
+                                {slot.pokemon?.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="lead-cards">
+                {openerSummaries.map((opener, idx) =>
+                  opener ? (
+                    <article
+                      key={opener.label}
+                      className={`lead-card ${idx === 0 ? "lead-a-card" : "lead-b-card"}`}
+                    >
+                      <div className="lead-card-top">
+                        <div>
+                          <p className="eyebrow">{opener.label}</p>
+                          <h3>
+                            {opener.members.map((member) => member.pokemon.name).join(" + ")}
+                          </h3>
+                        </div>
+                      </div>
+
+                      <div className="opener-member-strip">
+                        {opener.members.map((member) => (
+                          <div key={`${opener.label}-${member.slotIndex}`} className="opener-member-chip">
+                            <PokemonSprite pokemon={member.pokemon} className="lead-card-sprite" />
+                            <div className="opener-member-meta">
+                              <strong>{member.pokemon.name}</strong>
+                              <div className="team-type-list">
+                                {member.pokemon.types.map((typeLabel) => {
+                                  const type = getTypeFromLabel(typeLabel);
+                                  if (!type) {
+                                    return null;
+                                  }
+
+                                  return (
+                                    <span
+                                      key={`${member.pokemon.id}-${type}`}
+                                      className="inline-type-pill"
+                                      style={
+                                        {
+                                          "--type-color": TYPE_META[type].color,
+                                          "--type-accent": TYPE_META[type].accent,
+                                        } as CSSProperties
+                                      }
+                                    >
+                                      <img src={getTypeIconUrl(type)} alt="" aria-hidden="true" loading="lazy" />
+                                      {TYPE_META[type].label}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="lead-section">
+                        <span className="lead-section-label weak">Shared Weak</span>
+                        <div className="coverage-chip-list">
+                          {opener.sharedWeakTypes.length > 0 ? (
+                            opener.sharedWeakTypes.map((type) => (
+                              <span
+                                key={`${opener.label}-shared-weak-${type}`}
+                                className="mini-type-pill"
+                                style={
+                                  {
+                                    "--type-color": TYPE_META[type].color,
+                                    "--type-accent": TYPE_META[type].accent,
+                                  } as CSSProperties
+                                }
+                              >
+                                {TYPE_META[type].label}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="subtle-empty">No shared weaknesses.</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="lead-section">
+                        <span className="lead-section-label speed">Speed Tiers</span>
+                        <div className="speed-tier-list">
+                          {opener.speedTiers.map((entry, speedIndex) => (
+                            <div key={`${opener.label}-speed-${entry.pokemonId}`} className="speed-tier-chip">
+                              <span className="speed-tier-rank">#{speedIndex + 1}</span>
+                              <span className="speed-tier-name">{entry.name}</span>
+                              <span className="speed-tier-stat">Spe {entry.speed}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="lead-section">
+                        <span className="lead-section-label resist">Cover Each Other</span>
+                        <div className="coverage-chip-list">
+                          {opener.pivotCoverTypes.length > 0 ? (
+                            opener.pivotCoverTypes.map((type) => (
+                              <span
+                                key={`${opener.label}-pivot-${type}`}
+                                className="mini-type-pill"
+                                style={
+                                  {
+                                    "--type-color": TYPE_META[type].color,
+                                    "--type-accent": TYPE_META[type].accent,
+                                  } as CSSProperties
+                                }
+                              >
+                                {TYPE_META[type].label}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="subtle-empty">No defensive cover swaps yet.</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="lead-section">
+                        <span className="lead-section-label resist">Shared Resist</span>
+                        <div className="coverage-chip-list">
+                          {opener.sharedResistTypes.length > 0 ? (
+                            opener.sharedResistTypes.map((type) => (
+                              <span
+                                key={`${opener.label}-shared-resist-${type}`}
+                                className="mini-type-pill"
+                                style={
+                                  {
+                                    "--type-color": TYPE_META[type].color,
+                                    "--type-accent": TYPE_META[type].accent,
+                                  } as CSSProperties
+                                }
+                              >
+                                {TYPE_META[type].label}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="subtle-empty">No shared resistances.</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="lead-section">
+                        <span className="lead-section-label cover">Combined Coverage</span>
+                        <div className="coverage-chip-list">
+                          {opener.combinedCoverTypes.length > 0 ? (
+                            opener.combinedCoverTypes.map((type) => (
+                              <span
+                                key={`${opener.label}-cover-${type}`}
+                                className="mini-type-pill"
+                                style={
+                                  {
+                                    "--type-color": TYPE_META[type].color,
+                                    "--type-accent": TYPE_META[type].accent,
+                                  } as CSSProperties
+                                }
+                              >
+                                {TYPE_META[type].label}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="subtle-empty">No super-effective coverage yet.</span>
+                          )}
+                        </div>
+                      </div>
+                    </article>
+                  ) : null,
+                )}
+              </div>
+            </>
+          )}
+        </aside>
+      </section>
+
+      <section className="board-panel opponent-scout-panel">
+        <div className="opponent-scout-header">
+          <div>
+            <p className="eyebrow">Opponent Scout</p>
+            <h2>Enemy board</h2>
+          </div>
+          <div className="opponent-scout-actions">
+            <span className="lead-available-count">{opponentEntries.length} / 6 loaded</span>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={clearOpponentTeam}
+              disabled={opponentEntries.length === 0}
+            >
+              Clear Enemy Team
+            </button>
+          </div>
+        </div>
+
+        <div className="opponent-search-grid">
+          {opponentQueries.map((query, slotIndex) => (
+            <label key={`opponent-slot-${slotIndex}`} className="opponent-search">
+              <span>Enemy {slotIndex + 1}</span>
+              <input
+                list="pokemon-options"
+                className="team-pokemon-input"
+                placeholder={database ? "Search Pokemon" : "Loading local database..."}
+                value={query}
+                onChange={(event) => updateOpponentQuery(slotIndex, event.target.value)}
+                disabled={!database}
+              />
+            </label>
+          ))}
+        </div>
+
+        {opponentEntries.length === 0 ? (
+          <div className="matchup-empty-board">
+            Add up to six opposing Pokemon to see their stats and your team’s super-effective answers.
+          </div>
+        ) : (
+          <div className="enemy-grid">
+            {opponentEntries.map((opponentEntry) => {
+              const opponentCoverage = opponentCoverageMap.get(opponentEntry.slotIndex) ?? [];
+              const seEntries = opponentCoverage.filter((entry) => (entry.multiplier ?? 0) > 1);
+              const fallbackEntries = opponentCoverage.filter((entry) => (entry.multiplier ?? 0) <= 1).slice(0, 3);
+              const weakTypes = TYPE_ORDER.filter(
+                (attackType) => (getPokemonDefensiveMultiplier(opponentEntry.pokemon, attackType) ?? 1) > 1,
+              );
+
+              return (
+                <article key={`enemy-card-${opponentEntry.slotIndex}`} className="enemy-card">
+                  <div className="enemy-card-header">
+                    <div className="opponent-card-top">
+                      <div>
+                        <p className="eyebrow">Enemy {opponentEntry.slotIndex + 1}</p>
+                        <h3>{opponentEntry.pokemon.name}</h3>
+                      </div>
+                      <PokemonSprite pokemon={opponentEntry.pokemon} className="opponent-card-sprite" />
+                    </div>
+                    <span className="enemy-threat-count">{seEntries.length} SE answers</span>
+                  </div>
+
+                  <div className="team-type-list">
+                    {opponentEntry.pokemon.types.map((typeLabel) => {
+                      const type = getTypeFromLabel(typeLabel);
+                      if (!type) {
+                        return null;
+                      }
+
+                      return (
+                        <span
+                          key={`${opponentEntry.pokemon.id}-${type}`}
+                          className="inline-type-pill"
+                          style={
+                            {
+                              "--type-color": TYPE_META[type].color,
+                              "--type-accent": TYPE_META[type].accent,
+                            } as CSSProperties
+                          }
+                        >
+                          <img src={getTypeIconUrl(type)} alt="" aria-hidden="true" loading="lazy" />
+                          {TYPE_META[type].label}
+                        </span>
+                      );
+                    })}
+                  </div>
+
+                  <div className="enemy-weakness-block">
+                    <span className="lead-section-label weak">Weak To</span>
+                    <div className="coverage-chip-list">
+                      {weakTypes.length > 0 ? (
+                        weakTypes.map((type) => (
+                          <span
+                            key={`${opponentEntry.pokemon.id}-weak-${type}`}
+                            className="mini-type-pill"
+                            style={
+                              {
+                                "--type-color": TYPE_META[type].color,
+                                "--type-accent": TYPE_META[type].accent,
+                              } as CSSProperties
+                            }
+                          >
+                            {TYPE_META[type].label}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="subtle-empty">No listed weaknesses.</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="pokemon-stats-panel opponent-stats-panel">
+                    <div className="pokemon-stats-grid compact">
+                      <span className="pokemon-stat-chip">
+                        <strong>HP</strong>
+                        <em>{opponentEntry.pokemon.baseStats.hp}</em>
+                      </span>
+                      <span className="pokemon-stat-chip">
+                        <strong>Atk</strong>
+                        <em>{opponentEntry.pokemon.baseStats.atk}</em>
+                      </span>
+                      <span className="pokemon-stat-chip">
+                        <strong>Def</strong>
+                        <em>{opponentEntry.pokemon.baseStats.def}</em>
+                      </span>
+                      <span className="pokemon-stat-chip">
+                        <strong>SpA</strong>
+                        <em>{opponentEntry.pokemon.baseStats.spa}</em>
+                      </span>
+                      <span className="pokemon-stat-chip">
+                        <strong>SpD</strong>
+                        <em>{opponentEntry.pokemon.baseStats.spd}</em>
+                      </span>
+                      <span className="pokemon-stat-chip">
+                        <strong>Spe</strong>
+                        <em>{opponentEntry.pokemon.baseStats.spe}</em>
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="enemy-coverage-block">
+                    <div className="coverage-preview-header">
+                      <p className="eyebrow">{seEntries.length > 0 ? "SE Hitters" : "Best Available Hits"}</p>
+                      <span>
+                        {seEntries.length > 0 ? `${seEntries.length} team members` : `${fallbackEntries.length} shown`}
+                      </span>
+                    </div>
+
+                    <div className="opponent-coverage-list compact">
+                      {(seEntries.length > 0 ? seEntries : fallbackEntries).map((entry) => (
+                        <div
+                          key={`opponent-${opponentEntry.slotIndex}-coverage-${entry.slotIndex}`}
+                          className={`opponent-coverage-row ${(entry.multiplier ?? 0) > 1 ? "strong" : ""}`}
+                        >
+                          <div className="opponent-coverage-main">
+                            <PokemonSprite pokemon={entry.pokemon} />
+                            <div>
+                              <strong>{entry.pokemon.name}</strong>
+                              <p>
+                                {(entry.multiplier ?? 0) > 1
+                                  ? `${formatMultiplier(entry.multiplier ?? 1)} damage`
+                                  : entry.attackTypes.length > 0
+                                    ? `${formatMultiplier(entry.multiplier ?? 1)} best hit`
+                                    : "No attack types set"}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="opponent-coverage-side">
+                            <span
+                              className={`speed-matchup-pill ${
+                                entry.speedDelta > 0 ? "faster" : entry.speedDelta < 0 ? "slower" : "tie"
+                              }`}
+                            >
+                              {entry.speedDelta > 0
+                                ? `Outspeeds by ${entry.speedDelta}`
+                                : entry.speedDelta < 0
+                                  ? `Slower by ${Math.abs(entry.speedDelta)}`
+                                  : "Speed tie"}
+                            </span>
+
+                            <div className="coverage-chip-list">
+                            {entry.attackTypes.length > 0 ? (
+                              entry.attackTypes.map((type) => (
+                                <span
+                                  key={`${entry.pokemon.id}-vs-${opponentEntry.pokemon.id}-${type}`}
+                                  className="mini-type-pill"
+                                  style={
+                                    {
+                                      "--type-color": TYPE_META[type].color,
+                                      "--type-accent": TYPE_META[type].accent,
+                                    } as CSSProperties
+                                  }
+                                >
+                                  {TYPE_META[type].label}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="subtle-empty">No move types set.</span>
+                            )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+
+                      {seEntries.length === 0 && fallbackEntries.length === 0 ? (
+                        <div className="team-slot-empty">Add move types to your team to compare coverage.</div>
+                      ) : null}
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <datalist id="pokemon-options">
+        {(database ?? []).map((pokemon) => (
+          <option key={pokemon.id} value={pokemon.name} />
+        ))}
+      </datalist>
+    </>
+  );
+}
+
+function App() {
+  const [siteMode, setSiteMode] = useState<SiteMode>("calculator");
 
   return (
     <div className="app-shell">
       <main className="page-layout">
-        <TypePool selectedTypes={selectedTypes} onToggle={toggleType} onClear={clearTypes} />
-
-        <section className="board-panel">
-          <div className="board-header">
-            <div>
-              <p className="eyebrow">Defensive Matchups</p>
-              <h2>{profileLabel}</h2>
-            </div>
-            <p className="board-note">
-              Matchups are grouped by damage taken, with the most dangerous categories first.
-            </p>
-          </div>
-
-          {!primaryType ? (
-            <div className="matchup-empty-board">Pick one or two types to see the matchup board.</div>
-          ) : (
-            <>
-              <div className="matchup-grid matchup-grid-primary">
-                <MatchupGroup
-                  label="Quad Weak"
-                  multiplier="4x"
-                  tone="danger"
-                  compact
-                  entries={buckets.ultraWeak.map((entry) => entry.attackType)}
-                />
-                <MatchupGroup
-                  label="Weak"
-                  multiplier="2x"
-                  tone="warn"
-                  entries={buckets.weak.map((entry) => entry.attackType)}
-                />
-                <MatchupGroup
-                  label="Neutral"
-                  multiplier="1x"
-                  tone="neutral"
-                  entries={buckets.neutral.map((entry) => entry.attackType)}
-                />
-                <MatchupGroup
-                  label="Resist"
-                  multiplier="0.5x"
-                  tone="good"
-                  entries={buckets.resist.map((entry) => entry.attackType)}
-                />
-                <MatchupGroup
-                  label="Hard Resist"
-                  multiplier="0.25x"
-                  tone="great"
-                  compact
-                  entries={buckets.quarter.map((entry) => entry.attackType)}
-                />
-              </div>
-              <div className="matchup-grid matchup-grid-secondary">
-                <MatchupGroup
-                  label="Immune"
-                  multiplier="0x"
-                  tone="muted"
-                  compact
-                  entries={buckets.immune.map((entry) => entry.attackType)}
-                />
-              </div>
-            </>
-          )}
+        <section className="site-tabs" aria-label="Site sections">
+          <button
+            type="button"
+            className={`site-tab ${siteMode === "calculator" ? "active" : ""}`}
+            onClick={() => setSiteMode("calculator")}
+          >
+            Type Calculator
+          </button>
+          <button
+            type="button"
+            className={`site-tab ${siteMode === "team" ? "active" : ""}`}
+            onClick={() => setSiteMode("team")}
+          >
+            Team Builder
+          </button>
         </section>
+
+        {siteMode === "calculator" ? <CalculatorView /> : <TeamBuilderView />}
       </main>
     </div>
   );

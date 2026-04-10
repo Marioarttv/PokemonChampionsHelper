@@ -14,6 +14,13 @@ export type DefenseBuckets = {
   ultraWeak: DefenseEntry[];
 };
 
+export type AttackBuckets = {
+  noEffect: PokemonType[];
+  resisted: PokemonType[];
+  neutral: PokemonType[];
+  effective: PokemonType[];
+};
+
 export function getTypeLabel(type: PokemonType) {
   return TYPE_META[type].label;
 }
@@ -76,4 +83,36 @@ export function formatMultiplier(multiplier: number) {
   }
 
   return `${multiplier}x`;
+}
+
+export function bucketAttackEntries(attackType: PokemonType): AttackBuckets {
+  return TYPE_ORDER.reduce<AttackBuckets>(
+    (buckets, defendingType) => {
+      const multiplier = ATTACK_CHART[attackType][defendingType] ?? 1;
+
+      if (multiplier === 0) {
+        buckets.noEffect.push(defendingType);
+      } else if (multiplier > 1) {
+        buckets.effective.push(defendingType);
+      } else if (multiplier < 1) {
+        buckets.resisted.push(defendingType);
+      } else {
+        buckets.neutral.push(defendingType);
+      }
+
+      return buckets;
+    },
+    {
+      noEffect: [],
+      resisted: [],
+      neutral: [],
+      effective: [],
+    },
+  );
+}
+
+export function getCoveredDefendingTypes(attackTypes: PokemonType[]) {
+  return TYPE_ORDER.filter((defendingType) =>
+    attackTypes.some((attackType) => (ATTACK_CHART[attackType][defendingType] ?? 1) > 1),
+  );
 }

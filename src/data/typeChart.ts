@@ -116,8 +116,16 @@ export const TYPE_META: Record<PokemonType, TypeMeta> = {
   },
 };
 
+const LABEL_TO_TYPE = new Map(
+  TYPE_ORDER.map((type) => [TYPE_META[type].label.toLowerCase(), type] as const),
+);
+
 export function getTypeIconUrl(type: PokemonType) {
   return `https://archives.bulbagarden.net/wiki/Special:Redirect/file/${encodeURIComponent(TYPE_META[type].iconFile)}`;
+}
+
+export function getTypeFromLabel(label: string) {
+  return LABEL_TO_TYPE.get(label.toLowerCase());
 }
 
 export const ATTACK_CHART: MatchupChart = {
