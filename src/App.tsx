@@ -22,6 +22,15 @@ import {
   type PokemonRecord,
 } from "./lib/pokemonDb";
 import {
+  SPREAD_MOVE_MULTIPLIER,
+  calculateRoughDamage,
+  getLevel50HpValue,
+  getLevel50OtherStatValue,
+  type DamageCategory,
+  type DamageTerrain,
+  type DamageWeather,
+} from "./lib/damage";
+import {
   deleteSavedTeam,
   listSavedTeams,
   saveTeam,
@@ -55,6 +64,7 @@ type TeamSlotState = {
 };
 
 type TeamMatrixMode = "defense" | "offense";
+type DamageCalcMode = "attack" | "defend";
 type LeadSummary = {
   slotIndex: number;
   pokemon: PokemonRecord;
@@ -63,6 +73,31 @@ type LeadSummary = {
   immuneTypes: PokemonType[];
   coverTypes: PokemonType[];
   attackTypes: PokemonType[];
+};
+type DamageMoveConfig = {
+  power: string;
+  category: DamageCategory;
+  isSpreadMove: boolean;
+};
+type ManualDamageMoveConfig = DamageMoveConfig & {
+  attackType: PokemonType;
+};
+type OpponentRosterEntry = {
+  slotIndex: number;
+  query: string;
+  pokemon: PokemonRecord | null;
+};
+type DamagePickerCardProps = {
+  label: string;
+  isSelected: boolean;
+  isDisabled?: boolean;
+  pokemon: PokemonRecord | null;
+  subtitle: string;
+  footer: string;
+  onClick: () => void;
+};
+type BattleIconProps = {
+  className?: string;
 };
 type OpenerSelection = [number | null, number | null];
 type OpenerSummary = {
@@ -83,13 +118,89 @@ const DEFAULT_PRIMARY: PokemonType = "water";
 const TEAM_SIZE = 6;
 const MAX_ATTACK_TYPES_PER_SLOT = 4;
 const MAX_OPPONENT_SCOUT_SLOTS = 6;
-
+const WEATHER_OPTIONS: Array<{ value: DamageWeather; label: string }> = [
+  { value: "none", label: "No Weather" },
+  { value: "sun", label: "Sun" },
+  { value: "rain", label: "Rain" },
+  { value: "sand", label: "Sand" },
+  { value: "snow", label: "Snow" },
+];
+const TERRAIN_OPTIONS: Array<{ value: DamageTerrain; label: string }> = [
+  { value: "none", label: "No Terrain" },
+  { value: "electric", label: "Electric Terrain" },
+  { value: "grassy", label: "Grassy Terrain" },
+  { value: "psychic", label: "Psychic Terrain" },
+  { value: "misty", label: "Misty Terrain" },
+];
 function createEmptyTeamSlot(): TeamSlotState {
   return {
     query: "",
     pokemonId: null,
     attackTypes: [],
   };
+}
+
+function getPreferredDamageCategory(pokemon: PokemonRecord | null | undefined): DamageCategory {
+  if (!pokemon) {
+    return "special";
+  }
+
+  return pokemon.baseStats.atk >= pokemon.baseStats.spa ? "physical" : "special";
+}
+
+function getPreferredAttackType(pokemon: PokemonRecord | null | undefined): PokemonType {
+  if (!pokemon) {
+    return DEFAULT_PRIMARY;
+  }
+
+  return getTypeFromLabel(pokemon.types[0]) ?? DEFAULT_PRIMARY;
+}
+
+function isLikelyGrounded(pokemon: PokemonRecord | null | undefined) {
+  if (!pokemon) {
+    return true;
+  }
+
+  return !pokemon.types.includes("Flying");
+}
+
+function createDefaultDamageMoveConfig(pokemon?: PokemonRecord | null): DamageMoveConfig {
+  return {
+    power: "",
+    category: getPreferredDamageCategory(pokemon),
+    isSpreadMove: false,
+  };
+}
+
+function createDefaultManualDamageMoveConfig(pokemon?: PokemonRecord | null): ManualDamageMoveConfig {
+  return {
+    ...createDefaultDamageMoveConfig(pokemon),
+    attackType: getPreferredAttackType(pokemon),
+  };
+}
+
+function getDamageConfigKey(slotIndex: number, pokemonId: string | null) {
+  return `${slotIndex}:${pokemonId ?? "empty"}`;
+}
+
+function formatPercent(value: number) {
+  if (!Number.isFinite(value)) {
+    return "0.0";
+  }
+
+  return value.toFixed(value >= 100 ? 0 : 1);
+}
+
+function formatFlatMultiplier(value: number) {
+  if (value === 0.25) {
+    return "0.25x";
+  }
+
+  if (value === 0.5) {
+    return "0.5x";
+  }
+
+  return `${value.toFixed(value % 1 === 0 ? 0 : 2)}x`;
 }
 
 function getPokemonDefensiveMultiplier(pokemon: PokemonRecord, attackType: PokemonType) {
@@ -299,6 +410,73 @@ function PokemonSprite({ pokemon, className }: PokemonSpriteProps) {
         }
       }}
     />
+  );
+}
+
+function DamagePickerCard({
+  label,
+  isSelected,
+  isDisabled = false,
+  pokemon,
+  subtitle,
+  footer,
+  onClick,
+}: DamagePickerCardProps) {
+  return (
+    <button
+      type="button"
+      className={`damage-picker-card ${isSelected ? "selected" : ""}`}
+      onClick={onClick}
+      disabled={isDisabled}
+    >
+      <span className="damage-picker-label">{label}</span>
+      <div className={`damage-picker-sprite-frame ${pokemon ? "filled" : ""}`}>
+        {pokemon ? <PokemonSprite pokemon={pokemon} className="damage-picker-sprite" /> : <span>?</span>}
+      </div>
+      <strong>{pokemon ? pokemon.name : "Empty Slot"}</strong>
+      <span>{subtitle}</span>
+      <em>{footer}</em>
+    </button>
+  );
+}
+
+function SwordIcon({ className }: BattleIconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M14 4h6v6" />
+      <path d="M20 4 9 15" />
+      <path d="m8 16-1.5 3.5L10 18l1.5-3.5" />
+      <path d="M5 19h6" />
+      <path d="M7 17v4" />
+    </svg>
+  );
+}
+
+function ShieldIcon({ className }: BattleIconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 3 19 6v5c0 4.6-2.8 7.9-7 10-4.2-2.1-7-5.4-7-10V6l7-3Z" />
+      <path d="M12 7v9" />
+      <path d="M8.5 10.5H15.5" />
+    </svg>
   );
 }
 
@@ -1000,6 +1178,17 @@ function TeamBuilderView() {
   const [teamSlots, setTeamSlots] = useState<TeamSlotState[]>(
     Array.from({ length: TEAM_SIZE }, createEmptyTeamSlot),
   );
+  const [damageCalcMode, setDamageCalcMode] = useState<DamageCalcMode>("attack");
+  const [damageAttackerSlotIndex, setDamageAttackerSlotIndex] = useState<number | null>(null);
+  const [damageDefenderSlotIndex, setDamageDefenderSlotIndex] = useState<number | null>(null);
+  const [damageWeather, setDamageWeather] = useState<DamageWeather>("none");
+  const [damageTerrain, setDamageTerrain] = useState<DamageTerrain>("none");
+  const [damageAttackerGrounded, setDamageAttackerGrounded] = useState(true);
+  const [damageDefenderGrounded, setDamageDefenderGrounded] = useState(true);
+  const [damageMoveConfigs, setDamageMoveConfigs] = useState<
+    Record<string, Partial<Record<PokemonType, DamageMoveConfig>>>
+  >({});
+  const [defenseMoveConfigs, setDefenseMoveConfigs] = useState<Record<string, ManualDamageMoveConfig>>({});
 
   useEffect(() => {
     let active = true;
@@ -1067,25 +1256,40 @@ function TeamBuilderView() {
     [team],
   );
 
+  const opponentRoster = useMemo<OpponentRosterEntry[]>(
+    () =>
+      opponentQueries.map((query, slotIndex) => {
+        const trimmed = query.trim();
+
+        if (!trimmed) {
+          return {
+            slotIndex,
+            query,
+            pokemon: null,
+          };
+        }
+
+        return {
+          slotIndex,
+          query,
+          pokemon: pokemonByKey.get(trimmed.toLowerCase()) ?? pokemonByKey.get(trimmed) ?? null,
+        };
+      }),
+    [opponentQueries, pokemonByKey],
+  );
+
   const opponentEntries = useMemo(
     () =>
-      opponentQueries
-        .map((query, slotIndex) => {
-          const trimmed = query.trim();
-          if (!trimmed) {
-            return null;
-          }
-
-          const pokemon = pokemonByKey.get(trimmed.toLowerCase()) ?? pokemonByKey.get(trimmed) ?? null;
-
-          return pokemon
+      opponentRoster
+        .map((entry) =>
+          entry.pokemon
             ? {
-                slotIndex,
-                query,
-                pokemon,
+                slotIndex: entry.slotIndex,
+                query: entry.query,
+                pokemon: entry.pokemon,
               }
-            : null;
-        })
+            : null,
+        )
         .filter(
           (
             entry,
@@ -1095,7 +1299,7 @@ function TeamBuilderView() {
             pokemon: PokemonRecord;
           } => Boolean(entry),
         ),
-    [opponentQueries, pokemonByKey],
+    [opponentRoster],
   );
 
   const filledLeadOptions = useMemo(
@@ -1298,6 +1502,30 @@ function TeamBuilderView() {
     ]);
   }, [filledLeadOptions]);
 
+  useEffect(() => {
+    const availableIndices = filledLeadOptions.map((entry) => entry.index);
+
+    setDamageAttackerSlotIndex((current) => {
+      if (current !== null && availableIndices.includes(current)) {
+        return current;
+      }
+
+      return availableIndices[0] ?? null;
+    });
+  }, [filledLeadOptions]);
+
+  useEffect(() => {
+    const availableIndices = opponentEntries.map((entry) => entry.slotIndex);
+
+    setDamageDefenderSlotIndex((current) => {
+      if (current !== null && availableIndices.includes(current)) {
+        return current;
+      }
+
+      return availableIndices[0] ?? null;
+    });
+  }, [opponentEntries]);
+
   const openerSummaries = useMemo(
     () =>
       openerSelections.map((selection, openerIndex) => {
@@ -1355,6 +1583,111 @@ function TeamBuilderView() {
     [opponentEntries, team],
   );
 
+  const selectedDamageAttacker =
+    damageAttackerSlotIndex !== null && team[damageAttackerSlotIndex]?.pokemon
+      ? team[damageAttackerSlotIndex]
+      : null;
+  const selectedDamageDefender =
+    damageDefenderSlotIndex !== null
+      ? opponentRoster.find((entry) => entry.slotIndex === damageDefenderSlotIndex && entry.pokemon) ?? null
+      : null;
+  const selectedDamageAttackTypes = selectedDamageAttacker?.attackTypes ?? [];
+  const selectedDamageAttackerPokemon = selectedDamageAttacker?.pokemon ?? null;
+  const selectedDamageDefenderPokemon = selectedDamageDefender?.pokemon ?? null;
+  const currentDamageAttackerPokemon =
+    damageCalcMode === "attack" ? selectedDamageAttackerPokemon : selectedDamageDefenderPokemon;
+  const currentDamageDefenderPokemon =
+    damageCalcMode === "attack" ? selectedDamageDefenderPokemon : selectedDamageAttackerPokemon;
+  const defenseMoveConfigKey = getDamageConfigKey(
+    damageDefenderSlotIndex ?? -1,
+    selectedDamageDefenderPokemon?.id ?? null,
+  );
+  const defenseMoveConfig =
+    defenseMoveConfigs[defenseMoveConfigKey] ?? createDefaultManualDamageMoveConfig(selectedDamageDefenderPokemon);
+
+  useEffect(() => {
+    setDamageAttackerGrounded(isLikelyGrounded(selectedDamageAttackerPokemon));
+  }, [selectedDamageAttackerPokemon]);
+
+  useEffect(() => {
+    setDamageDefenderGrounded(isLikelyGrounded(selectedDamageDefenderPokemon));
+  }, [selectedDamageDefenderPokemon]);
+
+  const damageMoveRows = useMemo(() => {
+    if (!selectedDamageAttackerPokemon || !selectedDamageDefenderPokemon) {
+      return [];
+    }
+
+    const configKey = getDamageConfigKey(damageAttackerSlotIndex ?? -1, selectedDamageAttackerPokemon.id);
+    const storedConfigs = damageMoveConfigs[configKey] ?? {};
+
+    return selectedDamageAttackTypes.map((attackType) => {
+      const config = storedConfigs[attackType] ?? createDefaultDamageMoveConfig(selectedDamageAttackerPokemon);
+      const parsedPower = Number(config.power);
+      const basePower = Number.isFinite(parsedPower) && parsedPower > 0 ? parsedPower : null;
+
+      return {
+        attackType,
+        config,
+        estimate:
+          basePower !== null
+            ? calculateRoughDamage({
+                attacker: selectedDamageAttackerPokemon,
+                defender: selectedDamageDefenderPokemon,
+                attackType,
+                basePower,
+                category: config.category,
+                isSpreadMove: config.isSpreadMove,
+                weather: damageWeather,
+                terrain: damageTerrain,
+                attackerGrounded: damageAttackerGrounded,
+                defenderGrounded: damageDefenderGrounded,
+              })
+            : null,
+      };
+    });
+  }, [
+    damageAttackerGrounded,
+    damageAttackerSlotIndex,
+    damageDefenderGrounded,
+    damageTerrain,
+    damageWeather,
+    damageMoveConfigs,
+    selectedDamageAttackTypes,
+    selectedDamageAttackerPokemon,
+    selectedDamageDefenderPokemon,
+  ]);
+
+  const defenseMoveEstimate = useMemo(() => {
+    const parsedPower = Number(defenseMoveConfig.power);
+    const basePower = Number.isFinite(parsedPower) && parsedPower > 0 ? parsedPower : null;
+
+    if (!selectedDamageDefenderPokemon || !selectedDamageAttackerPokemon || basePower === null) {
+      return null;
+    }
+
+    return calculateRoughDamage({
+      attacker: selectedDamageDefenderPokemon,
+      defender: selectedDamageAttackerPokemon,
+      attackType: defenseMoveConfig.attackType,
+      basePower,
+      category: defenseMoveConfig.category,
+      isSpreadMove: defenseMoveConfig.isSpreadMove,
+      weather: damageWeather,
+      terrain: damageTerrain,
+      attackerGrounded: damageDefenderGrounded,
+      defenderGrounded: damageAttackerGrounded,
+    });
+  }, [
+    damageAttackerGrounded,
+    damageDefenderGrounded,
+    damageTerrain,
+    damageWeather,
+    defenseMoveConfig,
+    selectedDamageAttackerPokemon,
+    selectedDamageDefenderPokemon,
+  ]);
+
   const updateOpenerSelection = (openerIndex: number, memberIndex: 0 | 1, slotIndex: number) => {
     setOpenerSelections((current) => {
       const next = [...current] as [OpenerSelection, OpenerSelection];
@@ -1374,6 +1707,42 @@ function TeamBuilderView() {
 
   const updateOpponentQuery = (slotIndex: number, query: string) => {
     setOpponentQueries((current) => current.map((entry, index) => (index === slotIndex ? query : entry)));
+  };
+
+  const updateDamageMoveConfig = (
+    slotIndex: number,
+    pokemonId: string,
+    attackType: PokemonType,
+    patch: Partial<DamageMoveConfig>,
+  ) => {
+    const configKey = getDamageConfigKey(slotIndex, pokemonId);
+
+    setDamageMoveConfigs((current) => ({
+      ...current,
+      [configKey]: {
+        ...current[configKey],
+        [attackType]: {
+          ...(current[configKey]?.[attackType] ?? createDefaultDamageMoveConfig(pokemonByKey.get(pokemonId) ?? null)),
+          ...patch,
+        },
+      },
+    }));
+  };
+
+  const updateDefenseMoveConfig = (
+    slotIndex: number,
+    pokemonId: string,
+    patch: Partial<ManualDamageMoveConfig>,
+  ) => {
+    const configKey = getDamageConfigKey(slotIndex, pokemonId);
+
+    setDefenseMoveConfigs((current) => ({
+      ...current,
+      [configKey]: {
+        ...(current[configKey] ?? createDefaultManualDamageMoveConfig(pokemonByKey.get(pokemonId) ?? null)),
+        ...patch,
+      },
+    }));
   };
 
   const clearOpponentTeam = () => {
@@ -1992,6 +2361,484 @@ function TeamBuilderView() {
             })}
           </div>
         )}
+      </section>
+
+      <section className="board-panel damage-calculator-panel">
+        <div className="board-header">
+          <div>
+            <p className="eyebrow">Damage Calculator</p>
+            <h2>Pick one ally and one enemy</h2>
+          </div>
+        </div>
+
+        <div className="damage-calculator-layout">
+          <section className="damage-picker-column">
+            <div className="damage-picker-header">
+              <p className="eyebrow">My 6</p>
+              <span>{selectedPokemon.length} ready</span>
+            </div>
+            <div className="damage-picker-grid">
+              {team.map((slot, slotIndex) => (
+                <DamagePickerCard
+                  key={`damage-attacker-${slotIndex}`}
+                  label={`Slot ${slotIndex + 1}`}
+                  isSelected={damageAttackerSlotIndex === slotIndex}
+                  isDisabled={!slot.pokemon}
+                  pokemon={slot.pokemon}
+                  subtitle={
+                    slot.pokemon
+                      ? `${slot.pokemon.types.join(" / ")}`
+                      : loadError
+                        ? loadError
+                        : "Pick a Pokemon above"
+                  }
+                  footer={
+                    slot.pokemon
+                      ? `${slot.attackTypes.length} attack ${slot.attackTypes.length === 1 ? "type" : "types"}`
+                      : "Unavailable"
+                  }
+                  onClick={() => setDamageAttackerSlotIndex(slotIndex)}
+                />
+              ))}
+            </div>
+          </section>
+
+          <section className="damage-center-panel">
+            {currentDamageAttackerPokemon && currentDamageDefenderPokemon ? (
+              <>
+                <div className="damage-matchup-grid">
+                  <article className="damage-side-card attacker">
+                    <div className="damage-side-header">
+                      <p className="eyebrow">Attacker</p>
+                      <PokemonSprite pokemon={currentDamageAttackerPokemon} className="damage-side-sprite" />
+                    </div>
+                    <h3>{currentDamageAttackerPokemon.name}</h3>
+                    <div className="team-type-list">
+                      {currentDamageAttackerPokemon.types.map((typeLabel) => {
+                        const type = getTypeFromLabel(typeLabel);
+                        if (!type) {
+                          return null;
+                        }
+
+                        return (
+                          <span
+                            key={`${currentDamageAttackerPokemon.id}-${type}`}
+                            className="inline-type-pill"
+                            style={
+                              {
+                                "--type-color": TYPE_META[type].color,
+                                "--type-accent": TYPE_META[type].accent,
+                              } as CSSProperties
+                            }
+                          >
+                            <img src={getTypeIconUrl(type)} alt="" aria-hidden="true" loading="lazy" />
+                            {TYPE_META[type].label}
+                          </span>
+                        );
+                      })}
+                    </div>
+                    <div className="damage-stat-strip">
+                      <span>Atk {getLevel50OtherStatValue(currentDamageAttackerPokemon.baseStats.atk)}</span>
+                      <span>SpA {getLevel50OtherStatValue(currentDamageAttackerPokemon.baseStats.spa)}</span>
+                      <span>Spe {getLevel50OtherStatValue(currentDamageAttackerPokemon.baseStats.spe)}</span>
+                    </div>
+                  </article>
+
+                  <div className="damage-center-switch">
+                    <div className="damage-versus-pill">vs</div>
+                    <div className="damage-mode-toggle" aria-label="Damage calculator modes">
+                      <button
+                        type="button"
+                        className={`damage-mode-button attack ${damageCalcMode === "attack" ? "active" : ""}`}
+                        onClick={() => setDamageCalcMode("attack")}
+                      >
+                        <SwordIcon className="battle-mode-icon" />
+                        <span>Attack</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={`damage-mode-button defend ${damageCalcMode === "defend" ? "active" : ""}`}
+                        onClick={() => setDamageCalcMode("defend")}
+                      >
+                        <ShieldIcon className="battle-mode-icon" />
+                        <span>Defend</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <article className="damage-side-card defender">
+                    <div className="damage-side-header">
+                      <p className="eyebrow">Defender</p>
+                      <PokemonSprite pokemon={currentDamageDefenderPokemon} className="damage-side-sprite" />
+                    </div>
+                    <h3>{currentDamageDefenderPokemon.name}</h3>
+                    <div className="team-type-list">
+                      {currentDamageDefenderPokemon.types.map((typeLabel) => {
+                        const type = getTypeFromLabel(typeLabel);
+                        if (!type) {
+                          return null;
+                        }
+
+                        return (
+                          <span
+                            key={`${currentDamageDefenderPokemon.id}-${type}`}
+                            className="inline-type-pill"
+                            style={
+                              {
+                                "--type-color": TYPE_META[type].color,
+                                "--type-accent": TYPE_META[type].accent,
+                              } as CSSProperties
+                            }
+                          >
+                            <img src={getTypeIconUrl(type)} alt="" aria-hidden="true" loading="lazy" />
+                            {TYPE_META[type].label}
+                          </span>
+                        );
+                      })}
+                    </div>
+                    <div className="damage-stat-strip">
+                      <span>HP {getLevel50HpValue(currentDamageDefenderPokemon.baseStats.hp)}</span>
+                      <span>Def {getLevel50OtherStatValue(currentDamageDefenderPokemon.baseStats.def)}</span>
+                      <span>SpD {getLevel50OtherStatValue(currentDamageDefenderPokemon.baseStats.spd)}</span>
+                    </div>
+                  </article>
+                </div>
+
+                <div className="damage-assumption-row">
+                  <span className="damage-assumption-pill">Level 50</span>
+                  <span className="damage-assumption-pill">0 IV / 0 EV</span>
+                  <span className="damage-assumption-pill">Neutral nature</span>
+                  <span className="damage-assumption-pill">No items / abilities</span>
+                  <span className="damage-assumption-pill">Spread toggle = {SPREAD_MOVE_MULTIPLIER}x</span>
+                </div>
+
+                <div className="damage-global-controls">
+                  <label className="damage-type-field">
+                    <span>Weather</span>
+                    <select
+                      value={damageWeather}
+                      onChange={(event) => setDamageWeather(event.target.value as DamageWeather)}
+                    >
+                      {WEATHER_OPTIONS.map((option) => (
+                        <option key={`weather-${option.value}`} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="damage-type-field">
+                    <span>Terrain</span>
+                    <select
+                      value={damageTerrain}
+                      onChange={(event) => setDamageTerrain(event.target.value as DamageTerrain)}
+                    >
+                      {TERRAIN_OPTIONS.map((option) => (
+                        <option key={`terrain-${option.value}`} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className={`damage-spread-toggle ${damageAttackerGrounded ? "active" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={damageAttackerGrounded}
+                      onChange={(event) => setDamageAttackerGrounded(event.target.checked)}
+                    />
+                    <span>My Pokemon Grounded</span>
+                  </label>
+
+                  <label className={`damage-spread-toggle ${damageDefenderGrounded ? "active" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={damageDefenderGrounded}
+                      onChange={(event) => setDamageDefenderGrounded(event.target.checked)}
+                    />
+                    <span>Enemy Grounded</span>
+                  </label>
+                </div>
+
+                {damageCalcMode === "attack" ? (
+                  selectedDamageAttackTypes.length > 0 ? (
+                  <div className="damage-move-list">
+                    {damageMoveRows.map((row) => (
+                      <article key={`damage-row-${row.attackType}`} className="damage-move-row">
+                        <div className="damage-move-main">
+                          <span
+                            className="inline-type-pill"
+                            style={
+                              {
+                                "--type-color": TYPE_META[row.attackType].color,
+                                "--type-accent": TYPE_META[row.attackType].accent,
+                              } as CSSProperties
+                            }
+                          >
+                            <img src={getTypeIconUrl(row.attackType)} alt="" aria-hidden="true" loading="lazy" />
+                            {TYPE_META[row.attackType].label}
+                          </span>
+
+                          <label className="damage-power-field">
+                            <span>Base Power</span>
+                            <input
+                              type="number"
+                              min="1"
+                              step="1"
+                              inputMode="numeric"
+                              value={row.config.power}
+                              onChange={(event) =>
+                                updateDamageMoveConfig(
+                                  damageAttackerSlotIndex ?? 0,
+                                  selectedDamageAttackerPokemon!.id,
+                                  row.attackType,
+                                  { power: event.target.value },
+                                )
+                              }
+                              placeholder="80"
+                            />
+                          </label>
+                        </div>
+
+                        <div className="damage-move-controls">
+                          <div className="damage-category-toggle" role="group" aria-label="Move category">
+                            {(["physical", "special"] as const).map((category) => (
+                              <button
+                                key={`${row.attackType}-${category}`}
+                                type="button"
+                                className={`damage-category-button ${
+                                  row.config.category === category ? "active" : ""
+                                }`}
+                                onClick={() =>
+                                  updateDamageMoveConfig(
+                                    damageAttackerSlotIndex ?? 0,
+                                    selectedDamageAttackerPokemon!.id,
+                                    row.attackType,
+                                    { category },
+                                  )
+                                }
+                              >
+                                {category === "physical" ? "Physical" : "Special"}
+                              </button>
+                            ))}
+                          </div>
+
+                          <label className={`damage-spread-toggle ${row.config.isSpreadMove ? "active" : ""}`}>
+                            <input
+                              type="checkbox"
+                              checked={row.config.isSpreadMove}
+                              onChange={(event) =>
+                                updateDamageMoveConfig(
+                                  damageAttackerSlotIndex ?? 0,
+                                  selectedDamageAttackerPokemon!.id,
+                                  row.attackType,
+                                  { isSpreadMove: event.target.checked },
+                                )
+                              }
+                            />
+                            <span>Spread Move</span>
+                          </label>
+                        </div>
+
+                        <div className={`damage-result-card ${row.estimate ? "ready" : ""}`}>
+                          {row.estimate ? (
+                            <>
+                              <div className="damage-result-topline">
+                                <strong>{formatPercent(row.estimate.averagePercent)}%</strong>
+                                <span>
+                                  {formatPercent(row.estimate.minPercent)}% - {formatPercent(row.estimate.maxPercent)}%
+                                </span>
+                              </div>
+                              <p>
+                                Avg {row.estimate.averageDamage} HP
+                                {row.estimate.typeMultiplier === 0 ? " • no effect" : ""}
+                              </p>
+                              <div className="damage-modifier-row">
+                                <span>
+                                  {row.config.category === "physical" ? "Atk" : "SpA"} {row.estimate.attackStat}
+                                </span>
+                                <span>
+                                  {row.config.category === "physical" ? "Def" : "SpD"} {row.estimate.defenseStat}
+                                </span>
+                                <span>STAB {formatFlatMultiplier(row.estimate.stabMultiplier)}</span>
+                                <span>Type {formatFlatMultiplier(row.estimate.typeMultiplier)}</span>
+                                <span>Spread {formatFlatMultiplier(row.estimate.spreadMultiplier)}</span>
+                                <span>Weather {formatFlatMultiplier(row.estimate.weatherMultiplier)}</span>
+                                <span>Terrain {formatFlatMultiplier(row.estimate.terrainMultiplier)}</span>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <strong>Enter power</strong>
+                              <p>Add the move’s base power to calculate a rough percentage.</p>
+                            </>
+                          )}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="matchup-empty-board">
+                    Add attack types to {selectedDamageAttackerPokemon!.name} above to unlock move rows here.
+                  </div>
+                )
+                ) : (
+                  <div className="damage-move-list">
+                    <article className="damage-move-row">
+                      <div className="damage-move-main defend">
+                        <label className="damage-type-field">
+                          <span>Attack Type</span>
+                          <select
+                            value={defenseMoveConfig.attackType}
+                            onChange={(event) =>
+                              updateDefenseMoveConfig(
+                                damageDefenderSlotIndex ?? 0,
+                                selectedDamageDefenderPokemon?.id ?? "",
+                                { attackType: event.target.value as PokemonType },
+                              )
+                            }
+                          >
+                            {TYPE_ORDER.map((type) => (
+                              <option key={`defense-type-${type}`} value={type}>
+                                {TYPE_META[type].label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="damage-power-field">
+                          <span>Base Power</span>
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            inputMode="numeric"
+                            value={defenseMoveConfig.power}
+                            onChange={(event) =>
+                              updateDefenseMoveConfig(
+                                damageDefenderSlotIndex ?? 0,
+                                selectedDamageDefenderPokemon?.id ?? "",
+                                { power: event.target.value },
+                              )
+                            }
+                            placeholder="80"
+                          />
+                        </label>
+                      </div>
+
+                      <div className="damage-move-controls">
+                        <div className="damage-category-toggle" role="group" aria-label="Incoming move category">
+                          {(["physical", "special"] as const).map((category) => (
+                            <button
+                              key={`defense-${category}`}
+                              type="button"
+                              className={`damage-category-button ${
+                                defenseMoveConfig.category === category ? "active" : ""
+                              }`}
+                              onClick={() =>
+                                updateDefenseMoveConfig(
+                                  damageDefenderSlotIndex ?? 0,
+                                  selectedDamageDefenderPokemon?.id ?? "",
+                                  { category },
+                                )
+                              }
+                            >
+                              {category === "physical" ? "Physical" : "Special"}
+                            </button>
+                          ))}
+                        </div>
+
+                        <label
+                          className={`damage-spread-toggle ${defenseMoveConfig.isSpreadMove ? "active" : ""}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={defenseMoveConfig.isSpreadMove}
+                            onChange={(event) =>
+                              updateDefenseMoveConfig(
+                                damageDefenderSlotIndex ?? 0,
+                                selectedDamageDefenderPokemon?.id ?? "",
+                                { isSpreadMove: event.target.checked },
+                              )
+                            }
+                          />
+                          <span>Spread Move</span>
+                        </label>
+                      </div>
+
+                      <div className={`damage-result-card ${defenseMoveEstimate ? "ready" : ""}`}>
+                        {defenseMoveEstimate ? (
+                          <>
+                            <div className="damage-result-topline">
+                              <strong>{formatPercent(defenseMoveEstimate.averagePercent)}%</strong>
+                              <span>
+                                {formatPercent(defenseMoveEstimate.minPercent)}% -{" "}
+                                {formatPercent(defenseMoveEstimate.maxPercent)}%
+                              </span>
+                            </div>
+                            <p>
+                              Avg {defenseMoveEstimate.averageDamage} HP taken
+                              {defenseMoveEstimate.typeMultiplier === 0 ? " • no effect" : ""}
+                            </p>
+                            <div className="damage-modifier-row">
+                              <span>
+                                {defenseMoveConfig.category === "physical" ? "Atk" : "SpA"}{" "}
+                                {defenseMoveEstimate.attackStat}
+                              </span>
+                              <span>
+                                {defenseMoveConfig.category === "physical" ? "Def" : "SpD"}{" "}
+                                {defenseMoveEstimate.defenseStat}
+                              </span>
+                              <span>STAB {formatFlatMultiplier(defenseMoveEstimate.stabMultiplier)}</span>
+                              <span>Type {formatFlatMultiplier(defenseMoveEstimate.typeMultiplier)}</span>
+                              <span>Spread {formatFlatMultiplier(defenseMoveEstimate.spreadMultiplier)}</span>
+                              <span>Weather {formatFlatMultiplier(defenseMoveEstimate.weatherMultiplier)}</span>
+                              <span>Terrain {formatFlatMultiplier(defenseMoveEstimate.terrainMultiplier)}</span>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <strong>Enter power</strong>
+                            <p>Pick an incoming attack type and base power to calculate rough damage taken.</p>
+                          </>
+                        )}
+                      </div>
+                    </article>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="matchup-empty-board">
+                Select one filled Pokemon from your six and one filled Pokemon from the enemy six.
+              </div>
+            )}
+          </section>
+
+          <section className="damage-picker-column enemy">
+            <div className="damage-picker-header">
+              <p className="eyebrow">Enemy 6</p>
+              <span>{opponentEntries.length} ready</span>
+            </div>
+            <div className="damage-picker-grid">
+              {opponentRoster.map((entry) => (
+                <DamagePickerCard
+                  key={`damage-defender-${entry.slotIndex}`}
+                  label={`Enemy ${entry.slotIndex + 1}`}
+                  isSelected={damageDefenderSlotIndex === entry.slotIndex}
+                  isDisabled={!entry.pokemon}
+                  pokemon={entry.pokemon}
+                  subtitle={entry.pokemon ? `${entry.pokemon.types.join(" / ")}` : "Pick a Pokemon above"}
+                  footer={
+                    entry.pokemon
+                      ? `HP ${getLevel50HpValue(entry.pokemon.baseStats.hp)} at rough Lv. 50`
+                      : "Unavailable"
+                  }
+                  onClick={() => setDamageDefenderSlotIndex(entry.slotIndex)}
+                />
+              ))}
+            </div>
+          </section>
+        </div>
       </section>
 
       <datalist id="pokemon-options">
