@@ -750,6 +750,141 @@ img {
   width: 100%;
 }
 
+.quick-search-panel {
+  display: grid;
+  gap: 0.6rem;
+  min-width: 0;
+  align-self: stretch;
+  padding: 0.85rem 0.92rem;
+  background:
+    radial-gradient(circle at top right, rgba(131, 183, 255, 0.14), transparent 28%),
+    radial-gradient(circle at top left, rgba(255, 216, 140, 0.12), transparent 24%),
+    linear-gradient(180deg, rgba(255, 253, 249, 0.94), rgba(247, 250, 252, 0.9));
+}
+
+.quick-search-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.quick-search-header h2 {
+  margin: 0;
+  color: var(--ink-strong);
+  font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  letter-spacing: -0.03em;
+  font-size: 1.1rem;
+}
+
+.quick-search-stack {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.quick-search-card,
+.quick-summary-card {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.quick-search-card {
+  padding: 0.7rem;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid rgba(42, 54, 49, 0.08);
+}
+
+.quick-summary-card {
+  padding: 0.72rem;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.84);
+  border: 1px solid rgba(42, 54, 49, 0.08);
+  box-shadow:
+    0 12px 24px rgba(76, 63, 37, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.quick-summary-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.quick-summary-top h3 {
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: 1rem;
+  line-height: 1.1;
+}
+
+.quick-summary-sprite {
+  width: 3rem;
+  height: 3rem;
+  object-fit: contain;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 6px 10px rgba(34, 42, 67, 0.12));
+}
+
+.quick-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.quick-meta-row span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.55rem;
+  padding: 0.18rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(247, 244, 236, 0.82);
+  color: var(--ink-soft);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.quick-ability-list {
+  display: grid;
+  gap: 0.42rem;
+}
+
+.quick-ability-card {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.55rem 0.6rem;
+  border-radius: 14px;
+  background: rgba(247, 244, 236, 0.82);
+  border: 1px solid rgba(42, 54, 49, 0.06);
+}
+
+.quick-ability-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 0.5rem;
+}
+
+.quick-ability-header strong,
+.quick-effect-copy p,
+.quick-ability-card p {
+  margin: 0;
+}
+
+.quick-ability-header strong {
+  color: var(--ink-strong);
+  font-size: 0.82rem;
+}
+
+.quick-ability-card p,
+.quick-effect-copy p {
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  line-height: 1.4;
+  font-weight: 700;
+}
+
 .lead-panel {
   display: grid;
   gap: 0.6rem;
@@ -2151,7 +2286,8 @@ img {
   }
 
   .opponent-scout-header,
-  .enemy-card-header {
+  .enemy-card-header,
+  .quick-search-header {
     align-items: start;
     flex-direction: column;
   }

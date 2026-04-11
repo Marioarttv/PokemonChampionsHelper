@@ -7,7 +7,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "..");
 const outputDir = path.join(rootDir, "public", "data");
-const outputFile = path.join(outputDir, "pokemon-db.json");
+const pokemonOutputFile = path.join(outputDir, "pokemon-db.json");
+const battleOutputFile = path.join(outputDir, "battle-data.json");
 
 const species = Dex.species
   .all()
@@ -49,7 +50,51 @@ const database = {
   pokemon: species,
 };
 
-await mkdir(outputDir, { recursive: true });
-await writeFile(outputFile, `${JSON.stringify(database, null, 2)}\n`, "utf8");
+const abilities = Dex.abilities
+  .all()
+  .filter((ability) => ability.exists)
+  .sort((a, b) => a.name.localeCompare(b.name))
+  .map((ability) => ({
+    id: ability.id,
+    name: ability.name,
+    shortDesc: ability.shortDesc || "",
+    desc: ability.desc || "",
+  }));
 
-console.log(`Generated ${species.length} Pokemon entries at ${path.relative(rootDir, outputFile)}`);
+const moves = Dex.moves
+  .all()
+  .filter((move) => move.exists)
+  .sort((a, b) => a.name.localeCompare(b.name))
+  .map((move) => ({
+    id: move.id,
+    name: move.name,
+    type: move.type,
+    category: move.category,
+    basePower: move.basePower,
+    accuracy: move.accuracy,
+    pp: move.pp,
+    priority: move.priority,
+    target: move.target,
+    shortDesc: move.shortDesc || "",
+    desc: move.desc || "",
+  }));
+
+const battleData = {
+  meta: {
+    generatedAt: new Date().toISOString(),
+    source: "@pkmn/dex",
+    abilityCount: abilities.length,
+    moveCount: moves.length,
+  },
+  abilities,
+  moves,
+};
+
+await mkdir(outputDir, { recursive: true });
+await writeFile(pokemonOutputFile, `${JSON.stringify(database, null, 2)}\n`, "utf8");
+await writeFile(battleOutputFile, `${JSON.stringify(battleData, null, 2)}\n`, "utf8");
+
+console.log(`Generated ${species.length} Pokemon entries at ${path.relative(rootDir, pokemonOutputFile)}`);
+console.log(
+  `Generated ${moves.length} moves and ${abilities.length} abilities at ${path.relative(rootDir, battleOutputFile)}`,
+);

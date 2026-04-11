@@ -22,6 +22,13 @@ import {
   type PokemonRecord,
 } from "./lib/pokemonDb";
 import {
+  getMovePokemonType,
+  isSpreadTarget,
+  loadBattleData,
+  type AbilityRecord,
+  type MoveRecord,
+} from "./lib/battleData";
+import {
   SPREAD_MOVE_MULTIPLIER,
   calculateRoughDamage,
   getLevel50HpValue,
@@ -201,6 +208,30 @@ function formatFlatMultiplier(value: number) {
   }
 
   return `${value.toFixed(value % 1 === 0 ? 0 : 2)}x`;
+}
+
+function formatMoveAccuracy(accuracy: number | true) {
+  return accuracy === true ? "Always hits" : `${accuracy}%`;
+}
+
+function formatMoveTarget(target: string) {
+  const labels: Record<string, string> = {
+    normal: "Single target",
+    adjacentAlly: "Adjacent ally",
+    adjacentAllyOrSelf: "Ally or self",
+    adjacentFoe: "Adjacent foe",
+    allAdjacent: "All adjacent",
+    allAdjacentFoes: "All adjacent foes",
+    allySide: "Ally side",
+    foeSide: "Foe side",
+    all: "All Pokemon",
+    scripted: "Scripted",
+    self: "Self",
+    any: "Any target",
+    randomNormal: "Random foe",
+  };
+
+  return labels[target] ?? target;
 }
 
 function getPokemonDefensiveMultiplier(pokemon: PokemonRecord, attackType: PokemonType) {
@@ -1169,12 +1200,16 @@ function TeamBuilderView() {
   const [opponentQueries, setOpponentQueries] = useState<string[]>(createEmptyOpponentSlots);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [database, setDatabase] = useState<PokemonRecord[] | null>(null);
+  const [battleData, setBattleData] = useState<{ abilities: AbilityRecord[]; moves: MoveRecord[] } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [battleDataError, setBattleDataError] = useState<string | null>(null);
   const [teamName, setTeamName] = useState("My Team");
   const [savedTeams, setSavedTeams] = useState<PersistedTeam[]>([]);
   const [storageMessage, setStorageMessage] = useState<string | null>(null);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [activeSavedTeamId, setActiveSavedTeamId] = useState<string | null>(null);
+  const [quickPokemonQuery, setQuickPokemonQuery] = useState("");
+  const [quickMoveQuery, setQuickMoveQuery] = useState("");
   const [teamSlots, setTeamSlots] = useState<TeamSlotState[]>(
     Array.from({ length: TEAM_SIZE }, createEmptyTeamSlot),
   );
@@ -1202,6 +1237,21 @@ function TeamBuilderView() {
       .catch((error) => {
         if (active) {
           setLoadError(error instanceof Error ? error.message : "Failed to load Pokemon database.");
+        }
+      });
+
+    loadBattleData()
+      .then((data) => {
+        if (active) {
+          setBattleData({
+            abilities: data.abilities,
+            moves: data.moves,
+          });
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setBattleDataError(error instanceof Error ? error.message : "Failed to load move and ability data.");
         }
       });
 
@@ -1233,6 +1283,28 @@ function TeamBuilderView() {
 
     return map;
   }, [database]);
+
+  const abilityByKey = useMemo(() => {
+    const map = new Map<string, AbilityRecord>();
+
+    for (const ability of battleData?.abilities ?? []) {
+      map.set(ability.id, ability);
+      map.set(ability.name.toLowerCase(), ability);
+    }
+
+    return map;
+  }, [battleData]);
+
+  const moveByKey = useMemo(() => {
+    const map = new Map<string, MoveRecord>();
+
+    for (const move of battleData?.moves ?? []) {
+      map.set(move.id, move);
+      map.set(move.name.toLowerCase(), move);
+    }
+
+    return map;
+  }, [battleData]);
 
   const team = useMemo(
     () =>
@@ -1301,6 +1373,26 @@ function TeamBuilderView() {
         ),
     [opponentRoster],
   );
+
+  const quickPokemon = useMemo(() => {
+    const trimmed = quickPokemonQuery.trim();
+
+    if (!trimmed) {
+      return null;
+    }
+
+    return pokemonByKey.get(trimmed.toLowerCase()) ?? pokemonByKey.get(trimmed) ?? null;
+  }, [pokemonByKey, quickPokemonQuery]);
+
+  const quickMove = useMemo(() => {
+    const trimmed = quickMoveQuery.trim();
+
+    if (!trimmed) {
+      return null;
+    }
+
+    return moveByKey.get(trimmed.toLowerCase()) ?? moveByKey.get(trimmed) ?? null;
+  }, [moveByKey, quickMoveQuery]);
 
   const filledLeadOptions = useMemo(
     () =>
@@ -1688,6 +1780,72 @@ function TeamBuilderView() {
     selectedDamageDefenderPokemon,
   ]);
 
+  const quickPokemonAbilities = useMemo(() => {
+    if (!quickPokemon) {
+      return [];
+    }
+
+    return Object.entries(quickPokemon.abilities)
+      .map(([slot, abilityName]) => {
+        const ability = abilityByKey.get(abilityName.toLowerCase()) ?? null;
+
+        return {
+          slot,
+          name: abilityName,
+          ability,
+        };
+      })
+      .filter((entry) => Boolean(entry.name));
+  }, [abilityByKey, quickPokemon]);
+
+  const quickPokemonWeakTypes = useMemo(() => {
+    if (!quickPokemon) {
+      return [];
+    }
+
+    return TYPE_ORDER.filter(
+      (attackType) => (getPokemonDefensiveMultiplier(quickPokemon, attackType) ?? 1) > 1,
+    );
+  }, [quickPokemon]);
+
+  const quickMoveEstimate = useMemo(() => {
+    if (!quickMove || !currentDamageAttackerPokemon || !currentDamageDefenderPokemon) {
+      return null;
+    }
+
+    if (quickMove.category === "Status" || quickMove.basePower <= 0) {
+      return null;
+    }
+
+    const moveType = getMovePokemonType(quickMove);
+
+    if (!moveType) {
+      return null;
+    }
+
+    return calculateRoughDamage({
+      attacker: currentDamageAttackerPokemon,
+      defender: currentDamageDefenderPokemon,
+      attackType: moveType,
+      basePower: quickMove.basePower,
+      category: quickMove.category.toLowerCase() as DamageCategory,
+      isSpreadMove: isSpreadTarget(quickMove.target),
+      weather: damageWeather,
+      terrain: damageTerrain,
+      attackerGrounded: damageCalcMode === "attack" ? damageAttackerGrounded : damageDefenderGrounded,
+      defenderGrounded: damageCalcMode === "attack" ? damageDefenderGrounded : damageAttackerGrounded,
+    });
+  }, [
+    currentDamageAttackerPokemon,
+    currentDamageDefenderPokemon,
+    damageAttackerGrounded,
+    damageCalcMode,
+    damageDefenderGrounded,
+    damageTerrain,
+    damageWeather,
+    quickMove,
+  ]);
+
   const updateOpenerSelection = (openerIndex: number, memberIndex: 0 | 1, slotIndex: number) => {
     setOpenerSelections((current) => {
       const next = [...current] as [OpenerSelection, OpenerSelection];
@@ -1939,210 +2097,262 @@ function TeamBuilderView() {
           )}
         </section>
 
-        <aside className="board-panel lead-panel">
-          <div className="lead-panel-header">
-            <p className="eyebrow">Possible Leads</p>
-            <span className="lead-available-count">{filledLeadOptions.length} Available</span>
+        <aside className="board-panel quick-search-panel">
+          <div className="quick-search-header">
+            <div>
+              <p className="eyebrow">Quick Search</p>
+              <h2>Pokemon and move lookup</h2>
+            </div>
+            <span className="lead-available-count">
+              {battleData ? `${battleData.moves.length} moves loaded` : "Loading data"}
+            </span>
           </div>
 
-          {filledLeadOptions.length === 0 ? (
-            <div className="matchup-empty-board">Add Pokemon to choose lead combinations.</div>
-          ) : (
-            <>
-              <div className="lead-control-panel">
-                {(["A", "B"] as const).map((label, openerIndex) => (
-                  <div key={label} className="opener-builder">
-                    <div className="lead-controls-header">
-                      <span>Opener {label}</span>
+          <div className="quick-search-stack">
+            <section className="quick-search-card">
+              <div className="coverage-preview-header">
+                <p className="eyebrow">Pokemon Lookup</p>
+                <span>{quickPokemon ? quickPokemon.name : "Search by name"}</span>
+              </div>
+              <label className="team-input-label" htmlFor="quick-pokemon-search">
+                Pokemon
+              </label>
+              <input
+                id="quick-pokemon-search"
+                list="pokemon-options"
+                className="team-pokemon-input"
+                placeholder={database ? "Search Pokemon" : "Loading local database..."}
+                value={quickPokemonQuery}
+                onChange={(event) => setQuickPokemonQuery(event.target.value)}
+                disabled={!database}
+              />
+
+              {quickPokemon ? (
+                <article className="quick-summary-card">
+                  <div className="quick-summary-top">
+                    <div>
+                      <p className="eyebrow">Pokemon</p>
+                      <h3>{quickPokemon.name}</h3>
                     </div>
-                    <div className="lead-selectors">
-                      {[0, 1].map((memberIndex) => (
-                        <label key={`${label}-${memberIndex}`} className="lead-select">
-                          <span>{memberIndex === 0 ? "Slot 1" : "Slot 2"}</span>
-                          <select
-                            value={openerSelections[openerIndex][memberIndex] ?? ""}
-                            onChange={(event) =>
-                              updateOpenerSelection(openerIndex, memberIndex as 0 | 1, Number(event.target.value))
+                    <PokemonSprite pokemon={quickPokemon} className="quick-summary-sprite" />
+                  </div>
+
+                  <div className="team-type-list">
+                    {quickPokemon.types.map((typeLabel) => {
+                      const type = getTypeFromLabel(typeLabel);
+                      if (!type) {
+                        return null;
+                      }
+
+                      return (
+                        <span
+                          key={`${quickPokemon.id}-${type}`}
+                          className="inline-type-pill"
+                          style={
+                            {
+                              "--type-color": TYPE_META[type].color,
+                              "--type-accent": TYPE_META[type].accent,
+                            } as CSSProperties
+                          }
+                        >
+                          <img src={getTypeIconUrl(type)} alt="" aria-hidden="true" loading="lazy" />
+                          {TYPE_META[type].label}
+                        </span>
+                      );
+                    })}
+                  </div>
+
+                  <div className="quick-meta-row">
+                    <span>Dex #{quickPokemon.num}</span>
+                    <span>BST {quickPokemon.bst}</span>
+                    <span>Tier {quickPokemon.doublesTier ?? quickPokemon.tier ?? "Unlisted"}</span>
+                    {quickPokemon.heightm ? <span>{quickPokemon.heightm}m</span> : null}
+                    {quickPokemon.weightkg ? <span>{quickPokemon.weightkg}kg</span> : null}
+                  </div>
+
+                  <div className="pokemon-stats-panel">
+                    <div className="pokemon-stats-grid">
+                      <span className="pokemon-stat-chip">
+                        <strong>HP</strong>
+                        <em>{quickPokemon.baseStats.hp}</em>
+                      </span>
+                      <span className="pokemon-stat-chip">
+                        <strong>Atk</strong>
+                        <em>{quickPokemon.baseStats.atk}</em>
+                      </span>
+                      <span className="pokemon-stat-chip">
+                        <strong>Def</strong>
+                        <em>{quickPokemon.baseStats.def}</em>
+                      </span>
+                      <span className="pokemon-stat-chip">
+                        <strong>SpA</strong>
+                        <em>{quickPokemon.baseStats.spa}</em>
+                      </span>
+                      <span className="pokemon-stat-chip">
+                        <strong>SpD</strong>
+                        <em>{quickPokemon.baseStats.spd}</em>
+                      </span>
+                      <span className="pokemon-stat-chip">
+                        <strong>Spe</strong>
+                        <em>{quickPokemon.baseStats.spe}</em>
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="lead-section">
+                    <span className="lead-section-label weak">Weak To</span>
+                    <div className="coverage-chip-list">
+                      {quickPokemonWeakTypes.length > 0 ? (
+                        quickPokemonWeakTypes.map((type) => (
+                          <span
+                            key={`${quickPokemon.id}-quick-weak-${type}`}
+                            className="mini-type-pill"
+                            style={
+                              {
+                                "--type-color": TYPE_META[type].color,
+                                "--type-accent": TYPE_META[type].accent,
+                              } as CSSProperties
                             }
                           >
-                            {filledLeadOptions.map(({ index, slot }) => (
-                              <option key={`${label}-${memberIndex}-${index}`} value={index}>
-                                {slot.pokemon?.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
+                            {TYPE_META[type].label}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="subtle-empty">No listed weaknesses.</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="lead-section">
+                    <span className="lead-section-label cover">Abilities</span>
+                    <div className="quick-ability-list">
+                      {quickPokemonAbilities.map((entry) => (
+                        <article key={`${quickPokemon.id}-${entry.slot}-${entry.name}`} className="quick-ability-card">
+                          <div className="quick-ability-header">
+                            <strong>{entry.name}</strong>
+                          </div>
+                          <p>{entry.ability?.desc || entry.ability?.shortDesc || "No description found."}</p>
+                        </article>
                       ))}
                     </div>
                   </div>
-                ))}
+                </article>
+              ) : (
+                <div className="team-slot-empty">
+                  {battleDataError || "Search a Pokemon to see stats, weaknesses, and ability details."}
+                </div>
+              )}
+            </section>
+
+            <section className="quick-search-card">
+              <div className="coverage-preview-header">
+                <p className="eyebrow">Move Lookup</p>
+                <span>{quickMove ? quickMove.name : "Search by move name"}</span>
               </div>
+              <label className="team-input-label" htmlFor="quick-move-search">
+                Move
+              </label>
+              <input
+                id="quick-move-search"
+                list="move-options"
+                className="team-pokemon-input"
+                placeholder={battleData ? "Search moves" : "Loading move data..."}
+                value={quickMoveQuery}
+                onChange={(event) => setQuickMoveQuery(event.target.value)}
+                disabled={!battleData}
+              />
 
-              <div className="lead-cards">
-                {openerSummaries.map((opener, idx) =>
-                  opener ? (
-                    <article
-                      key={opener.label}
-                      className={`lead-card ${idx === 0 ? "lead-a-card" : "lead-b-card"}`}
-                    >
-                      <div className="lead-card-top">
-                        <div>
-                          <p className="eyebrow">{opener.label}</p>
-                          <h3>
-                            {opener.members.map((member) => member.pokemon.name).join(" + ")}
-                          </h3>
+              {quickMove ? (
+                <article className="quick-summary-card">
+                  <div className="quick-summary-top">
+                    <div>
+                      <p className="eyebrow">Move</p>
+                      <h3>{quickMove.name}</h3>
+                    </div>
+                    {(() => {
+                      const moveType = getMovePokemonType(quickMove);
+
+                      return moveType ? (
+                        <span
+                          className="inline-type-pill"
+                          style={
+                            {
+                              "--type-color": TYPE_META[moveType].color,
+                              "--type-accent": TYPE_META[moveType].accent,
+                            } as CSSProperties
+                          }
+                        >
+                          <img src={getTypeIconUrl(moveType)} alt="" aria-hidden="true" loading="lazy" />
+                          {TYPE_META[moveType].label}
+                        </span>
+                      ) : (
+                        <span className="lead-available-count">Unknown Type</span>
+                      );
+                    })()}
+                  </div>
+
+                  <div className="quick-meta-row">
+                    <span>{quickMove.category}</span>
+                    <span>Power {quickMove.basePower > 0 ? quickMove.basePower : "--"}</span>
+                    <span>Acc {formatMoveAccuracy(quickMove.accuracy)}</span>
+                    <span>PP {quickMove.pp}</span>
+                    <span>Priority {quickMove.priority >= 0 ? `+${quickMove.priority}` : quickMove.priority}</span>
+                    <span>{formatMoveTarget(quickMove.target)}</span>
+                    {isSpreadTarget(quickMove.target) ? <span>Spread Penalty</span> : null}
+                  </div>
+
+                  <div className="lead-section">
+                    <span className="lead-section-label cover">Effect</span>
+                    <div className="quick-effect-copy">
+                      <p>{quickMove.desc || quickMove.shortDesc || "No effect text found."}</p>
+                    </div>
+                  </div>
+
+                  {quickMoveEstimate ? (
+                    <div className="lead-section">
+                      <span className="lead-section-label speed">Damage vs Current Matchup</span>
+                      <div className="damage-result-card ready">
+                        <div className="damage-result-topline">
+                          <strong>{formatPercent(quickMoveEstimate.averagePercent)}%</strong>
+                          <span>
+                            {formatPercent(quickMoveEstimate.minPercent)}% -{" "}
+                            {formatPercent(quickMoveEstimate.maxPercent)}%
+                          </span>
+                        </div>
+                        <p>
+                          {currentDamageAttackerPokemon?.name} into {currentDamageDefenderPokemon?.name}
+                        </p>
+                        <div className="damage-modifier-row">
+                          <span>STAB {formatFlatMultiplier(quickMoveEstimate.stabMultiplier)}</span>
+                          <span>Type {formatFlatMultiplier(quickMoveEstimate.typeMultiplier)}</span>
+                          <span>Spread {formatFlatMultiplier(quickMoveEstimate.spreadMultiplier)}</span>
+                          <span>Weather {formatFlatMultiplier(quickMoveEstimate.weatherMultiplier)}</span>
+                          <span>Terrain {formatFlatMultiplier(quickMoveEstimate.terrainMultiplier)}</span>
                         </div>
                       </div>
-
-                      <div className="opener-member-strip">
-                        {opener.members.map((member) => (
-                          <div key={`${opener.label}-${member.slotIndex}`} className="opener-member-chip">
-                            <PokemonSprite pokemon={member.pokemon} className="lead-card-sprite" />
-                            <div className="opener-member-meta">
-                              <strong>{member.pokemon.name}</strong>
-                              <div className="team-type-list">
-                                {member.pokemon.types.map((typeLabel) => {
-                                  const type = getTypeFromLabel(typeLabel);
-                                  if (!type) {
-                                    return null;
-                                  }
-
-                                  return (
-                                    <span
-                                      key={`${member.pokemon.id}-${type}`}
-                                      className="inline-type-pill"
-                                      style={
-                                        {
-                                          "--type-color": TYPE_META[type].color,
-                                          "--type-accent": TYPE_META[type].accent,
-                                        } as CSSProperties
-                                      }
-                                    >
-                                      <img src={getTypeIconUrl(type)} alt="" aria-hidden="true" loading="lazy" />
-                                      {TYPE_META[type].label}
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          </div>
-                        ))}
+                    </div>
+                  ) : (
+                    <div className="lead-section">
+                      <span className="lead-section-label speed">Damage</span>
+                      <div className="quick-effect-copy">
+                        <p>
+                          {quickMove.category === "Status" || quickMove.basePower <= 0
+                            ? "Status move, so there is no damage roll to show."
+                            : currentDamageAttackerPokemon && currentDamageDefenderPokemon
+                              ? "This move could not be converted into a calculator type."
+                              : "Pick a matchup in the damage calculator to preview this move’s rough damage."}
+                        </p>
                       </div>
-
-                      <div className="lead-section">
-                        <span className="lead-section-label weak">Shared Weak</span>
-                        <div className="coverage-chip-list">
-                          {opener.sharedWeakTypes.length > 0 ? (
-                            opener.sharedWeakTypes.map((type) => (
-                              <span
-                                key={`${opener.label}-shared-weak-${type}`}
-                                className="mini-type-pill"
-                                style={
-                                  {
-                                    "--type-color": TYPE_META[type].color,
-                                    "--type-accent": TYPE_META[type].accent,
-                                  } as CSSProperties
-                                }
-                              >
-                                {TYPE_META[type].label}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="subtle-empty">No shared weaknesses.</span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="lead-section">
-                        <span className="lead-section-label speed">Speed Tiers</span>
-                        <div className="speed-tier-list">
-                          {opener.speedTiers.map((entry, speedIndex) => (
-                            <div key={`${opener.label}-speed-${entry.pokemonId}`} className="speed-tier-chip">
-                              <span className="speed-tier-rank">#{speedIndex + 1}</span>
-                              <span className="speed-tier-name">{entry.name}</span>
-                              <span className="speed-tier-stat">Spe {entry.speed}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="lead-section">
-                        <span className="lead-section-label resist">Cover Each Other</span>
-                        <div className="coverage-chip-list">
-                          {opener.pivotCoverTypes.length > 0 ? (
-                            opener.pivotCoverTypes.map((type) => (
-                              <span
-                                key={`${opener.label}-pivot-${type}`}
-                                className="mini-type-pill"
-                                style={
-                                  {
-                                    "--type-color": TYPE_META[type].color,
-                                    "--type-accent": TYPE_META[type].accent,
-                                  } as CSSProperties
-                                }
-                              >
-                                {TYPE_META[type].label}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="subtle-empty">No defensive cover swaps yet.</span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="lead-section">
-                        <span className="lead-section-label resist">Shared Resist</span>
-                        <div className="coverage-chip-list">
-                          {opener.sharedResistTypes.length > 0 ? (
-                            opener.sharedResistTypes.map((type) => (
-                              <span
-                                key={`${opener.label}-shared-resist-${type}`}
-                                className="mini-type-pill"
-                                style={
-                                  {
-                                    "--type-color": TYPE_META[type].color,
-                                    "--type-accent": TYPE_META[type].accent,
-                                  } as CSSProperties
-                                }
-                              >
-                                {TYPE_META[type].label}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="subtle-empty">No shared resistances.</span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="lead-section">
-                        <span className="lead-section-label cover">Combined Coverage</span>
-                        <div className="coverage-chip-list">
-                          {opener.combinedCoverTypes.length > 0 ? (
-                            opener.combinedCoverTypes.map((type) => (
-                              <span
-                                key={`${opener.label}-cover-${type}`}
-                                className="mini-type-pill"
-                                style={
-                                  {
-                                    "--type-color": TYPE_META[type].color,
-                                    "--type-accent": TYPE_META[type].accent,
-                                  } as CSSProperties
-                                }
-                              >
-                                {TYPE_META[type].label}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="subtle-empty">No super-effective coverage yet.</span>
-                          )}
-                        </div>
-                      </div>
-                    </article>
-                  ) : null,
-                )}
-              </div>
-            </>
-          )}
+                    </div>
+                  )}
+                </article>
+              ) : (
+                <div className="team-slot-empty">
+                  {battleDataError || "Search a move to see power, targeting, effects, and rough damage."}
+                </div>
+              )}
+            </section>
+          </div>
         </aside>
       </section>
 
@@ -2844,6 +3054,12 @@ function TeamBuilderView() {
       <datalist id="pokemon-options">
         {(database ?? []).map((pokemon) => (
           <option key={pokemon.id} value={pokemon.name} />
+        ))}
+      </datalist>
+
+      <datalist id="move-options">
+        {(battleData?.moves ?? []).map((move) => (
+          <option key={move.id} value={move.name} />
         ))}
       </datalist>
     </>
