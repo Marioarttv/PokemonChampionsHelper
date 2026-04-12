@@ -43,6 +43,7 @@ import {
   listSavedTeams,
   saveTeam,
   type PersistedAttackTypeDefaults,
+  type PersistedAttackTypeSpreadDefaults,
   type PersistedOpenerSelection,
   type PersistedTeam,
   type PersistedTeamSlot,
@@ -71,6 +72,7 @@ type TeamSlotState = {
   pokemonId: string | null;
   attackTypes: PokemonType[];
   attackTypeDefaults: PersistedAttackTypeDefaults;
+  attackTypeSpreadDefaults: PersistedAttackTypeSpreadDefaults;
 };
 
 type TeamMatrixMode = "defense" | "offense";
@@ -148,6 +150,7 @@ function createEmptyTeamSlot(): TeamSlotState {
     pokemonId: null,
     attackTypes: [],
     attackTypeDefaults: {},
+    attackTypeSpreadDefaults: {},
   };
 }
 
@@ -238,6 +241,25 @@ function sanitizeAttackTypeDefaults(
 
     if (typeof value === "number" && Number.isFinite(value) && value > 0) {
       sanitized[type] = Math.floor(value);
+    }
+  }
+
+  return sanitized;
+}
+
+function sanitizeAttackTypeSpreadDefaults(
+  defaults: Partial<Record<string, boolean | null | undefined>>,
+  allowedTypes?: PokemonType[],
+): PersistedAttackTypeSpreadDefaults {
+  const sanitized: PersistedAttackTypeSpreadDefaults = {};
+
+  for (const type of TYPE_ORDER) {
+    if (allowedTypes && !allowedTypes.includes(type)) {
+      continue;
+    }
+
+    if (defaults[type]) {
+      sanitized[type] = true;
     }
   }
 
@@ -585,6 +607,10 @@ function normalizeTeamSlots(slots: PersistedTeamSlot[]) {
       pokemonId: slot.pokemonId ?? null,
       attackTypes: slot.attackTypes ?? [],
       attackTypeDefaults: sanitizeAttackTypeDefaults(slot.attackTypeDefaults ?? {}, slot.attackTypes ?? []),
+      attackTypeSpreadDefaults: sanitizeAttackTypeSpreadDefaults(
+        slot.attackTypeSpreadDefaults ?? {},
+        slot.attackTypes ?? [],
+      ),
     };
   });
 }
@@ -743,6 +769,7 @@ type TeamSlotCardProps = {
     slotIndex: number,
     attackTypes: PokemonType[],
     attackTypeDefaults: PersistedAttackTypeDefaults,
+    attackTypeSpreadDefaults: PersistedAttackTypeSpreadDefaults,
   ) => void;
 };
 
@@ -761,11 +788,14 @@ function TeamSlotCard({
   const [draftAttackTypeDefaults, setDraftAttackTypeDefaults] = useState<PersistedAttackTypeDefaults>(
     slot.attackTypeDefaults,
   );
+  const [draftAttackTypeSpreadDefaults, setDraftAttackTypeSpreadDefaults] =
+    useState<PersistedAttackTypeSpreadDefaults>(slot.attackTypeSpreadDefaults);
 
   useEffect(() => {
     setDraftAttackTypes(slot.attackTypes);
     setDraftAttackTypeDefaults(slot.attackTypeDefaults);
-  }, [slot.attackTypeDefaults, slot.attackTypes, slot.pokemonId]);
+    setDraftAttackTypeSpreadDefaults(slot.attackTypeSpreadDefaults);
+  }, [slot.attackTypeDefaults, slot.attackTypeSpreadDefaults, slot.attackTypes, slot.pokemonId]);
 
   useEffect(() => {
     setShowStatsDetails(false);
@@ -794,6 +824,11 @@ function TeamSlotCard({
           delete nextDefaults[attackType];
           return nextDefaults;
         });
+        setDraftAttackTypeSpreadDefaults((draftSpreadDefaults) => {
+          const nextSpreadDefaults = { ...draftSpreadDefaults };
+          delete nextSpreadDefaults[attackType];
+          return nextSpreadDefaults;
+        });
         return current.filter((type) => type !== attackType);
       }
 
@@ -806,13 +841,19 @@ function TeamSlotCard({
   };
 
   const applyAttackTypes = () => {
-    onApplyAttackTypes(slotIndex, draftAttackTypes, sanitizeAttackTypeDefaults(draftAttackTypeDefaults, draftAttackTypes));
+    onApplyAttackTypes(
+      slotIndex,
+      draftAttackTypes,
+      sanitizeAttackTypeDefaults(draftAttackTypeDefaults, draftAttackTypes),
+      sanitizeAttackTypeSpreadDefaults(draftAttackTypeSpreadDefaults, draftAttackTypes),
+    );
     setIsEditingAttacks(false);
   };
 
   const cancelAttackEdit = () => {
     setDraftAttackTypes(slot.attackTypes);
     setDraftAttackTypeDefaults(slot.attackTypeDefaults);
+    setDraftAttackTypeSpreadDefaults(slot.attackTypeSpreadDefaults);
     setIsEditingAttacks(false);
   };
 
@@ -827,6 +868,20 @@ function TeamSlotCard({
       }
 
       next[attackType] = Math.floor(parsed);
+      return next;
+    });
+  };
+
+  const toggleDraftAttackTypeSpreadDefault = (attackType: PokemonType) => {
+    setDraftAttackTypeSpreadDefaults((current) => {
+      const next = { ...current };
+
+      if (next[attackType]) {
+        delete next[attackType];
+      } else {
+        next[attackType] = true;
+      }
+
       return next;
     });
   };
@@ -997,6 +1052,7 @@ function TeamSlotCard({
                     {slot.attackTypeDefaults[type] ? (
                       <em className="inline-type-detail">{slot.attackTypeDefaults[type]} BP</em>
                     ) : null}
+                    {slot.attackTypeSpreadDefaults[type] ? <em className="inline-type-detail">Spread</em> : null}
                   </span>
                 ))
               ) : (
@@ -1069,6 +1125,15 @@ function TeamSlotCard({
                             value={getAttackTypeDefaultDisplay(draftAttackTypeDefaults, type)}
                             onChange={(event) => updateDraftAttackTypeDefault(type, event.target.value)}
                           />
+                          <button
+                            type="button"
+                            className={`attack-default-toggle ${
+                              draftAttackTypeSpreadDefaults[type] ? "active" : ""
+                            }`}
+                            onClick={() => toggleDraftAttackTypeSpreadDefault(type)}
+                          >
+                            Spread
+                          </button>
                         </label>
                       ))}
                     </div>
@@ -1552,6 +1617,7 @@ function TeamBuilderView() {
               pokemonId: match?.id ?? null,
               attackTypes: match ? slot.attackTypes : [],
               attackTypeDefaults: match ? slot.attackTypeDefaults : {},
+              attackTypeSpreadDefaults: match ? slot.attackTypeSpreadDefaults : {},
             }
           : slot,
       ),
@@ -1568,6 +1634,7 @@ function TeamBuilderView() {
     slotIndex: number,
     attackTypes: PokemonType[],
     attackTypeDefaults: PersistedAttackTypeDefaults,
+    attackTypeSpreadDefaults: PersistedAttackTypeSpreadDefaults,
   ) => {
     setTeamSlots((current) =>
       current.map((slot, index) => {
@@ -1579,6 +1646,7 @@ function TeamBuilderView() {
           ...slot,
           attackTypes,
           attackTypeDefaults,
+          attackTypeSpreadDefaults,
         };
       }),
     );
@@ -1637,7 +1705,7 @@ function TeamBuilderView() {
       id: activeSavedTeamId ?? "exported-team",
       name: teamName.trim() || "My Team",
       updatedAt: new Date().toISOString(),
-      version: 3,
+      version: 4,
       slots: teamSlots,
       openerSelections,
     };
@@ -1795,6 +1863,7 @@ function TeamBuilderView() {
       : null;
   const selectedDamageAttackTypes = selectedDamageAttacker?.attackTypes ?? [];
   const selectedDamageAttackDefaults = selectedDamageAttacker?.attackTypeDefaults ?? {};
+  const selectedDamageAttackSpreadDefaults = selectedDamageAttacker?.attackTypeSpreadDefaults ?? {};
   const selectedDamageAttackerPokemon = selectedDamageAttacker?.pokemon ?? null;
   const selectedDamageDefenderPokemon = selectedDamageDefender?.pokemon ?? null;
   const currentDamageAttackerPokemon =
@@ -1825,7 +1894,10 @@ function TeamBuilderView() {
     const storedConfigs = damageMoveConfigs[configKey] ?? {};
 
     return selectedDamageAttackTypes.map((attackType) => {
-      const config = storedConfigs[attackType] ?? createDefaultDamageMoveConfig(selectedDamageAttackerPokemon);
+      const config = storedConfigs[attackType] ?? {
+        ...createDefaultDamageMoveConfig(selectedDamageAttackerPokemon),
+        isSpreadMove: selectedDamageAttackSpreadDefaults[attackType] ?? false,
+      };
       const defaultPower = selectedDamageAttackDefaults[attackType] ?? null;
       const parsedPower = config.power.trim() ? Number(config.power) : defaultPower;
       const basePower = Number.isFinite(parsedPower) && (parsedPower ?? 0) > 0 ? parsedPower : null;
@@ -1864,6 +1936,7 @@ function TeamBuilderView() {
     damageMoveConfigs,
     selectedDamageAttackTypes,
     selectedDamageAttackDefaults,
+    selectedDamageAttackSpreadDefaults,
     selectedDamageAttackerPokemon,
     selectedDamageDefenderPokemon,
   ]);
