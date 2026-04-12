@@ -1,9 +1,12 @@
 import type { PokemonType } from "../data/typeChart";
 
+export type PersistedAttackTypeDefaults = Partial<Record<PokemonType, number>>;
+
 export type PersistedTeamSlot = {
   query: string;
   pokemonId: string | null;
   attackTypes: PokemonType[];
+  attackTypeDefaults?: PersistedAttackTypeDefaults;
 };
 
 export type PersistedOpenerSelection = [number | null, number | null];
@@ -12,7 +15,7 @@ export type PersistedTeam = {
   id: string;
   name: string;
   updatedAt: string;
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   slots: PersistedTeamSlot[];
   openerSelections?: PersistedOpenerSelection[];
 };
@@ -75,7 +78,7 @@ export async function saveTeam(team: Omit<PersistedTeam, "id" | "updatedAt" | "v
       : `team-${Date.now()}`),
     name: team.name,
     updatedAt: new Date().toISOString(),
-    version: 2,
+    version: 3,
     slots: team.slots,
     openerSelections: team.openerSelections,
   };

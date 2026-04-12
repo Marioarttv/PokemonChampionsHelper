@@ -33,6 +33,7 @@ import {
   calculateRoughDamage,
   getLevel50HpValue,
   getLevel50OtherStatValue,
+  getStatStageMultiplier,
   type DamageCategory,
   type DamageTerrain,
   type DamageWeather,
@@ -41,6 +42,7 @@ import {
   deleteSavedTeam,
   listSavedTeams,
   saveTeam,
+  type PersistedAttackTypeDefaults,
   type PersistedOpenerSelection,
   type PersistedTeam,
   type PersistedTeamSlot,
@@ -68,6 +70,7 @@ type TeamSlotState = {
   query: string;
   pokemonId: string | null;
   attackTypes: PokemonType[];
+  attackTypeDefaults: PersistedAttackTypeDefaults;
 };
 
 type TeamMatrixMode = "defense" | "offense";
@@ -144,6 +147,7 @@ function createEmptyTeamSlot(): TeamSlotState {
     query: "",
     pokemonId: null,
     attackTypes: [],
+    attackTypeDefaults: {},
   };
 }
 
@@ -208,6 +212,36 @@ function formatFlatMultiplier(value: number) {
   }
 
   return `${value.toFixed(value % 1 === 0 ? 0 : 2)}x`;
+}
+
+function clampStatStage(value: number) {
+  return Math.max(-6, Math.min(6, value));
+}
+
+function getAttackTypeDefaultDisplay(defaults: PersistedAttackTypeDefaults, attackType: PokemonType) {
+  const value = defaults[attackType];
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "";
+}
+
+function sanitizeAttackTypeDefaults(
+  defaults: Partial<Record<string, number | null | undefined>>,
+  allowedTypes?: PokemonType[],
+): PersistedAttackTypeDefaults {
+  const sanitized: PersistedAttackTypeDefaults = {};
+
+  for (const type of TYPE_ORDER) {
+    if (allowedTypes && !allowedTypes.includes(type)) {
+      continue;
+    }
+
+    const value = defaults[type];
+
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      sanitized[type] = Math.floor(value);
+    }
+  }
+
+  return sanitized;
 }
 
 function formatMoveAccuracy(accuracy: number | true) {
@@ -550,6 +584,7 @@ function normalizeTeamSlots(slots: PersistedTeamSlot[]) {
       query: slot.query ?? "",
       pokemonId: slot.pokemonId ?? null,
       attackTypes: slot.attackTypes ?? [],
+      attackTypeDefaults: sanitizeAttackTypeDefaults(slot.attackTypeDefaults ?? {}, slot.attackTypes ?? []),
     };
   });
 }
@@ -704,7 +739,11 @@ type TeamSlotCardProps = {
   loadError: string | null;
   onQueryChange: (slotIndex: number, query: string) => void;
   onClear: (slotIndex: number) => void;
-  onApplyAttackTypes: (slotIndex: number, attackTypes: PokemonType[]) => void;
+  onApplyAttackTypes: (
+    slotIndex: number,
+    attackTypes: PokemonType[],
+    attackTypeDefaults: PersistedAttackTypeDefaults,
+  ) => void;
 };
 
 function TeamSlotCard({
@@ -719,10 +758,14 @@ function TeamSlotCard({
   const [isEditingAttacks, setIsEditingAttacks] = useState(false);
   const [showStatsDetails, setShowStatsDetails] = useState(false);
   const [draftAttackTypes, setDraftAttackTypes] = useState<PokemonType[]>(slot.attackTypes);
+  const [draftAttackTypeDefaults, setDraftAttackTypeDefaults] = useState<PersistedAttackTypeDefaults>(
+    slot.attackTypeDefaults,
+  );
 
   useEffect(() => {
     setDraftAttackTypes(slot.attackTypes);
-  }, [slot.attackTypes, slot.pokemonId]);
+    setDraftAttackTypeDefaults(slot.attackTypeDefaults);
+  }, [slot.attackTypeDefaults, slot.attackTypes, slot.pokemonId]);
 
   useEffect(() => {
     setShowStatsDetails(false);
@@ -746,6 +789,11 @@ function TeamSlotCard({
   const toggleDraftAttackType = (attackType: PokemonType) => {
     setDraftAttackTypes((current) => {
       if (current.includes(attackType)) {
+        setDraftAttackTypeDefaults((draftDefaults) => {
+          const nextDefaults = { ...draftDefaults };
+          delete nextDefaults[attackType];
+          return nextDefaults;
+        });
         return current.filter((type) => type !== attackType);
       }
 
@@ -758,13 +806,29 @@ function TeamSlotCard({
   };
 
   const applyAttackTypes = () => {
-    onApplyAttackTypes(slotIndex, draftAttackTypes);
+    onApplyAttackTypes(slotIndex, draftAttackTypes, sanitizeAttackTypeDefaults(draftAttackTypeDefaults, draftAttackTypes));
     setIsEditingAttacks(false);
   };
 
   const cancelAttackEdit = () => {
     setDraftAttackTypes(slot.attackTypes);
+    setDraftAttackTypeDefaults(slot.attackTypeDefaults);
     setIsEditingAttacks(false);
+  };
+
+  const updateDraftAttackTypeDefault = (attackType: PokemonType, nextValue: string) => {
+    setDraftAttackTypeDefaults((current) => {
+      const next = { ...current };
+      const parsed = Number(nextValue);
+
+      if (!nextValue.trim() || !Number.isFinite(parsed) || parsed <= 0) {
+        delete next[attackType];
+        return next;
+      }
+
+      next[attackType] = Math.floor(parsed);
+      return next;
+    });
   };
 
   return (
@@ -930,6 +994,9 @@ function TeamSlotCard({
                   >
                     <img src={getTypeIconUrl(type)} alt="" aria-hidden="true" loading="lazy" />
                     {TYPE_META[type].label}
+                    {slot.attackTypeDefaults[type] ? (
+                      <em className="inline-type-detail">{slot.attackTypeDefaults[type]} BP</em>
+                    ) : null}
                   </span>
                 ))
               ) : (
@@ -972,6 +1039,41 @@ function TeamSlotCard({
                     Apply
                   </button>
                 </div>
+
+                {draftAttackTypes.length > 0 ? (
+                  <div className="attack-defaults-panel">
+                    <div className="coverage-preview-header">
+                      <p className="eyebrow">Default Base Power</p>
+                      <span>Saved for damage calc</span>
+                    </div>
+                    <div className="attack-defaults-grid">
+                      {draftAttackTypes.map((type) => (
+                        <label key={`default-${slotIndex}-${type}`} className="attack-default-field">
+                          <span
+                            className="mini-type-pill"
+                            style={
+                              {
+                                "--type-color": TYPE_META[type].color,
+                                "--type-accent": TYPE_META[type].accent,
+                              } as CSSProperties
+                            }
+                          >
+                            {TYPE_META[type].label}
+                          </span>
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            inputMode="numeric"
+                            placeholder="80"
+                            value={getAttackTypeDefaultDisplay(draftAttackTypeDefaults, type)}
+                            onChange={(event) => updateDraftAttackTypeDefault(type, event.target.value)}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
@@ -1220,6 +1322,8 @@ function TeamBuilderView() {
   const [damageTerrain, setDamageTerrain] = useState<DamageTerrain>("none");
   const [damageAttackerGrounded, setDamageAttackerGrounded] = useState(true);
   const [damageDefenderGrounded, setDamageDefenderGrounded] = useState(true);
+  const [damageAttackStage, setDamageAttackStage] = useState(0);
+  const [damageDefenseStage, setDamageDefenseStage] = useState(0);
   const [damageMoveConfigs, setDamageMoveConfigs] = useState<
     Record<string, Partial<Record<PokemonType, DamageMoveConfig>>>
   >({});
@@ -1447,6 +1551,7 @@ function TeamBuilderView() {
               query: nextQuery,
               pokemonId: match?.id ?? null,
               attackTypes: match ? slot.attackTypes : [],
+              attackTypeDefaults: match ? slot.attackTypeDefaults : {},
             }
           : slot,
       ),
@@ -1459,7 +1564,11 @@ function TeamBuilderView() {
     );
   };
 
-  const applySlotAttackTypes = (slotIndex: number, attackTypes: PokemonType[]) => {
+  const applySlotAttackTypes = (
+    slotIndex: number,
+    attackTypes: PokemonType[],
+    attackTypeDefaults: PersistedAttackTypeDefaults,
+  ) => {
     setTeamSlots((current) =>
       current.map((slot, index) => {
         if (index !== slotIndex) {
@@ -1469,6 +1578,7 @@ function TeamBuilderView() {
         return {
           ...slot,
           attackTypes,
+          attackTypeDefaults,
         };
       }),
     );
@@ -1527,7 +1637,7 @@ function TeamBuilderView() {
       id: activeSavedTeamId ?? "exported-team",
       name: teamName.trim() || "My Team",
       updatedAt: new Date().toISOString(),
-      version: 2,
+      version: 3,
       slots: teamSlots,
       openerSelections,
     };
@@ -1684,6 +1794,7 @@ function TeamBuilderView() {
       ? opponentRoster.find((entry) => entry.slotIndex === damageDefenderSlotIndex && entry.pokemon) ?? null
       : null;
   const selectedDamageAttackTypes = selectedDamageAttacker?.attackTypes ?? [];
+  const selectedDamageAttackDefaults = selectedDamageAttacker?.attackTypeDefaults ?? {};
   const selectedDamageAttackerPokemon = selectedDamageAttacker?.pokemon ?? null;
   const selectedDamageDefenderPokemon = selectedDamageDefender?.pokemon ?? null;
   const currentDamageAttackerPokemon =
@@ -1715,12 +1826,14 @@ function TeamBuilderView() {
 
     return selectedDamageAttackTypes.map((attackType) => {
       const config = storedConfigs[attackType] ?? createDefaultDamageMoveConfig(selectedDamageAttackerPokemon);
-      const parsedPower = Number(config.power);
-      const basePower = Number.isFinite(parsedPower) && parsedPower > 0 ? parsedPower : null;
+      const defaultPower = selectedDamageAttackDefaults[attackType] ?? null;
+      const parsedPower = config.power.trim() ? Number(config.power) : defaultPower;
+      const basePower = Number.isFinite(parsedPower) && (parsedPower ?? 0) > 0 ? parsedPower : null;
 
       return {
         attackType,
         config,
+        defaultPower,
         estimate:
           basePower !== null
             ? calculateRoughDamage({
@@ -1734,18 +1847,23 @@ function TeamBuilderView() {
                 terrain: damageTerrain,
                 attackerGrounded: damageAttackerGrounded,
                 defenderGrounded: damageDefenderGrounded,
+                attackerStatStage: damageAttackStage,
+                defenderStatStage: damageDefenseStage,
               })
             : null,
       };
     });
   }, [
+    damageAttackStage,
     damageAttackerGrounded,
     damageAttackerSlotIndex,
+    damageDefenseStage,
     damageDefenderGrounded,
     damageTerrain,
     damageWeather,
     damageMoveConfigs,
     selectedDamageAttackTypes,
+    selectedDamageAttackDefaults,
     selectedDamageAttackerPokemon,
     selectedDamageDefenderPokemon,
   ]);
@@ -1769,9 +1887,13 @@ function TeamBuilderView() {
       terrain: damageTerrain,
       attackerGrounded: damageDefenderGrounded,
       defenderGrounded: damageAttackerGrounded,
+      attackerStatStage: damageAttackStage,
+      defenderStatStage: damageDefenseStage,
     });
   }, [
+    damageAttackStage,
     damageAttackerGrounded,
+    damageDefenseStage,
     damageDefenderGrounded,
     damageTerrain,
     damageWeather,
@@ -1834,12 +1956,16 @@ function TeamBuilderView() {
       terrain: damageTerrain,
       attackerGrounded: damageCalcMode === "attack" ? damageAttackerGrounded : damageDefenderGrounded,
       defenderGrounded: damageCalcMode === "attack" ? damageDefenderGrounded : damageAttackerGrounded,
+      attackerStatStage: damageAttackStage,
+      defenderStatStage: damageDefenseStage,
     });
   }, [
+    damageAttackStage,
     currentDamageAttackerPokemon,
     currentDamageDefenderPokemon,
     damageAttackerGrounded,
     damageCalcMode,
+    damageDefenseStage,
     damageDefenderGrounded,
     damageTerrain,
     damageWeather,
@@ -2768,6 +2894,50 @@ function TeamBuilderView() {
                     />
                     <span>Enemy Grounded</span>
                   </label>
+
+                  <div className="damage-stage-control">
+                    <span>Attack Boost</span>
+                    <div className="damage-stage-stepper">
+                      <button
+                        type="button"
+                        className="damage-stage-button"
+                        onClick={() => setDamageAttackStage((current) => clampStatStage(current - 1))}
+                      >
+                        -
+                      </button>
+                      <strong>{damageAttackStage >= 0 ? `+${damageAttackStage}` : damageAttackStage}</strong>
+                      <button
+                        type="button"
+                        className="damage-stage-button"
+                        onClick={() => setDamageAttackStage((current) => clampStatStage(current + 1))}
+                      >
+                        +
+                      </button>
+                    </div>
+                    <em>{formatFlatMultiplier(getStatStageMultiplier(damageAttackStage))}</em>
+                  </div>
+
+                  <div className="damage-stage-control">
+                    <span>Defense Boost</span>
+                    <div className="damage-stage-stepper">
+                      <button
+                        type="button"
+                        className="damage-stage-button"
+                        onClick={() => setDamageDefenseStage((current) => clampStatStage(current - 1))}
+                      >
+                        -
+                      </button>
+                      <strong>{damageDefenseStage >= 0 ? `+${damageDefenseStage}` : damageDefenseStage}</strong>
+                      <button
+                        type="button"
+                        className="damage-stage-button"
+                        onClick={() => setDamageDefenseStage((current) => clampStatStage(current + 1))}
+                      >
+                        +
+                      </button>
+                    </div>
+                    <em>{formatFlatMultiplier(getStatStageMultiplier(damageDefenseStage))}</em>
+                  </div>
                 </div>
 
                 {damageCalcMode === "attack" ? (
@@ -2796,7 +2966,7 @@ function TeamBuilderView() {
                               min="1"
                               step="1"
                               inputMode="numeric"
-                              value={row.config.power}
+                              value={row.config.power || (row.defaultPower ? String(row.defaultPower) : "")}
                               onChange={(event) =>
                                 updateDamageMoveConfig(
                                   damageAttackerSlotIndex ?? 0,
@@ -2805,7 +2975,7 @@ function TeamBuilderView() {
                                   { power: event.target.value },
                                 )
                               }
-                              placeholder="80"
+                              placeholder={row.defaultPower ? String(row.defaultPower) : "80"}
                             />
                           </label>
                         </div>
@@ -2875,12 +3045,17 @@ function TeamBuilderView() {
                                 <span>Spread {formatFlatMultiplier(row.estimate.spreadMultiplier)}</span>
                                 <span>Weather {formatFlatMultiplier(row.estimate.weatherMultiplier)}</span>
                                 <span>Terrain {formatFlatMultiplier(row.estimate.terrainMultiplier)}</span>
+                                <span>Atk {formatFlatMultiplier(row.estimate.attackerStageMultiplier)}</span>
+                                <span>Def {formatFlatMultiplier(row.estimate.defenderStageMultiplier)}</span>
                               </div>
                             </>
                           ) : (
                             <>
                               <strong>Enter power</strong>
-                              <p>Add the move’s base power to calculate a rough percentage.</p>
+                              <p>
+                                Add the move’s base power to calculate a rough percentage.
+                                {row.defaultPower ? ` Default saved value: ${row.defaultPower}.` : ""}
+                              </p>
                             </>
                           )}
                         </div>
@@ -3004,6 +3179,8 @@ function TeamBuilderView() {
                               <span>Spread {formatFlatMultiplier(defenseMoveEstimate.spreadMultiplier)}</span>
                               <span>Weather {formatFlatMultiplier(defenseMoveEstimate.weatherMultiplier)}</span>
                               <span>Terrain {formatFlatMultiplier(defenseMoveEstimate.terrainMultiplier)}</span>
+                              <span>Atk {formatFlatMultiplier(defenseMoveEstimate.attackerStageMultiplier)}</span>
+                              <span>Def {formatFlatMultiplier(defenseMoveEstimate.defenderStageMultiplier)}</span>
                             </div>
                           </>
                         ) : (

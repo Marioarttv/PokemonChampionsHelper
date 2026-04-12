@@ -18,6 +18,8 @@ export type DamageEstimateInput = {
   terrain?: DamageTerrain;
   attackerGrounded?: boolean;
   defenderGrounded?: boolean;
+  attackerStatStage?: number;
+  defenderStatStage?: number;
 };
 
 export type DamageEstimate = {
@@ -37,6 +39,8 @@ export type DamageEstimate = {
   weatherMultiplier: number;
   terrainMultiplier: number;
   finalModifier: number;
+  attackerStageMultiplier: number;
+  defenderStageMultiplier: number;
 };
 
 const LEVEL_FACTOR = 22;
@@ -54,6 +58,14 @@ export function getLevel50OtherStatValue(baseStat: number) {
   return baseStat + 5;
 }
 
+export function getStatStageMultiplier(stage: number) {
+  if (stage >= 0) {
+    return (2 + stage) / 2;
+  }
+
+  return 2 / (2 - stage);
+}
+
 export function calculateRoughDamage({
   attacker,
   defender,
@@ -65,6 +77,8 @@ export function calculateRoughDamage({
   terrain = "none",
   attackerGrounded = true,
   defenderGrounded = true,
+  attackerStatStage = 0,
+  defenderStatStage = 0,
 }: DamageEstimateInput): DamageEstimate {
   const baseAttackStat =
     category === "physical" ? attacker.baseStats.atk : attacker.baseStats.spa;
@@ -76,8 +90,12 @@ export function calculateRoughDamage({
       : weather === "snow" && category === "physical" && defender.types.includes("Ice")
         ? 1.5
         : 1;
-  const attackStat = getLevel50OtherStatValue(baseAttackStat);
-  const defenseStat = Math.floor(getLevel50OtherStatValue(baseDefenseStat) * weatherDefenseMultiplier);
+  const attackerStageMultiplier = getStatStageMultiplier(attackerStatStage);
+  const defenderStageMultiplier = getStatStageMultiplier(defenderStatStage);
+  const attackStat = Math.floor(getLevel50OtherStatValue(baseAttackStat) * attackerStageMultiplier);
+  const defenseStat = Math.floor(
+    getLevel50OtherStatValue(baseDefenseStat) * weatherDefenseMultiplier * defenderStageMultiplier,
+  );
   const defenderHp = getLevel50HpValue(defender.baseStats.hp);
   const primaryType = getTypeFromLabel(defender.types[0]);
   const secondaryType = defender.types[1] ? getTypeFromLabel(defender.types[1]) : null;
@@ -134,5 +152,7 @@ export function calculateRoughDamage({
     weatherMultiplier,
     terrainMultiplier,
     finalModifier: modifier,
+    attackerStageMultiplier,
+    defenderStageMultiplier,
   };
 }
