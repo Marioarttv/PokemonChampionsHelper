@@ -2883,6 +2883,11 @@ function TeamBuilderView() {
                         })}
                       </div>
 
+                      <div className="quick-meta-row ally-meta-row">
+                        <span>Spe {pokemon.baseStats.spe}</span>
+                        <span>BST {pokemon.bst}</span>
+                      </div>
+
                       <div className="enemy-weakness-block">
                         <span className="lead-section-label weak">Weak To</span>
                         <div className="coverage-chip-list">
@@ -3121,6 +3126,7 @@ function TeamBuilderView() {
                       <span>HP {getLevel50HpValue(currentDamageDefenderPokemon.baseStats.hp)}</span>
                       <span>Def {getLevel50OtherStatValue(currentDamageDefenderPokemon.baseStats.def)}</span>
                       <span>SpD {getLevel50OtherStatValue(currentDamageDefenderPokemon.baseStats.spd)}</span>
+                      <span>Spe {getLevel50OtherStatValue(currentDamageDefenderPokemon.baseStats.spe)}</span>
                     </div>
                   </article>
                 </div>
