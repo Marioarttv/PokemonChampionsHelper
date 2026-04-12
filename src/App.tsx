@@ -343,6 +343,12 @@ function getBestAttackMultiplierAgainstPokemon(
   };
 }
 
+function getPokemonAttackTypeOptions(pokemon: PokemonRecord) {
+  return pokemon.types
+    .map((typeLabel) => getTypeFromLabel(typeLabel))
+    .filter((type): type is PokemonType => Boolean(type));
+}
+
 function formatMatrixCell(multiplier: number | null, mode: TeamMatrixMode) {
   if (multiplier === null) {
     return "";
@@ -1853,6 +1859,46 @@ function TeamBuilderView() {
     [opponentEntries, team],
   );
 
+  const enemyThreatMap = useMemo(
+    () =>
+      new Map(
+        team
+          .map((slot, slotIndex) => {
+            if (!slot.pokemon) {
+              return null;
+            }
+
+            const pokemon = slot.pokemon;
+
+            return [
+              slotIndex,
+              opponentEntries
+                .map((entry) => {
+                  const attackTypes = getPokemonAttackTypeOptions(entry.pokemon);
+                  const coverage = getBestAttackMultiplierAgainstPokemon(attackTypes, pokemon);
+
+                  return {
+                    slotIndex: entry.slotIndex,
+                    pokemon: entry.pokemon,
+                    multiplier: coverage.multiplier,
+                    attackTypes: coverage.attackTypes,
+                    speedDelta: entry.pokemon.baseStats.spe - pokemon.baseStats.spe,
+                  };
+                })
+                .sort((left, right) => (right.multiplier ?? 0) - (left.multiplier ?? 0)),
+            ] as const;
+          })
+          .filter((entry): entry is readonly [number, Array<{
+            slotIndex: number;
+            pokemon: PokemonRecord;
+            multiplier: number | null;
+            attackTypes: PokemonType[];
+            speedDelta: number;
+          }>] => Boolean(entry)),
+      ),
+    [opponentEntries, team],
+  );
+
   const selectedDamageAttacker =
     damageAttackerSlotIndex !== null && team[damageAttackerSlotIndex]?.pokemon
       ? team[damageAttackerSlotIndex]
@@ -2595,61 +2641,44 @@ function TeamBuilderView() {
             Add up to six opposing Pokemon to see their stats and your team’s super-effective answers.
           </div>
         ) : (
-          <div className="enemy-grid">
-            {opponentEntries.map((opponentEntry) => {
-              const opponentCoverage = opponentCoverageMap.get(opponentEntry.slotIndex) ?? [];
-              const seEntries = opponentCoverage.filter((entry) => (entry.multiplier ?? 0) > 1);
-              const fallbackEntries = opponentCoverage.filter((entry) => (entry.multiplier ?? 0) <= 1).slice(0, 3);
-              const weakTypes = TYPE_ORDER.filter(
-                (attackType) => (getPokemonDefensiveMultiplier(opponentEntry.pokemon, attackType) ?? 1) > 1,
-              );
+          <>
+            <div className="scout-section-header">
+              <p className="eyebrow">Enemy Team</p>
+              <span>{opponentEntries.length} cards</span>
+            </div>
+            <div className="enemy-grid">
+              {opponentEntries.map((opponentEntry) => {
+                const opponentCoverage = opponentCoverageMap.get(opponentEntry.slotIndex) ?? [];
+                const seEntries = opponentCoverage.filter((entry) => (entry.multiplier ?? 0) > 1);
+                const fallbackEntries = opponentCoverage.filter((entry) => (entry.multiplier ?? 0) <= 1).slice(0, 3);
+                const weakTypes = TYPE_ORDER.filter(
+                  (attackType) => (getPokemonDefensiveMultiplier(opponentEntry.pokemon, attackType) ?? 1) > 1,
+                );
 
-              return (
-                <article key={`enemy-card-${opponentEntry.slotIndex}`} className="enemy-card">
-                  <div className="enemy-card-header">
-                    <div className="opponent-card-top">
-                      <div>
-                        <p className="eyebrow">Enemy {opponentEntry.slotIndex + 1}</p>
-                        <h3>{opponentEntry.pokemon.name}</h3>
+                return (
+                  <article key={`enemy-card-${opponentEntry.slotIndex}`} className="enemy-card">
+                    <div className="enemy-card-header">
+                      <div className="opponent-card-top">
+                        <div>
+                          <p className="eyebrow">Enemy {opponentEntry.slotIndex + 1}</p>
+                          <h3>{opponentEntry.pokemon.name}</h3>
+                        </div>
+                        <PokemonSprite pokemon={opponentEntry.pokemon} className="opponent-card-sprite" />
                       </div>
-                      <PokemonSprite pokemon={opponentEntry.pokemon} className="opponent-card-sprite" />
+                      <span className="enemy-threat-count">{seEntries.length} SE answers</span>
                     </div>
-                    <span className="enemy-threat-count">{seEntries.length} SE answers</span>
-                  </div>
 
-                  <div className="team-type-list">
-                    {opponentEntry.pokemon.types.map((typeLabel) => {
-                      const type = getTypeFromLabel(typeLabel);
-                      if (!type) {
-                        return null;
-                      }
+                    <div className="team-type-list">
+                      {opponentEntry.pokemon.types.map((typeLabel) => {
+                        const type = getTypeFromLabel(typeLabel);
+                        if (!type) {
+                          return null;
+                        }
 
-                      return (
-                        <span
-                          key={`${opponentEntry.pokemon.id}-${type}`}
-                          className="inline-type-pill"
-                          style={
-                            {
-                              "--type-color": TYPE_META[type].color,
-                              "--type-accent": TYPE_META[type].accent,
-                            } as CSSProperties
-                          }
-                        >
-                          <img src={getTypeIconUrl(type)} alt="" aria-hidden="true" loading="lazy" />
-                          {TYPE_META[type].label}
-                        </span>
-                      );
-                    })}
-                  </div>
-
-                  <div className="enemy-weakness-block">
-                    <span className="lead-section-label weak">Weak To</span>
-                    <div className="coverage-chip-list">
-                      {weakTypes.length > 0 ? (
-                        weakTypes.map((type) => (
+                        return (
                           <span
-                            key={`${opponentEntry.pokemon.id}-weak-${type}`}
-                            className="mini-type-pill"
+                            key={`${opponentEntry.pokemon.id}-${type}`}
+                            className="inline-type-pill"
                             style={
                               {
                                 "--type-color": TYPE_META[type].color,
@@ -2657,118 +2686,301 @@ function TeamBuilderView() {
                               } as CSSProperties
                             }
                           >
+                            <img src={getTypeIconUrl(type)} alt="" aria-hidden="true" loading="lazy" />
                             {TYPE_META[type].label}
                           </span>
-                        ))
-                      ) : (
-                        <span className="subtle-empty">No listed weaknesses.</span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="pokemon-stats-panel opponent-stats-panel">
-                    <div className="pokemon-stats-grid compact">
-                      <span className="pokemon-stat-chip">
-                        <strong>HP</strong>
-                        <em>{opponentEntry.pokemon.baseStats.hp}</em>
-                      </span>
-                      <span className="pokemon-stat-chip">
-                        <strong>Atk</strong>
-                        <em>{opponentEntry.pokemon.baseStats.atk}</em>
-                      </span>
-                      <span className="pokemon-stat-chip">
-                        <strong>Def</strong>
-                        <em>{opponentEntry.pokemon.baseStats.def}</em>
-                      </span>
-                      <span className="pokemon-stat-chip">
-                        <strong>SpA</strong>
-                        <em>{opponentEntry.pokemon.baseStats.spa}</em>
-                      </span>
-                      <span className="pokemon-stat-chip">
-                        <strong>SpD</strong>
-                        <em>{opponentEntry.pokemon.baseStats.spd}</em>
-                      </span>
-                      <span className="pokemon-stat-chip">
-                        <strong>Spe</strong>
-                        <em>{opponentEntry.pokemon.baseStats.spe}</em>
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="enemy-coverage-block">
-                    <div className="coverage-preview-header">
-                      <p className="eyebrow">{seEntries.length > 0 ? "SE Hitters" : "Best Available Hits"}</p>
-                      <span>
-                        {seEntries.length > 0 ? `${seEntries.length} team members` : `${fallbackEntries.length} shown`}
-                      </span>
+                        );
+                      })}
                     </div>
 
-                    <div className="opponent-coverage-list compact">
-                      {(seEntries.length > 0 ? seEntries : fallbackEntries).map((entry) => (
-                        <div
-                          key={`opponent-${opponentEntry.slotIndex}-coverage-${entry.slotIndex}`}
-                          className={`opponent-coverage-row ${(entry.multiplier ?? 0) > 1 ? "strong" : ""}`}
-                        >
-                          <div className="opponent-coverage-main">
-                            <PokemonSprite pokemon={entry.pokemon} />
-                            <div>
-                              <strong>{entry.pokemon.name}</strong>
-                              <p>
-                                {(entry.multiplier ?? 0) > 1
-                                  ? `${formatMultiplier(entry.multiplier ?? 1)} damage`
-                                  : entry.attackTypes.length > 0
-                                    ? `${formatMultiplier(entry.multiplier ?? 1)} best hit`
-                                    : "No attack types set"}
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="opponent-coverage-side">
+                    <div className="enemy-weakness-block">
+                      <span className="lead-section-label weak">Weak To</span>
+                      <div className="coverage-chip-list">
+                        {weakTypes.length > 0 ? (
+                          weakTypes.map((type) => (
                             <span
-                              className={`speed-matchup-pill ${
-                                entry.speedDelta > 0 ? "faster" : entry.speedDelta < 0 ? "slower" : "tie"
-                              }`}
+                              key={`${opponentEntry.pokemon.id}-weak-${type}`}
+                              className="mini-type-pill"
+                              style={
+                                {
+                                  "--type-color": TYPE_META[type].color,
+                                  "--type-accent": TYPE_META[type].accent,
+                                } as CSSProperties
+                              }
                             >
-                              {entry.speedDelta > 0
-                                ? `Outspeeds by ${entry.speedDelta}`
-                                : entry.speedDelta < 0
-                                  ? `Slower by ${Math.abs(entry.speedDelta)}`
-                                  : "Speed tie"}
+                              {TYPE_META[type].label}
                             </span>
+                          ))
+                        ) : (
+                          <span className="subtle-empty">No listed weaknesses.</span>
+                        )}
+                      </div>
+                    </div>
 
-                            <div className="coverage-chip-list">
-                            {entry.attackTypes.length > 0 ? (
-                              entry.attackTypes.map((type) => (
-                                <span
-                                  key={`${entry.pokemon.id}-vs-${opponentEntry.pokemon.id}-${type}`}
-                                  className="mini-type-pill"
-                                  style={
-                                    {
-                                      "--type-color": TYPE_META[type].color,
-                                      "--type-accent": TYPE_META[type].accent,
-                                    } as CSSProperties
-                                  }
-                                >
-                                  {TYPE_META[type].label}
-                                </span>
-                              ))
-                            ) : (
-                              <span className="subtle-empty">No move types set.</span>
-                            )}
+                    <div className="pokemon-stats-panel opponent-stats-panel">
+                      <div className="pokemon-stats-grid compact">
+                        <span className="pokemon-stat-chip">
+                          <strong>HP</strong>
+                          <em>{opponentEntry.pokemon.baseStats.hp}</em>
+                        </span>
+                        <span className="pokemon-stat-chip">
+                          <strong>Atk</strong>
+                          <em>{opponentEntry.pokemon.baseStats.atk}</em>
+                        </span>
+                        <span className="pokemon-stat-chip">
+                          <strong>Def</strong>
+                          <em>{opponentEntry.pokemon.baseStats.def}</em>
+                        </span>
+                        <span className="pokemon-stat-chip">
+                          <strong>SpA</strong>
+                          <em>{opponentEntry.pokemon.baseStats.spa}</em>
+                        </span>
+                        <span className="pokemon-stat-chip">
+                          <strong>SpD</strong>
+                          <em>{opponentEntry.pokemon.baseStats.spd}</em>
+                        </span>
+                        <span className="pokemon-stat-chip">
+                          <strong>Spe</strong>
+                          <em>{opponentEntry.pokemon.baseStats.spe}</em>
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="enemy-coverage-block">
+                      <div className="coverage-preview-header">
+                        <p className="eyebrow">{seEntries.length > 0 ? "SE Hitters" : "Best Available Hits"}</p>
+                        <span>
+                          {seEntries.length > 0 ? `${seEntries.length} team members` : `${fallbackEntries.length} shown`}
+                        </span>
+                      </div>
+
+                      <div className="opponent-coverage-list compact">
+                        {(seEntries.length > 0 ? seEntries : fallbackEntries).map((entry) => (
+                          <div
+                            key={`opponent-${opponentEntry.slotIndex}-coverage-${entry.slotIndex}`}
+                            className={`opponent-coverage-row ${(entry.multiplier ?? 0) > 1 ? "strong" : ""}`}
+                          >
+                            <div className="opponent-coverage-main">
+                              <PokemonSprite pokemon={entry.pokemon} />
+                              <div>
+                                <strong>{entry.pokemon.name}</strong>
+                                <p>
+                                  {(entry.multiplier ?? 0) > 1
+                                    ? `${formatMultiplier(entry.multiplier ?? 1)} damage`
+                                    : entry.attackTypes.length > 0
+                                      ? `${formatMultiplier(entry.multiplier ?? 1)} best hit`
+                                      : "No attack types set"}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="opponent-coverage-side">
+                              <span
+                                className={`speed-matchup-pill ${
+                                  entry.speedDelta > 0 ? "faster" : entry.speedDelta < 0 ? "slower" : "tie"
+                                }`}
+                              >
+                                {entry.speedDelta > 0
+                                  ? `Outspeeds by ${entry.speedDelta}`
+                                  : entry.speedDelta < 0
+                                    ? `Slower by ${Math.abs(entry.speedDelta)}`
+                                    : "Speed tie"}
+                              </span>
+
+                              <div className="coverage-chip-list">
+                                {entry.attackTypes.length > 0 ? (
+                                  entry.attackTypes.map((type) => (
+                                    <span
+                                      key={`${entry.pokemon.id}-vs-${opponentEntry.pokemon.id}-${type}`}
+                                      className="mini-type-pill"
+                                      style={
+                                        {
+                                          "--type-color": TYPE_META[type].color,
+                                          "--type-accent": TYPE_META[type].accent,
+                                        } as CSSProperties
+                                      }
+                                    >
+                                      {TYPE_META[type].label}
+                                    </span>
+                                  ))
+                                ) : (
+                                  <span className="subtle-empty">No move types set.</span>
+                                )}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        ))}
 
-                      {seEntries.length === 0 && fallbackEntries.length === 0 ? (
-                        <div className="team-slot-empty">Add move types to your team to compare coverage.</div>
-                      ) : null}
+                        {seEntries.length === 0 && fallbackEntries.length === 0 ? (
+                          <div className="team-slot-empty">Add move types to your team to compare coverage.</div>
+                        ) : null}
+                      </div>
                     </div>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
+                  </article>
+                );
+              })}
+            </div>
+
+            <div className="scout-section-header allied">
+              <p className="eyebrow">Our Team</p>
+              <span>{selectedPokemon.length} cards</span>
+            </div>
+            {selectedPokemon.length === 0 ? (
+              <div className="matchup-empty-board">Add Pokemon to your team to see enemy STAB pressure into them.</div>
+            ) : (
+              <div className="enemy-grid allied-grid">
+                {team.map((slot, slotIndex) => {
+                  if (!slot.pokemon) {
+                    return null;
+                  }
+
+                  const pokemon = slot.pokemon;
+
+                  const threats = enemyThreatMap.get(slotIndex) ?? [];
+                  const seThreats = threats.filter((entry) => (entry.multiplier ?? 0) > 1);
+                  const fallbackThreats = threats.filter((entry) => (entry.multiplier ?? 0) <= 1).slice(0, 3);
+                  const weakTypes = TYPE_ORDER.filter(
+                    (attackType) => (getPokemonDefensiveMultiplier(pokemon, attackType) ?? 1) > 1,
+                  );
+
+                  return (
+                    <article key={`ally-threat-${slotIndex}`} className="enemy-card allied-card">
+                      <div className="enemy-card-header">
+                        <div className="opponent-card-top">
+                          <div>
+                            <p className="eyebrow">Our Slot {slotIndex + 1}</p>
+                            <h3>{pokemon.name}</h3>
+                          </div>
+                          <PokemonSprite pokemon={pokemon} className="opponent-card-sprite" />
+                        </div>
+                        <span className="enemy-threat-count">
+                          {seThreats.length > 0 ? `${seThreats.length} enemy threats` : "No SE STAB"}
+                        </span>
+                      </div>
+
+                      <div className="team-type-list">
+                        {pokemon.types.map((typeLabel) => {
+                          const type = getTypeFromLabel(typeLabel);
+                          if (!type) {
+                            return null;
+                          }
+
+                          return (
+                            <span
+                              key={`${pokemon.id}-${type}`}
+                              className="inline-type-pill"
+                              style={
+                                {
+                                  "--type-color": TYPE_META[type].color,
+                                  "--type-accent": TYPE_META[type].accent,
+                                } as CSSProperties
+                              }
+                            >
+                              <img src={getTypeIconUrl(type)} alt="" aria-hidden="true" loading="lazy" />
+                              {TYPE_META[type].label}
+                            </span>
+                          );
+                        })}
+                      </div>
+
+                      <div className="enemy-weakness-block">
+                        <span className="lead-section-label weak">Weak To</span>
+                        <div className="coverage-chip-list">
+                          {weakTypes.length > 0 ? (
+                            weakTypes.map((type) => (
+                              <span
+                                key={`${pokemon.id}-ally-weak-${type}`}
+                                className="mini-type-pill"
+                                style={
+                                  {
+                                    "--type-color": TYPE_META[type].color,
+                                    "--type-accent": TYPE_META[type].accent,
+                                  } as CSSProperties
+                                }
+                              >
+                                {TYPE_META[type].label}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="subtle-empty">No listed weaknesses.</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="enemy-coverage-block">
+                        <div className="coverage-preview-header">
+                          <p className="eyebrow">{seThreats.length > 0 ? "Enemy STAB Threats" : "Best Enemy Pressure"}</p>
+                          <span>
+                            {seThreats.length > 0 ? `${seThreats.length} enemy Pokemon` : `${fallbackThreats.length} shown`}
+                          </span>
+                        </div>
+
+                        <div className="opponent-coverage-list compact">
+                          {(seThreats.length > 0 ? seThreats : fallbackThreats).map((entry) => (
+                            <div
+                              key={`ally-${slotIndex}-threat-${entry.slotIndex}`}
+                              className={`opponent-coverage-row ${(entry.multiplier ?? 0) > 1 ? "strong" : ""}`}
+                            >
+                              <div className="opponent-coverage-main">
+                                <PokemonSprite pokemon={entry.pokemon} />
+                                <div>
+                                  <strong>{entry.pokemon.name}</strong>
+                                  <p>
+                                    {(entry.multiplier ?? 0) > 1
+                                      ? `${formatMultiplier(entry.multiplier ?? 1)} into ${pokemon.name}`
+                                      : `${formatMultiplier(entry.multiplier ?? 1)} best STAB pressure`}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="opponent-coverage-side">
+                                <span
+                                  className={`speed-matchup-pill ${
+                                    entry.speedDelta > 0 ? "faster" : entry.speedDelta < 0 ? "slower" : "tie"
+                                  }`}
+                                >
+                                  {entry.speedDelta > 0
+                                    ? `Outspeeds by ${entry.speedDelta}`
+                                    : entry.speedDelta < 0
+                                      ? `Slower by ${Math.abs(entry.speedDelta)}`
+                                      : "Speed tie"}
+                                </span>
+
+                                <div className="coverage-chip-list">
+                                  {entry.attackTypes.length > 0 ? (
+                                    entry.attackTypes.map((type) => (
+                                      <span
+                                        key={`${entry.pokemon.id}-threatens-${pokemon.id}-${type}`}
+                                        className="mini-type-pill"
+                                        style={
+                                          {
+                                            "--type-color": TYPE_META[type].color,
+                                            "--type-accent": TYPE_META[type].accent,
+                                          } as CSSProperties
+                                        }
+                                      >
+                                        {TYPE_META[type].label}
+                                      </span>
+                                    ))
+                                  ) : (
+                                    <span className="subtle-empty">No STAB pressure found.</span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+
+                          {seThreats.length === 0 && fallbackThreats.length === 0 ? (
+                            <div className="team-slot-empty">Add enemies to compare their STAB pressure.</div>
+                          ) : null}
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </>
         )}
       </section>
 
