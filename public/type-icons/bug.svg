@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" aria-label="Bug type icon">
+  <rect width="64" height="64" rx="18" fill="#9bbf44"/>
+  <text x="32" y="39" fill="#4d6115" font-family="Arial, sans-serif" font-size="18" font-weight="700" text-anchor="middle">BG</text>
+</svg>

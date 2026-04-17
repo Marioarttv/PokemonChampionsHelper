@@ -121,7 +121,7 @@ const LABEL_TO_TYPE = new Map(
 );
 
 export function getTypeIconUrl(type: PokemonType) {
-  return `https://archives.bulbagarden.net/wiki/Special:Redirect/file/${encodeURIComponent(TYPE_META[type].iconFile)}`;
+  return `/type-icons/${type}.svg`;
 }
 
 export function getTypeFromLabel(label: string) {
