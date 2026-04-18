@@ -167,6 +167,386 @@ img {
   font-weight: 800;
 }
 
+.moveset-database-panel {
+  padding: 0.75rem;
+}
+
+.moveset-database-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  gap: 0.7rem;
+  align-items: start;
+}
+
+.moveset-sidebar,
+.moveset-detail-panel {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.72rem;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.68);
+  border: 1px solid rgba(42, 54, 49, 0.08);
+}
+
+.moveset-sidebar-header,
+.moveset-detail-header,
+.moveset-detail-title,
+.moveset-list-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.moveset-sidebar-header h2,
+.moveset-detail-header h2 {
+  margin: 0;
+  color: var(--ink-strong);
+  font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  letter-spacing: -0.03em;
+}
+
+.moveset-sidebar-header span {
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.moveset-list {
+  display: grid;
+  gap: 0.45rem;
+  max-height: 72dvh;
+  overflow: auto;
+  padding-right: 0.1rem;
+}
+
+.moveset-list-card {
+  display: grid;
+  gap: 0.45rem;
+  text-align: left;
+  padding: 0.58rem;
+  border-radius: 16px;
+  border: 1px solid rgba(42, 54, 49, 0.08);
+  background: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.moveset-list-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(42, 54, 49, 0.16);
+}
+
+.moveset-list-card.selected {
+  border-color: rgba(36, 49, 45, 0.18);
+  box-shadow:
+    0 12px 24px rgba(76, 63, 37, 0.07),
+    inset 0 0 0 1px rgba(36, 49, 45, 0.08);
+}
+
+.moveset-list-card strong,
+.moveset-list-card p {
+  margin: 0;
+}
+
+.moveset-list-card strong {
+  color: var(--ink-strong);
+  font-size: 0.84rem;
+}
+
+.moveset-list-card p {
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.moveset-list-sprite,
+.moveset-detail-sprite {
+  width: 2.8rem;
+  height: 2.8rem;
+  object-fit: contain;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 4px 8px rgba(34, 42, 67, 0.12));
+}
+
+.moveset-detail-title {
+  justify-content: flex-start;
+}
+
+.moveset-detail-panel .quick-meta-row {
+  margin-top: -0.15rem;
+}
+
+.moveset-preset-row {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.attack-editor.always-open {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.ohko-finder-topbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  gap: 0.85rem;
+  align-items: end;
+  margin-bottom: 0.7rem;
+}
+
+.ohko-finder-topbar h2 {
+  margin: 0;
+  color: var(--ink-strong);
+  font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  letter-spacing: -0.03em;
+}
+
+.ohko-finder-search {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.ohko-target-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.ohko-target-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.38rem;
+  margin-top: 0.18rem;
+}
+
+.ohko-target-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.24rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid rgba(39, 51, 47, 0.12);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--ink-strong);
+  cursor: pointer;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.ohko-target-chip img {
+  width: 1.3rem;
+  height: 1.3rem;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.ohko-target-chip strong {
+  color: var(--ink-soft);
+  font-size: 0.62rem;
+}
+
+.ohko-target-panel {
+  margin-bottom: 0.7rem;
+}
+
+.ohko-overview-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: start;
+}
+
+.ohko-target-card {
+  align-self: stretch;
+  align-content: start;
+}
+
+.ohko-selected-target-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.ohko-selected-target-card {
+  display: grid;
+  gap: 0.38rem;
+  padding: 0.55rem;
+  border-radius: 14px;
+  background: rgba(247, 244, 236, 0.82);
+  border: 1px solid rgba(42, 54, 49, 0.06);
+}
+
+.ohko-selected-target-top {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.42rem;
+  align-items: center;
+}
+
+.ohko-selected-target-top strong,
+.ohko-selected-target-top p {
+  margin: 0;
+}
+
+.ohko-selected-target-top strong {
+  color: var(--ink-strong);
+  font-size: 0.86rem;
+}
+
+.ohko-selected-target-top p {
+  color: var(--ink-soft);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.ohko-target-card .damage-side-header {
+  align-items: center;
+}
+
+.ohko-target-card .team-type-list {
+  gap: 0.32rem;
+}
+
+.ohko-target-card .inline-type-pill {
+  padding: 0.2rem 0.42rem;
+  font-size: 0.68rem;
+}
+
+.ohko-target-card .damage-stat-strip {
+  gap: 0.28rem;
+}
+
+.ohko-target-card .damage-stat-strip span {
+  font-size: 0.66rem;
+}
+
+.ohko-settings-panel {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.8rem;
+  border-radius: 18px;
+}
+
+.ohko-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.ohko-filter-card {
+  display: grid;
+  gap: 0.32rem;
+  padding: 0.55rem 0.6rem;
+  border-radius: 14px;
+  background: rgba(247, 244, 236, 0.82);
+  border: 1px solid rgba(42, 54, 49, 0.06);
+}
+
+.ohko-filter-card span {
+  color: var(--ink-soft);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.ohko-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.ohko-filter-chip {
+  border: 1px solid rgba(39, 51, 47, 0.12);
+  border-radius: 999px;
+  padding: 0.25rem 0.55rem;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.ohko-filter-chip.active {
+  background: rgba(255, 252, 247, 0.98);
+  color: var(--ink-strong);
+  box-shadow: inset 0 0 0 1px rgba(36, 49, 45, 0.08);
+}
+
+.ohko-result-list {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.ohko-result-row {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.5rem 0.55rem;
+}
+
+.ohko-result-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: start;
+}
+
+.ohko-summary-side {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  justify-content: flex-end;
+}
+
+.ohko-breakdown-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.ohko-breakdown-card {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.5rem;
+  border-radius: 14px;
+  background: rgba(247, 244, 236, 0.82);
+  border: 1px solid rgba(42, 54, 49, 0.06);
+}
+
+.ohko-breakdown-card.good {
+  background: rgba(247, 251, 244, 0.9);
+  border-color: rgba(129, 162, 100, 0.16);
+}
+
+.ohko-breakdown-card.strong {
+  background: rgba(233, 247, 236, 0.9);
+  border-color: rgba(45, 122, 80, 0.16);
+}
+
+.ohko-breakdown-top {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.ohko-result-subnote {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
+.survival-pill.good {
+  background: rgba(45, 122, 80, 0.12);
+  color: #2d7a50;
+}
+
+.survival-pill.bad {
+  background: rgba(178, 58, 54, 0.12);
+  color: #b23a36;
+}
+
 .team-storage-panel {
   display: grid;
   grid-template-columns: minmax(280px, 420px) minmax(0, 1fr);
@@ -2467,6 +2847,10 @@ img {
 
 @media (max-width: 960px) {
   .team-builder-hero,
+  .moveset-database-layout,
+  .ohko-finder-topbar,
+  .ohko-overview-grid,
+  .ohko-filter-grid,
   .team-storage-panel,
   .selector-topbar,
   .board-header {
@@ -2476,6 +2860,12 @@ img {
   .team-builder-meta,
   .selector-actions {
     justify-self: start;
+  }
+
+  .ohko-target-input-row,
+  .ohko-breakdown-grid,
+  .ohko-result-top {
+    grid-template-columns: 1fr;
   }
 
   .selected-slots {
@@ -2551,6 +2941,9 @@ img {
 
   .opponent-scout-header,
   .enemy-card-header,
+  .moveset-sidebar-header,
+  .moveset-detail-header,
+  .ohko-result-top,
   .quick-search-header {
     align-items: start;
     flex-direction: column;
