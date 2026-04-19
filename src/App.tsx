@@ -34,17 +34,20 @@ import {
   getOpponentPresetMoveNames,
   getOpponentPresetSavedAttacks,
   OPPONENT_MOVE_PRESET_KEY_SET,
+  type OpponentPresetRecord,
 } from "./lib/opponentMovePresets";
 import {
   getMovePokemonType,
   isSpreadTarget,
   loadBattleData,
   type AbilityRecord,
+  type ItemRecord,
   type MoveRecord,
 } from "./lib/battleData";
 import {
   SPREAD_MOVE_MULTIPLIER,
   calculateRoughDamage,
+  getEffectiveDamageBaseStats,
   getLevel50HpValue,
   getLevel50OtherStatValue,
   getStatStageMultiplier,
@@ -370,6 +373,29 @@ function isChampionsMegaEntry(pokemon: Pick<PokemonRecord, "baseSpecies" | "name
     pokemon.forme === "Original-Mega" ||
     pokemon.forme === "Primal"
   );
+}
+
+function getPokemonPrimaryAbilityName(pokemon: PokemonRecord | null | undefined) {
+  return getResolvedFieldValue(getPokemonAbilityNames(pokemon)[0]);
+}
+
+function getResolvedPresetAbilityName(
+  pokemon: PokemonRecord,
+  preset: Pick<OpponentPresetRecord, "speciesKey" | "abilityName"> | null | undefined,
+) {
+  const presetAbilityName = getResolvedFieldValue(preset?.abilityName);
+
+  if (!isChampionsMegaEntry(pokemon)) {
+    return presetAbilityName;
+  }
+
+  const matchedPokemonKey = preset?.speciesKey === getPokemonMovesetKey(pokemon);
+
+  if (matchedPokemonKey) {
+    return presetAbilityName ?? getPokemonPrimaryAbilityName(pokemon);
+  }
+
+  return getPokemonPrimaryAbilityName(pokemon) ?? presetAbilityName;
 }
 
 function getAttackTypesFromSavedAttacks(savedAttacks: PersistedSavedAttack[]) {
@@ -1979,21 +2005,23 @@ function getStoredOrPresetSavedAttacks(
   moveByKey: ReadonlyMap<string, MoveRecord>,
   limit = MAX_SPECIES_MOVESET_SIZE,
 ): ResolvedSpeciesMoveset {
+  const movesetKey = getPokemonMovesetKey(pokemon);
   const inheritedMovesetKey = getInheritedMovesetKey(pokemon);
-  const speciesMoveset =
-    speciesMovesetByKey.get(getPokemonMovesetKey(pokemon)) ??
-    (inheritedMovesetKey ? speciesMovesetByKey.get(inheritedMovesetKey) : null) ??
-    null;
+  const directSpeciesMoveset = speciesMovesetByKey.get(movesetKey) ?? null;
+  const inheritedSpeciesMoveset = inheritedMovesetKey ? speciesMovesetByKey.get(inheritedMovesetKey) ?? null : null;
+  const speciesMoveset = directSpeciesMoveset ?? inheritedSpeciesMoveset;
   const preset = getOpponentPreset(pokemon);
   const customSavedAttacks = speciesMoveset?.savedAttacks?.length
     ? sanitizeSavedAttacks(speciesMoveset.savedAttacks, pokemon, limit)
     : [];
   const presetSavedAttacks = getOpponentPresetSavedAttacks(pokemon, moveByKey).slice(0, limit);
-  const customAbilityName = getResolvedFieldValue(speciesMoveset?.abilityName);
+  const directCustomAbilityName = getResolvedFieldValue(directSpeciesMoveset?.abilityName);
+  const inheritedCustomAbilityName = getResolvedFieldValue(inheritedSpeciesMoveset?.abilityName);
   const customItemName = getResolvedFieldValue(speciesMoveset?.itemName);
-  const presetAbilityName = getResolvedFieldValue(preset?.abilityName);
+  const presetAbilityName = getResolvedPresetAbilityName(pokemon, preset);
   const presetItemName = getResolvedFieldValue(preset?.itemName);
-  const hasCustomOverride = Boolean(speciesMoveset && (customSavedAttacks.length > 0 || customAbilityName || customItemName));
+  const resolvedCustomAbilityName = directCustomAbilityName ?? (isChampionsMegaEntry(pokemon) ? null : inheritedCustomAbilityName);
+  const hasCustomOverride = Boolean(speciesMoveset && (customSavedAttacks.length > 0 || resolvedCustomAbilityName || customItemName));
 
   return {
     savedAttacks: customSavedAttacks.length > 0 ? customSavedAttacks : presetSavedAttacks,
@@ -2003,7 +2031,7 @@ function getStoredOrPresetSavedAttacks(
         : preset?.moveNames
           ? [...preset.moveNames]
           : [],
-    abilityName: customAbilityName ?? presetAbilityName,
+    abilityName: resolvedCustomAbilityName ?? presetAbilityName,
     itemName: customItemName ?? presetItemName,
     movesetSource: hasCustomOverride ? "custom" : preset ? "preset" : "none",
   };
@@ -3834,6 +3862,12 @@ function TeamBuilderView() {
     damageCalcMode === "attack" ? selectedDamageAttackerPokemon : selectedDamageDefenderPokemon;
   const currentDamageDefenderPokemon =
     damageCalcMode === "attack" ? selectedDamageDefenderPokemon : selectedDamageAttackerPokemon;
+  const currentDamageAttackerStats = currentDamageAttackerPokemon
+    ? getEffectiveDamageBaseStats(currentDamageAttackerPokemon, "attacker")
+    : null;
+  const currentDamageDefenderStats = currentDamageDefenderPokemon
+    ? getEffectiveDamageBaseStats(currentDamageDefenderPokemon, "defender")
+    : null;
   const defenseMoveConfigKey = getDamageConfigKey(
     damageDefenderSlotIndex ?? -1,
     selectedDamageDefenderPokemon?.id ?? null,
@@ -6177,9 +6211,24 @@ function TeamBuilderView() {
                       })}
                     </div>
                     <div className="damage-stat-strip">
-                      <span>Atk {getLevel50OtherStatValue(currentDamageAttackerPokemon.baseStats.atk)}</span>
-                      <span>SpA {getLevel50OtherStatValue(currentDamageAttackerPokemon.baseStats.spa)}</span>
-                      <span>Spe {getLevel50OtherStatValue(currentDamageAttackerPokemon.baseStats.spe)}</span>
+                      <span>
+                        Atk{" "}
+                        {getLevel50OtherStatValue(
+                          currentDamageAttackerStats?.atk ?? currentDamageAttackerPokemon.baseStats.atk,
+                        )}
+                      </span>
+                      <span>
+                        SpA{" "}
+                        {getLevel50OtherStatValue(
+                          currentDamageAttackerStats?.spa ?? currentDamageAttackerPokemon.baseStats.spa,
+                        )}
+                      </span>
+                      <span>
+                        Spe{" "}
+                        {getLevel50OtherStatValue(
+                          currentDamageAttackerStats?.spe ?? currentDamageAttackerPokemon.baseStats.spe,
+                        )}
+                      </span>
                     </div>
                   </article>
 
@@ -6236,10 +6285,27 @@ function TeamBuilderView() {
                       })}
                     </div>
                     <div className="damage-stat-strip">
-                      <span>HP {getLevel50HpValue(currentDamageDefenderPokemon.baseStats.hp)}</span>
-                      <span>Def {getLevel50OtherStatValue(currentDamageDefenderPokemon.baseStats.def)}</span>
-                      <span>SpD {getLevel50OtherStatValue(currentDamageDefenderPokemon.baseStats.spd)}</span>
-                      <span>Spe {getLevel50OtherStatValue(currentDamageDefenderPokemon.baseStats.spe)}</span>
+                      <span>
+                        HP {getLevel50HpValue(currentDamageDefenderStats?.hp ?? currentDamageDefenderPokemon.baseStats.hp)}
+                      </span>
+                      <span>
+                        Def{" "}
+                        {getLevel50OtherStatValue(
+                          currentDamageDefenderStats?.def ?? currentDamageDefenderPokemon.baseStats.def,
+                        )}
+                      </span>
+                      <span>
+                        SpD{" "}
+                        {getLevel50OtherStatValue(
+                          currentDamageDefenderStats?.spd ?? currentDamageDefenderPokemon.baseStats.spd,
+                        )}
+                      </span>
+                      <span>
+                        Spe{" "}
+                        {getLevel50OtherStatValue(
+                          currentDamageDefenderStats?.spe ?? currentDamageDefenderPokemon.baseStats.spe,
+                        )}
+                      </span>
                     </div>
                   </article>
                 </div>
@@ -6251,6 +6317,7 @@ function TeamBuilderView() {
                   <span className="damage-assumption-pill">Supported items and berries</span>
                   <span className="damage-assumption-pill">Helping Hand toggle available</span>
                   <span className="damage-assumption-pill">Supported ability effects only</span>
+                  <span className="damage-assumption-pill">Aegislash auto-swaps stances</span>
                   <span className="damage-assumption-pill">Spread toggle = {SPREAD_MOVE_MULTIPLIER}x</span>
                 </div>
 
@@ -7391,7 +7458,11 @@ function TeamBuilderView() {
 
 function MovesetDatabaseView() {
   const [database, setDatabase] = useState<PokemonRecord[] | null>(null);
-  const [battleData, setBattleData] = useState<{ moves: MoveRecord[] } | null>(null);
+  const [battleData, setBattleData] = useState<{
+    moves: MoveRecord[];
+    abilities: AbilityRecord[];
+    items: ItemRecord[];
+  } | null>(null);
   const [speciesMovesets, setSpeciesMovesets] = useState<PersistedSpeciesMoveset[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [battleDataError, setBattleDataError] = useState<string | null>(null);
@@ -7421,12 +7492,12 @@ function MovesetDatabaseView() {
     loadBattleData()
       .then((data) => {
         if (active) {
-          setBattleData({ moves: data.moves });
+          setBattleData({ moves: data.moves, abilities: data.abilities, items: data.items });
         }
       })
       .catch((error) => {
         if (active) {
-          setBattleDataError(error instanceof Error ? error.message : "Failed to load move data.");
+          setBattleDataError(error instanceof Error ? error.message : "Failed to load move and ability data.");
         }
       });
 
@@ -7446,6 +7517,28 @@ function MovesetDatabaseView() {
       active = false;
     };
   }, []);
+
+  const abilityByKey = useMemo(() => {
+    const map = new Map<string, AbilityRecord>();
+
+    for (const ability of battleData?.abilities ?? []) {
+      map.set(ability.id, ability);
+      map.set(ability.name.toLowerCase(), ability);
+    }
+
+    return map;
+  }, [battleData]);
+
+  const itemByKey = useMemo(() => {
+    const map = new Map<string, ItemRecord>();
+
+    for (const item of battleData?.items ?? []) {
+      map.set(item.id, item);
+      map.set(item.name.toLowerCase(), item);
+    }
+
+    return map;
+  }, [battleData]);
 
   const moveByKey = useMemo(() => {
     const map = new Map<string, MoveRecord>();
@@ -7513,6 +7606,24 @@ function MovesetDatabaseView() {
       (selectedCustomMoveset.savedAttacks.length > 0 || selectedCustomMoveset.abilityName || selectedCustomMoveset.itemName),
   );
   const selectedPreset = useMemo(() => (selectedPokemon ? getOpponentPreset(selectedPokemon) : null), [selectedPokemon]);
+  const selectedPresetResolvedAbilityName = useMemo(
+    () => (selectedPokemon ? getResolvedPresetAbilityName(selectedPokemon, selectedPreset) : null),
+    [selectedPokemon, selectedPreset],
+  );
+  const selectedPresetAbility = useMemo(
+    () =>
+      selectedPresetResolvedAbilityName
+        ? abilityByKey.get(selectedPresetResolvedAbilityName.toLowerCase()) ?? null
+        : null,
+    [abilityByKey, selectedPresetResolvedAbilityName],
+  );
+  const selectedPresetItem = useMemo(
+    () =>
+      selectedPreset?.itemName
+        ? itemByKey.get(selectedPreset.itemName.toLowerCase()) ?? null
+        : null,
+    [itemByKey, selectedPreset],
+  );
   const selectedResolvedMoveset = useMemo(
     () =>
       selectedPokemon
@@ -7544,6 +7655,14 @@ function MovesetDatabaseView() {
       }),
     [draftSavedAttacks, moveByKey],
   );
+  const draftAbilityRecord = useMemo(() => {
+    const trimmed = draftAbilityName.trim().toLowerCase();
+    return trimmed ? abilityByKey.get(trimmed) ?? null : null;
+  }, [abilityByKey, draftAbilityName]);
+  const draftItemRecord = useMemo(() => {
+    const trimmed = draftItemName.trim().toLowerCase();
+    return trimmed ? itemByKey.get(trimmed) ?? null : null;
+  }, [draftItemName, itemByKey]);
 
   useEffect(() => {
     if (!selectedPokemon) {
@@ -7860,14 +7979,37 @@ function MovesetDatabaseView() {
                       />
                     </label>
                   </div>
+                  {draftAbilityRecord ? (
+                    <p className="selector-note">
+                      <strong>{draftAbilityRecord.name}:</strong>{" "}
+                      {draftAbilityRecord.desc || draftAbilityRecord.shortDesc}
+                    </p>
+                  ) : null}
+                  {draftItemRecord ? (
+                    <p className="selector-note">
+                      <strong>{draftItemRecord.name}:</strong> {draftItemRecord.desc || draftItemRecord.shortDesc}
+                    </p>
+                  ) : null}
 
                   <div className="moveset-preset-row">
                     <span className="lead-section-label cover">Built-In Preset</span>
-                    {selectedPreset?.abilityName || selectedPreset?.itemName ? (
+                    {selectedPresetResolvedAbilityName || selectedPreset?.itemName ? (
                       <div className="quick-meta-row">
-                        {selectedPreset?.abilityName ? <span>Ability {selectedPreset.abilityName}</span> : null}
+                        {selectedPresetResolvedAbilityName ? <span>Ability {selectedPresetResolvedAbilityName}</span> : null}
                         {selectedPreset?.itemName ? <span>Item {selectedPreset.itemName}</span> : null}
                       </div>
+                    ) : null}
+                    {selectedPresetAbility ? (
+                      <p className="selector-note">
+                        <strong>{selectedPresetAbility.name}:</strong>{" "}
+                        {selectedPresetAbility.desc || selectedPresetAbility.shortDesc}
+                      </p>
+                    ) : null}
+                    {selectedPresetItem ? (
+                      <p className="selector-note">
+                        <strong>{selectedPresetItem.name}:</strong>{" "}
+                        {selectedPresetItem.desc || selectedPresetItem.shortDesc}
+                      </p>
                     ) : null}
                     <div className="coverage-chip-list">
                       {selectedPresetMoveEntries.length > 0 ? (

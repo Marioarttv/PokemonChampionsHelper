@@ -7,6 +7,13 @@ export type AbilityRecord = {
   desc: string;
 };
 
+export type ItemRecord = {
+  id: string;
+  name: string;
+  shortDesc: string;
+  desc: string;
+};
+
 export type MoveRecord = {
   id: string;
   name: string;
@@ -26,9 +33,11 @@ export type BattleData = {
     generatedAt: string;
     source: string;
     abilityCount: number;
+    itemCount: number;
     moveCount: number;
   };
   abilities: AbilityRecord[];
+  items: ItemRecord[];
   moves: MoveRecord[];
 };
 

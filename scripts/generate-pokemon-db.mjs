@@ -61,6 +61,17 @@ const abilities = Dex.abilities
     desc: ability.desc || "",
   }));
 
+const items = Dex.items
+  .all()
+  .filter((item) => item.exists)
+  .sort((a, b) => a.name.localeCompare(b.name))
+  .map((item) => ({
+    id: item.id,
+    name: item.name,
+    shortDesc: item.shortDesc || "",
+    desc: item.desc || "",
+  }));
+
 const moves = Dex.moves
   .all()
   .filter((move) => move.exists)
@@ -84,9 +95,11 @@ const battleData = {
     generatedAt: new Date().toISOString(),
     source: "@pkmn/dex",
     abilityCount: abilities.length,
+    itemCount: items.length,
     moveCount: moves.length,
   },
   abilities,
+  items,
   moves,
 };
 
@@ -96,5 +109,5 @@ await writeFile(battleOutputFile, `${JSON.stringify(battleData, null, 2)}\n`, "u
 
 console.log(`Generated ${species.length} Pokemon entries at ${path.relative(rootDir, pokemonOutputFile)}`);
 console.log(
-  `Generated ${moves.length} moves and ${abilities.length} abilities at ${path.relative(rootDir, battleOutputFile)}`,
+  `Generated ${moves.length} moves, ${abilities.length} abilities, and ${items.length} items at ${path.relative(rootDir, battleOutputFile)}`,
 );

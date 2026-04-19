@@ -21,6 +21,7 @@ import type { PokemonRecord } from "./pokemonDb";
 export type DamageCategory = "physical" | "special";
 export type DamageWeather = "none" | "sun" | "rain" | "sand" | "snow";
 export type DamageTerrain = "none" | "electric" | "grassy" | "psychic" | "misty";
+export type DamageBattleRole = "attacker" | "defender";
 
 export type DamageEstimateInput = {
   attacker: PokemonRecord;
@@ -83,6 +84,18 @@ const AVG_RANDOM_MULTIPLIER = 0.925;
 const MAX_RANDOM_MULTIPLIER = 1;
 const STAB_MULTIPLIER = 1.5;
 export const SPREAD_MOVE_MULTIPLIER = 0.75;
+const AEGISLASH_SHIELD_STATS = {
+  atk: 50,
+  def: 140,
+  spa: 50,
+  spd: 140,
+} as const;
+const AEGISLASH_BLADE_STATS = {
+  atk: 140,
+  def: 50,
+  spa: 140,
+  spd: 50,
+} as const;
 
 export function getLevel50HpValue(baseHp: number) {
   return baseHp + 60;
@@ -98,6 +111,27 @@ export function getStatStageMultiplier(stage: number) {
   }
 
   return 2 / (2 - stage);
+}
+
+function hasNamedAbility(pokemon: PokemonRecord, abilityName: string) {
+  return Object.values(pokemon.abilities).some((value) => value === abilityName);
+}
+
+function isAegislashWithStanceChange(pokemon: PokemonRecord) {
+  return pokemon.baseSpecies === "Aegislash" && hasNamedAbility(pokemon, "Stance Change");
+}
+
+export function getEffectiveDamageBaseStats(
+  pokemon: PokemonRecord,
+  role: DamageBattleRole,
+): PokemonRecord["baseStats"] {
+  if (!isAegislashWithStanceChange(pokemon)) {
+    return pokemon.baseStats;
+  }
+
+  return role === "attacker"
+    ? { ...pokemon.baseStats, ...AEGISLASH_BLADE_STATS }
+    : { ...pokemon.baseStats, ...AEGISLASH_SHIELD_STATS };
 }
 
 export function calculateRoughDamage({
@@ -120,10 +154,12 @@ export function calculateRoughDamage({
   defenderItem = "none",
   helpingHand = false,
 }: DamageEstimateInput): DamageEstimate {
+  const effectiveAttackerStats = getEffectiveDamageBaseStats(attacker, "attacker");
+  const effectiveDefenderStats = getEffectiveDamageBaseStats(defender, "defender");
   const baseAttackStat =
-    category === "physical" ? attacker.baseStats.atk : attacker.baseStats.spa;
+    category === "physical" ? effectiveAttackerStats.atk : effectiveAttackerStats.spa;
   const baseDefenseStat =
-    category === "physical" ? defender.baseStats.def : defender.baseStats.spd;
+    category === "physical" ? effectiveDefenderStats.def : effectiveDefenderStats.spd;
   const weatherDefenseMultiplier =
     weather === "sand" && category === "special" && defender.types.includes("Rock")
       ? 1.5
@@ -136,7 +172,7 @@ export function calculateRoughDamage({
   const defenseStat = Math.floor(
     getLevel50OtherStatValue(baseDefenseStat) * weatherDefenseMultiplier * defenderStageMultiplier,
   );
-  const defenderHp = getLevel50HpValue(defender.baseStats.hp);
+  const defenderHp = getLevel50HpValue(effectiveDefenderStats.hp);
   const primaryType = getTypeFromLabel(defender.types[0]);
   const secondaryType = defender.types[1] ? getTypeFromLabel(defender.types[1]) : null;
   const effectiveAttackType = getAbilityAdjustedAttackType(attackType, attackerAbility);
