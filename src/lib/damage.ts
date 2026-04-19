@@ -1,6 +1,21 @@
 import type { PokemonType } from "../data/typeChart";
 import { getTypeFromLabel } from "../data/typeChart";
 import { getMultiplier } from "./effectiveness";
+import {
+  getAbilityAdjustedAttackType,
+  getAttackerAbilityModifier,
+  getDefenderAbilityModifier,
+  getDefenderAbilityTypeMultiplier,
+  getFieldAbilityModifier,
+  getDamageAbilityLabel,
+  type DamageAbilityId,
+} from "./damageAbilities";
+import {
+  getAttackerItemModifier,
+  getDamageItemLabel,
+  getDefenderItemModifier,
+  type DamageItemId,
+} from "./damageItems";
 import type { PokemonRecord } from "./pokemonDb";
 
 export type DamageCategory = "physical" | "special";
@@ -11,6 +26,7 @@ export type DamageEstimateInput = {
   attacker: PokemonRecord;
   defender: PokemonRecord;
   attackType: PokemonType;
+  moveName?: string;
   basePower: number;
   category: DamageCategory;
   isSpreadMove: boolean;
@@ -20,6 +36,11 @@ export type DamageEstimateInput = {
   defenderGrounded?: boolean;
   attackerStatStage?: number;
   defenderStatStage?: number;
+  attackerAbility?: DamageAbilityId;
+  defenderAbility?: DamageAbilityId;
+  attackerItem?: DamageItemId;
+  defenderItem?: DamageItemId;
+  helpingHand?: boolean;
 };
 
 export type DamageEstimate = {
@@ -35,12 +56,25 @@ export type DamageEstimate = {
   defenderHp: number;
   stabMultiplier: number;
   typeMultiplier: number;
+  effectiveAttackType: PokemonType;
   spreadMultiplier: number;
   weatherMultiplier: number;
   terrainMultiplier: number;
+  attackerAbilityMultiplier: number;
+  defenderAbilityMultiplier: number;
+  fieldAbilityMultiplier: number;
+  abilityMultiplier: number;
+  attackerItemMultiplier: number;
+  defenderItemMultiplier: number;
+  itemMultiplier: number;
+  helpingHandMultiplier: number;
   finalModifier: number;
   attackerStageMultiplier: number;
   defenderStageMultiplier: number;
+  attackerAbilityName: string;
+  defenderAbilityName: string;
+  attackerItemName: string;
+  defenderItemName: string;
 };
 
 const LEVEL_FACTOR = 22;
@@ -70,6 +104,7 @@ export function calculateRoughDamage({
   attacker,
   defender,
   attackType,
+  moveName,
   basePower,
   category,
   isSpreadMove,
@@ -79,6 +114,11 @@ export function calculateRoughDamage({
   defenderGrounded = true,
   attackerStatStage = 0,
   defenderStatStage = 0,
+  attackerAbility = "none",
+  defenderAbility = "none",
+  attackerItem = "none",
+  defenderItem = "none",
+  helpingHand = false,
 }: DamageEstimateInput): DamageEstimate {
   const baseAttackStat =
     category === "physical" ? attacker.baseStats.atk : attacker.baseStats.spa;
@@ -99,38 +139,86 @@ export function calculateRoughDamage({
   const defenderHp = getLevel50HpValue(defender.baseStats.hp);
   const primaryType = getTypeFromLabel(defender.types[0]);
   const secondaryType = defender.types[1] ? getTypeFromLabel(defender.types[1]) : null;
-  const typeMultiplier = primaryType ? getMultiplier(attackType, primaryType, secondaryType) : 1;
-  const stabMultiplier = attacker.types.some((typeLabel) => getTypeFromLabel(typeLabel) === attackType)
-    ? STAB_MULTIPLIER
+  const effectiveAttackType = getAbilityAdjustedAttackType(attackType, attackerAbility);
+  const baseTypeMultiplier = primaryType ? getMultiplier(effectiveAttackType, primaryType, secondaryType) : 1;
+  const typeMultiplier = getDefenderAbilityTypeMultiplier({
+    typeMultiplier: baseTypeMultiplier,
+    attackType: effectiveAttackType,
+    defenderAbility,
+    moveName,
+  });
+  const stabMultiplier = attacker.types.some((typeLabel) => getTypeFromLabel(typeLabel) === effectiveAttackType)
+    ? attackerAbility === "adaptability"
+      ? 2
+      : STAB_MULTIPLIER
     : 1;
   const spreadMultiplier = isSpreadMove ? SPREAD_MOVE_MULTIPLIER : 1;
   const weatherMultiplier =
     weather === "sun"
-      ? attackType === "fire"
+      ? effectiveAttackType === "fire"
         ? 1.5
-        : attackType === "water"
+        : effectiveAttackType === "water"
           ? 0.5
           : 1
       : weather === "rain"
-        ? attackType === "water"
+        ? effectiveAttackType === "water"
           ? 1.5
-          : attackType === "fire"
+          : effectiveAttackType === "fire"
             ? 0.5
             : 1
         : 1;
   const terrainMultiplier =
-    terrain === "electric" && attackType === "electric" && attackerGrounded
+    terrain === "electric" && effectiveAttackType === "electric" && attackerGrounded
       ? 1.3
-      : terrain === "psychic" && attackType === "psychic" && attackerGrounded
+      : terrain === "psychic" && effectiveAttackType === "psychic" && attackerGrounded
         ? 1.3
-        : terrain === "grassy" && attackType === "grass" && attackerGrounded
+        : terrain === "grassy" && effectiveAttackType === "grass" && attackerGrounded
           ? 1.3
-          : terrain === "misty" && attackType === "dragon" && defenderGrounded
+          : terrain === "misty" && effectiveAttackType === "dragon" && defenderGrounded
             ? 0.5
             : 1;
+  const attackerAbilityMultiplier = getAttackerAbilityModifier({
+    originalAttackType: attackType,
+    effectiveAttackType,
+    basePower,
+    category,
+    weather,
+    attackerAbility,
+    moveName,
+  });
+  const fieldAbilityMultiplier = getFieldAbilityModifier(effectiveAttackType, attackerAbility, defenderAbility);
+  const defenderAbilityMultiplier = getDefenderAbilityModifier({
+    attackType: effectiveAttackType,
+    category,
+    defenderAbility,
+    typeMultiplier,
+    moveName,
+  });
+  const abilityMultiplier = attackerAbilityMultiplier * fieldAbilityMultiplier * defenderAbilityMultiplier;
+  const attackerItemMultiplier = getAttackerItemModifier({
+    attackType: effectiveAttackType,
+    category,
+    attackerItem,
+    typeMultiplier,
+  });
+  const defenderItemMultiplier = getDefenderItemModifier({
+    attackType: effectiveAttackType,
+    defenderItem,
+    typeMultiplier,
+  });
+  const itemMultiplier = attackerItemMultiplier * defenderItemMultiplier;
+  const helpingHandMultiplier = helpingHand ? 1.5 : 1;
   const baseDamage =
     Math.floor(Math.floor((LEVEL_FACTOR * Math.max(basePower, 0) * attackStat) / defenseStat) / 50) + 2;
-  const modifier = stabMultiplier * typeMultiplier * spreadMultiplier * weatherMultiplier * terrainMultiplier;
+  const modifier =
+    stabMultiplier *
+    typeMultiplier *
+    spreadMultiplier *
+    weatherMultiplier *
+    terrainMultiplier *
+    abilityMultiplier *
+    itemMultiplier *
+    helpingHandMultiplier;
   const minDamage = Math.floor(baseDamage * modifier * MIN_RANDOM_MULTIPLIER);
   const maxDamage = Math.floor(baseDamage * modifier * MAX_RANDOM_MULTIPLIER);
   const averageDamage = Math.floor(baseDamage * modifier * AVG_RANDOM_MULTIPLIER);
@@ -148,11 +236,24 @@ export function calculateRoughDamage({
     defenderHp,
     stabMultiplier,
     typeMultiplier,
+    effectiveAttackType,
     spreadMultiplier,
     weatherMultiplier,
     terrainMultiplier,
+    attackerAbilityMultiplier,
+    defenderAbilityMultiplier,
+    fieldAbilityMultiplier,
+    abilityMultiplier,
+    attackerItemMultiplier,
+    defenderItemMultiplier,
+    itemMultiplier,
+    helpingHandMultiplier,
     finalModifier: modifier,
     attackerStageMultiplier,
     defenderStageMultiplier,
+    attackerAbilityName: getDamageAbilityLabel(attackerAbility),
+    defenderAbilityName: getDamageAbilityLabel(defenderAbility),
+    attackerItemName: getDamageItemLabel(attackerItem),
+    defenderItemName: getDamageItemLabel(defenderItem),
   };
 }

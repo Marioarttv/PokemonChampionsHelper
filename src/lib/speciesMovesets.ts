@@ -4,10 +4,12 @@ export type PersistedSpeciesMoveset = {
   speciesKey: string;
   speciesName: string;
   savedAttacks: PersistedSavedAttack[];
+  abilityName?: string;
+  itemName?: string;
   updatedAt: string;
 };
 
-const STORAGE_KEY = "pokemon-champions-helper.species-movesets.v1";
+const STORAGE_KEY = "pokemon-champions-helper.species-movesets.v2";
 
 function getStorage() {
   if (typeof window === "undefined" || !("localStorage" in window)) {
@@ -25,7 +27,24 @@ function readAllMovesets() {
   }
 
   const parsed = JSON.parse(raw) as Record<string, PersistedSpeciesMoveset> | null;
-  return parsed && typeof parsed === "object" ? parsed : {};
+
+  if (!parsed || typeof parsed !== "object") {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(parsed).map(([key, value]) => [
+      key,
+      {
+        speciesKey: value?.speciesKey ?? key,
+        speciesName: value?.speciesName ?? key,
+        savedAttacks: Array.isArray(value?.savedAttacks) ? value.savedAttacks : [],
+        abilityName: typeof value?.abilityName === "string" ? value.abilityName : undefined,
+        itemName: typeof value?.itemName === "string" ? value.itemName : undefined,
+        updatedAt: typeof value?.updatedAt === "string" ? value.updatedAt : new Date(0).toISOString(),
+      } satisfies PersistedSpeciesMoveset,
+    ]),
+  );
 }
 
 function writeAllMovesets(entries: Record<string, PersistedSpeciesMoveset>) {
@@ -42,12 +61,18 @@ export async function saveSpeciesMoveset(
   speciesKey: string,
   speciesName: string,
   savedAttacks: PersistedSavedAttack[],
+  options?: {
+    abilityName?: string;
+    itemName?: string;
+  },
 ) {
   const entries = readAllMovesets();
   const persisted: PersistedSpeciesMoveset = {
     speciesKey,
     speciesName,
     savedAttacks,
+    abilityName: options?.abilityName,
+    itemName: options?.itemName,
     updatedAt: new Date().toISOString(),
   };
 

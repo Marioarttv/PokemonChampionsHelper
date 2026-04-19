@@ -30,6 +30,7 @@ import {
   type PokemonRecord,
 } from "./lib/pokemonDb";
 import {
+  getOpponentPreset,
   getOpponentPresetMoveNames,
   getOpponentPresetSavedAttacks,
   OPPONENT_MOVE_PRESET_KEY_SET,
@@ -51,6 +52,26 @@ import {
   type DamageTerrain,
   type DamageWeather,
 } from "./lib/damage";
+import {
+  getDamageAbilityDescription,
+  getDamageAbilityOptions,
+  getDefaultDamageAbilityId,
+  getDefaultDamageAbilityIdFromNames,
+  getPokemonAbilityNames,
+  type DamageAbilityId,
+} from "./lib/damageAbilities";
+import {
+  getDamageItemDescription,
+  getDamageItemOptions,
+  normalizeDamageItemId,
+  type DamageItemId,
+} from "./lib/damageItems";
+import {
+  calculateMatchupEloScore,
+  compareMatchupEloSummaries,
+  summarizeMatchupElo,
+  type MatchupEloSummary,
+} from "./lib/matchupElo";
 import {
   deleteSavedTeam,
   listSavedTeams,
@@ -93,6 +114,7 @@ type TeamSlotState = {
 
 type TeamMatrixMode = "defense" | "offense";
 type DamageCalcMode = "attack" | "defend";
+type TeamBuilderFormat = "all" | "regulationMA";
 type LeadSummary = {
   slotIndex: number;
   pokemon: PokemonRecord;
@@ -116,9 +138,18 @@ type OpponentRosterEntry = {
   pokemon: PokemonRecord | null;
   savedAttacks: PersistedSavedAttack[];
   presetMoveNames: string[];
+  abilityName: string | null;
+  itemName: string | null;
   movesetSource: "custom" | "preset" | "none";
 };
 type StoredMovesetSource = "custom" | "preset" | "none";
+type ResolvedSpeciesMoveset = {
+  savedAttacks: PersistedSavedAttack[];
+  allMoveNames: string[];
+  abilityName: string | null;
+  itemName: string | null;
+  movesetSource: StoredMovesetSource;
+};
 type OhkoSpeedFilter = "any" | "outspeeds" | "notSlower" | "slowerOrTie";
 type OhkoSurvivalFilter = "any" | "survivesBestHit";
 type DamagePickerCardProps = {
@@ -279,6 +310,25 @@ function getAttackLabel(attack: PersistedSavedAttack) {
   return attack.label?.trim() || TYPE_META[attack.type].label;
 }
 
+function getResolvedFieldValue(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function normalizeTextKey(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function getMoveRecordByName(moveName: string, moveByKey: ReadonlyMap<string, MoveRecord>) {
+  const trimmed = moveName.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  return moveByKey.get(trimmed.toLowerCase()) ?? moveByKey.get(normalizeTextKey(trimmed)) ?? null;
+}
+
 function coercePokemonType(value: string | null | undefined) {
   if (!value) {
     return null;
@@ -294,6 +344,32 @@ function getPokemonMovesetKey(pokemon: Pick<PokemonRecord, "id">) {
 
 function getPokemonBaseSpeciesKey(pokemon: Pick<PokemonRecord, "baseSpecies" | "name">) {
   return normalizePokemonNameKey(pokemon.baseSpecies || pokemon.name);
+}
+
+function getInheritedMovesetKey(pokemon: Pick<PokemonRecord, "baseSpecies" | "forme" | "id" | "name">) {
+  if (!pokemon.forme) {
+    return null;
+  }
+
+  const baseSpeciesKey = getPokemonBaseSpeciesKey(pokemon);
+  return baseSpeciesKey !== getPokemonMovesetKey(pokemon) ? baseSpeciesKey : null;
+}
+
+function isChampionsMegaEntry(pokemon: Pick<PokemonRecord, "baseSpecies" | "name" | "forme">) {
+  if (!pokemon.forme) {
+    return false;
+  }
+
+  if (!POKEMON_CHAMPIONS_LEGAL_SPECIES_KEY_SET.has(getPokemonBaseSpeciesKey(pokemon))) {
+    return false;
+  }
+
+  return (
+    /^Mega(?:-[XY])?$/.test(pokemon.forme) ||
+    /^[FM]-Mega$/.test(pokemon.forme) ||
+    pokemon.forme === "Original-Mega" ||
+    pokemon.forme === "Primal"
+  );
 }
 
 function getAttackTypesFromSavedAttacks(savedAttacks: PersistedSavedAttack[]) {
@@ -483,6 +559,11 @@ function getBestDamageEstimateAgainstPokemon(
     defenderGrounded: boolean;
     attackerStatStage: number;
     defenderStatStage: number;
+    attackerAbility?: DamageAbilityId;
+    defenderAbility?: DamageAbilityId;
+    attackerItem?: DamageItemId;
+    defenderItem?: DamageItemId;
+    helpingHand?: boolean;
   },
 ) {
   let best:
@@ -503,6 +584,7 @@ function getBestDamageEstimateAgainstPokemon(
       attacker: attackerPokemon,
       defender: defenderPokemon,
       attackType: attack.type,
+      moveName: attack.label?.trim() || undefined,
       basePower,
       category: getResolvedAttackCategory(attack, attackerPokemon),
       isSpreadMove: getResolvedAttackSpread(attack),
@@ -512,6 +594,11 @@ function getBestDamageEstimateAgainstPokemon(
       defenderGrounded: options.defenderGrounded,
       attackerStatStage: options.attackerStatStage,
       defenderStatStage: options.defenderStatStage,
+      attackerAbility: options.attackerAbility ?? getDefaultDamageAbilityId(attackerPokemon),
+      defenderAbility: options.defenderAbility ?? getDefaultDamageAbilityId(defenderPokemon),
+      attackerItem: options.attackerItem ?? "none",
+      defenderItem: options.defenderItem ?? "none",
+      helpingHand: options.helpingHand ?? false,
     });
 
     if (!best || estimate.maxPercent > best.estimate.maxPercent) {
@@ -519,6 +606,1351 @@ function getBestDamageEstimateAgainstPokemon(
         attack,
         estimate,
       };
+    }
+  }
+
+  return best;
+}
+
+type MatchupEloHit = ReturnType<typeof getBestDamageEstimateAgainstPokemon>;
+
+type MatchupEloTargetResult = {
+  targetPokemon: PokemonRecord;
+  targetSlotIndex?: number;
+  bestOutgoingHit: MatchupEloHit;
+  bestIncomingHit: MatchupEloHit;
+  survivesBestIncomingHit: boolean | null;
+  speedDelta: number;
+  possibleOhko: boolean;
+  guaranteedOhko: boolean;
+  targetScore: number;
+};
+
+type AutomaticDamageRow = {
+  attack: PersistedSavedAttack;
+  basePower: number;
+  category: DamageCategory;
+  isSpreadMove: boolean;
+  estimate: ReturnType<typeof calculateRoughDamage>;
+};
+
+type CombinedDamageSummary = {
+  first: AutomaticDamageRow;
+  second: AutomaticDamageRow;
+  minPercent: number;
+  maxPercent: number;
+  averagePercent: number;
+  guaranteedKo: boolean;
+  possibleKo: boolean;
+};
+
+type DoublesMemberRuntime = {
+  hpPercent: number;
+  protect: boolean;
+  priority: boolean;
+};
+
+const DEFAULT_DOUBLES_RUNTIME: DoublesMemberRuntime = {
+  hpPercent: 100,
+  protect: false,
+  priority: false,
+};
+
+type DoublesSelectedMember = {
+  side: "ally" | "enemy";
+  slotIndex: number;
+  pokemon: PokemonRecord;
+  savedAttacks: PersistedSavedAttack[];
+  movesetSourceLabel: string;
+  speedStat: number;
+  hpPercent: number;
+  protect: boolean;
+  priority: boolean;
+};
+
+type ThreatTurnSettings = {
+  allyTailwind: boolean;
+  enemyTailwind: boolean;
+  trickRoom: boolean;
+};
+
+type ThreatLine = {
+  attacker: DoublesSelectedMember;
+  bestRow: AutomaticDamageRow | null;
+  timing: "before" | "tie" | "after";
+  effectiveSpeed: number;
+};
+
+type ThreatCard = {
+  target: DoublesSelectedMember;
+  lines: ThreatLine[];
+  strongestLine: ThreatLine | null;
+};
+
+type DoublesSingleLineSummary = {
+  member: DoublesSelectedMember;
+  bestRow: AutomaticDamageRow | null;
+  speedRelation: "before" | "tie" | "after";
+  timingSummary: string;
+};
+
+type DoublesComboTiming = {
+  relation: "before" | "tie" | "split" | "after";
+  summary: string;
+};
+
+type DoublesTargetSummary = {
+  target: DoublesSelectedMember;
+  singles: DoublesSingleLineSummary[];
+  bestDoubleUp: CombinedDamageSummary | null;
+  bestDoubleUpTiming: DoublesComboTiming | null;
+  bestSpreadSingle: CombinedDamageSummary | null;
+  bestSpreadSingleTiming: DoublesComboTiming | null;
+};
+
+type DoublesVisualPlan = {
+  kind: "double" | "spread" | "single" | "none";
+  guaranteedKo: boolean;
+  possibleKo: boolean;
+  relation: "before" | "tie" | "split" | "after";
+  statusLabel: string;
+  timingLabel: string;
+  tone: "great" | "good" | "warn" | "danger" | "neutral";
+  actorsLabel: string;
+  attacksLabel: string;
+  rangeLabel: string;
+  note: string;
+  averagePercent: number;
+};
+
+function buildMatchupEloTargetResult(options: {
+  attackerPokemon: PokemonRecord;
+  attackerSavedAttacks: PersistedSavedAttack[];
+  targetPokemon: PokemonRecord;
+  targetSavedAttacks: PersistedSavedAttack[];
+  weather: DamageWeather;
+  terrain: DamageTerrain;
+  attackerGrounded: boolean;
+  targetGrounded: boolean;
+  attackerStatStage: number;
+  defenderStatStage: number;
+  targetSlotIndex?: number;
+}): MatchupEloTargetResult {
+  const {
+    attackerPokemon,
+    attackerSavedAttacks,
+    targetPokemon,
+    targetSavedAttacks,
+    weather,
+    terrain,
+    attackerGrounded,
+    targetGrounded,
+    attackerStatStage,
+    defenderStatStage,
+    targetSlotIndex,
+  } = options;
+  const bestOutgoingHit = getBestDamageEstimateAgainstPokemon(
+    attackerPokemon,
+    targetPokemon,
+    attackerSavedAttacks,
+    {
+      weather,
+      terrain,
+      attackerGrounded,
+      defenderGrounded: targetGrounded,
+      attackerStatStage,
+      defenderStatStage,
+    },
+  );
+  const bestIncomingHit =
+    targetSavedAttacks.length > 0
+      ? getBestDamageEstimateAgainstPokemon(targetPokemon, attackerPokemon, targetSavedAttacks, {
+          weather,
+          terrain,
+          attackerGrounded: targetGrounded,
+          defenderGrounded: attackerGrounded,
+          attackerStatStage,
+          defenderStatStage,
+        })
+      : null;
+  const survivesBestIncomingHit = bestIncomingHit ? bestIncomingHit.estimate.maxPercent < 100 : null;
+  const speedDelta = attackerPokemon.baseStats.spe - targetPokemon.baseStats.spe;
+  const possibleOhko = Boolean(bestOutgoingHit && bestOutgoingHit.estimate.maxPercent >= 100);
+  const guaranteedOhko = Boolean(bestOutgoingHit && bestOutgoingHit.estimate.minPercent >= 100);
+  const offensivePressure = bestOutgoingHit ? bestOutgoingHit.estimate.averagePercent : 0;
+  const conservativePressure = bestOutgoingHit ? Math.min(bestOutgoingHit.estimate.minPercent, 100) : 0;
+
+  return {
+    targetPokemon,
+    targetSlotIndex,
+    bestOutgoingHit,
+    bestIncomingHit,
+    survivesBestIncomingHit,
+    speedDelta,
+    possibleOhko,
+    guaranteedOhko,
+    targetScore: calculateMatchupEloScore({
+      guaranteedOhko,
+      possibleOhko,
+      survivesBestIncomingHit,
+      speedDelta,
+      offensivePressure,
+      conservativePressure,
+    }),
+  };
+}
+
+function getAutomaticDamageRows(options: {
+  attackerPokemon: PokemonRecord;
+  defenderPokemon: PokemonRecord;
+  savedAttacks: PersistedSavedAttack[];
+  weather: DamageWeather;
+  terrain: DamageTerrain;
+  attackerGrounded: boolean;
+  defenderGrounded: boolean;
+  attackerStatStage: number;
+  defenderStatStage: number;
+  attackerAbility?: DamageAbilityId;
+  defenderAbility?: DamageAbilityId;
+}) {
+  const {
+    attackerPokemon,
+    defenderPokemon,
+    savedAttacks,
+    weather,
+    terrain,
+    attackerGrounded,
+    defenderGrounded,
+    attackerStatStage,
+    defenderStatStage,
+    attackerAbility,
+    defenderAbility,
+  } = options;
+
+  return savedAttacks.flatMap((attack) => {
+    const basePower = getResolvedAttackBasePower(attack);
+
+    if (basePower === null) {
+      return [];
+    }
+
+    const category = getResolvedAttackCategory(attack, attackerPokemon);
+    const isSpreadMove = getResolvedAttackSpread(attack);
+
+    return [
+      {
+        attack,
+        basePower,
+        category,
+        isSpreadMove,
+        estimate: calculateRoughDamage({
+          attacker: attackerPokemon,
+          defender: defenderPokemon,
+          attackType: attack.type,
+          moveName: attack.label?.trim() || undefined,
+          basePower,
+          category,
+          isSpreadMove,
+          weather,
+          terrain,
+          attackerGrounded,
+          defenderGrounded,
+          attackerStatStage,
+          defenderStatStage,
+          attackerAbility: attackerAbility ?? getDefaultDamageAbilityId(attackerPokemon),
+          defenderAbility: defenderAbility ?? getDefaultDamageAbilityId(defenderPokemon),
+        }),
+      },
+    ];
+  });
+}
+
+function getBestAutomaticDamageRow(rows: AutomaticDamageRow[]) {
+  return rows.reduce<AutomaticDamageRow | null>((best, row) => {
+    if (!best) {
+      return row;
+    }
+
+    if (row.estimate.averagePercent !== best.estimate.averagePercent) {
+      return row.estimate.averagePercent > best.estimate.averagePercent ? row : best;
+    }
+
+    if (row.estimate.maxPercent !== best.estimate.maxPercent) {
+      return row.estimate.maxPercent > best.estimate.maxPercent ? row : best;
+    }
+
+    return row.estimate.minPercent > best.estimate.minPercent ? row : best;
+  }, null);
+}
+
+function getThreatCardTone(
+  strongestLine: ThreatLine | null,
+  perspective: "incoming" | "outgoing",
+): "neutral" | "warn" | "danger" | "good" | "great" {
+  if (!strongestLine?.bestRow) {
+    return "neutral";
+  }
+
+  const maxPercent = strongestLine.bestRow.estimate.maxPercent;
+
+  if (perspective === "incoming") {
+    if (maxPercent >= 100) {
+      return "danger";
+    }
+
+    if (maxPercent >= 70) {
+      return "warn";
+    }
+
+    return "neutral";
+  }
+
+  if (maxPercent >= 100) {
+    return "great";
+  }
+
+  if (maxPercent >= 70) {
+    return "good";
+  }
+
+  return "neutral";
+}
+
+function formatDamageHpRange(row: AutomaticDamageRow) {
+  return `${row.estimate.minDamage}-${row.estimate.maxDamage} HP`;
+}
+
+function formatDamagePercentRange(row: AutomaticDamageRow) {
+  return `${formatPercent(row.estimate.minPercent)}% - ${formatPercent(row.estimate.maxPercent)}%`;
+}
+
+function formatThreatTimingLabel(timing: ThreatLine["timing"]) {
+  if (timing === "before") {
+    return "Moves first";
+  }
+
+  if (timing === "after") {
+    return "Moves second";
+  }
+
+  return "Speed tie";
+}
+
+function getThreatEffectiveSpeed(member: DoublesSelectedMember, settings: ThreatTurnSettings) {
+  const hasTailwind =
+    (member.side === "ally" && settings.allyTailwind) ||
+    (member.side === "enemy" && settings.enemyTailwind);
+
+  return member.speedStat * (hasTailwind ? 2 : 1);
+}
+
+function compareThreatTurnOrder(
+  left: DoublesSelectedMember,
+  right: DoublesSelectedMember,
+  settings: ThreatTurnSettings,
+) {
+  const leftSpeed = getThreatEffectiveSpeed(left, settings);
+  const rightSpeed = getThreatEffectiveSpeed(right, settings);
+
+  if (leftSpeed !== rightSpeed) {
+    return settings.trickRoom ? leftSpeed - rightSpeed : rightSpeed - leftSpeed;
+  }
+
+  if (left.side !== right.side) {
+    return left.side === "ally" ? -1 : 1;
+  }
+
+  return left.slotIndex - right.slotIndex;
+}
+
+function getThreatTiming(
+  attacker: DoublesSelectedMember,
+  target: DoublesSelectedMember,
+  settings: ThreatTurnSettings,
+): ThreatLine["timing"] {
+  const attackerSpeed = getThreatEffectiveSpeed(attacker, settings);
+  const targetSpeed = getThreatEffectiveSpeed(target, settings);
+
+  if (attackerSpeed === targetSpeed) {
+    return "tie";
+  }
+
+  if (settings.trickRoom) {
+    return attackerSpeed < targetSpeed ? "before" : "after";
+  }
+
+  return attackerSpeed > targetSpeed ? "before" : "after";
+}
+
+function getStrongestThreatLine(lines: ThreatLine[]) {
+  return lines.reduce<ThreatLine | null>((best, line) => {
+    if (!line.bestRow) {
+      return best;
+    }
+
+    if (!best?.bestRow) {
+      return line;
+    }
+
+    if (line.bestRow.estimate.maxPercent !== best.bestRow.estimate.maxPercent) {
+      return line.bestRow.estimate.maxPercent > best.bestRow.estimate.maxPercent ? line : best;
+    }
+
+    if (line.bestRow.estimate.averagePercent !== best.bestRow.estimate.averagePercent) {
+      return line.bestRow.estimate.averagePercent > best.bestRow.estimate.averagePercent ? line : best;
+    }
+
+    return line.bestRow.estimate.minPercent > best.bestRow.estimate.minPercent ? line : best;
+  }, null);
+}
+
+function buildThreatCards(options: {
+  attackers: [DoublesSelectedMember, DoublesSelectedMember];
+  targets: [DoublesSelectedMember, DoublesSelectedMember];
+  buildRows: (member: DoublesSelectedMember, target: DoublesSelectedMember) => AutomaticDamageRow[];
+  turnSettings: ThreatTurnSettings;
+}) {
+  const { attackers, targets, buildRows, turnSettings } = options;
+
+  return targets.map<ThreatCard>((target) => {
+    const lines = attackers.map<ThreatLine>((attacker) => ({
+      attacker,
+      bestRow: getBestAutomaticDamageRow(buildRows(attacker, target)),
+      timing: getThreatTiming(attacker, target, turnSettings),
+      effectiveSpeed: getThreatEffectiveSpeed(attacker, turnSettings),
+    }));
+
+    return {
+      target,
+      lines,
+      strongestLine: getStrongestThreatLine(lines),
+    };
+  });
+}
+
+function getCombinedDamageSummary(
+  first: AutomaticDamageRow,
+  second: AutomaticDamageRow,
+  hpPercent: number = 100,
+): CombinedDamageSummary {
+  const minPercent = first.estimate.minPercent + second.estimate.minPercent;
+  const maxPercent = first.estimate.maxPercent + second.estimate.maxPercent;
+  const averagePercent = first.estimate.averagePercent + second.estimate.averagePercent;
+  const threshold = Math.max(0, hpPercent);
+
+  return {
+    first,
+    second,
+    minPercent,
+    maxPercent,
+    averagePercent,
+    guaranteedKo: minPercent >= threshold,
+    possibleKo: maxPercent >= threshold,
+  };
+}
+
+function actsBeforeTarget(
+  actor: DoublesSelectedMember,
+  target: DoublesSelectedMember,
+): "before" | "tie" | "after" {
+  if (actor.priority !== target.priority) {
+    return actor.priority ? "before" : "after";
+  }
+
+  if (actor.speedStat > target.speedStat) {
+    return "before";
+  }
+
+  if (actor.speedStat < target.speedStat) {
+    return "after";
+  }
+
+  return "tie";
+}
+
+function compareDoublesTurnOrder(left: DoublesSelectedMember, right: DoublesSelectedMember) {
+  if (left.priority !== right.priority) {
+    return left.priority ? -1 : 1;
+  }
+
+  if (left.speedStat !== right.speedStat) {
+    return right.speedStat - left.speedStat;
+  }
+
+  if (left.side !== right.side) {
+    return left.side === "ally" ? -1 : 1;
+  }
+
+  return left.slotIndex - right.slotIndex;
+}
+
+function getSpeedRelationSummary(actor: DoublesSelectedMember, target: DoublesSelectedMember) {
+  const relation = actsBeforeTarget(actor, target);
+  const priorityNote =
+    actor.priority && !target.priority
+      ? ` (via priority)`
+      : !actor.priority && target.priority
+        ? ` (they have priority)`
+        : "";
+
+  if (relation === "before") {
+    return {
+      relation: "before" as const,
+      summary: `${actor.pokemon.name} moves before ${target.pokemon.name}${priorityNote}.`,
+    };
+  }
+
+  if (relation === "after") {
+    return {
+      relation: "after" as const,
+      summary: `${actor.pokemon.name} moves after ${target.pokemon.name}${priorityNote}.`,
+    };
+  }
+
+  return {
+    relation: "tie" as const,
+    summary: `${actor.pokemon.name} speed-ties ${target.pokemon.name}.`,
+  };
+}
+
+function getComboTimingSummary(
+  actors: [DoublesSelectedMember, DoublesSelectedMember],
+  target: DoublesSelectedMember,
+): DoublesComboTiming {
+  const orderedActors = [...actors].sort(compareDoublesTurnOrder);
+  const relations = orderedActors.map((actor) => actsBeforeTarget(actor, target));
+  const fasterCount = relations.filter((relation) => relation === "before").length;
+  const tieCount = relations.filter((relation) => relation === "tie").length;
+
+  if (fasterCount === 2) {
+    return {
+      relation: "before",
+      summary: `${orderedActors[0].pokemon.name} and ${orderedActors[1].pokemon.name} both land before ${target.pokemon.name} moves.`,
+    };
+  }
+
+  if (fasterCount === 1 && tieCount === 1) {
+    return {
+      relation: "tie",
+      summary: `${orderedActors[0].pokemon.name} moves first, then the follow-up is in a speed tie with ${target.pokemon.name}.`,
+    };
+  }
+
+  if (fasterCount === 0 && tieCount === 2) {
+    return {
+      relation: "tie",
+      summary: `Both hits are in a speed tie with ${target.pokemon.name}.`,
+    };
+  }
+
+  if (fasterCount === 1) {
+    return {
+      relation: "split",
+      summary: `${orderedActors[0].pokemon.name} lands first, but ${target.pokemon.name} can act before ${orderedActors[1].pokemon.name}.`,
+    };
+  }
+
+  if (tieCount === 1) {
+    return {
+      relation: "split",
+      summary: `One hit ties ${target.pokemon.name}; the other lands after it moves.`,
+    };
+  }
+
+  return {
+    relation: "after",
+    summary: `${target.pokemon.name} moves before either hit lands.`,
+  };
+}
+
+function buildDoublesTargetSummary(
+  attackers: [DoublesSelectedMember, DoublesSelectedMember],
+  target: DoublesSelectedMember,
+  buildRows: (member: DoublesSelectedMember, target: DoublesSelectedMember) => AutomaticDamageRow[],
+): DoublesTargetSummary {
+  const attackerRows = attackers.map((member) => ({
+    member,
+    rows: member.protect ? [] : buildRows(member, target),
+  })) as [
+    { member: DoublesSelectedMember; rows: AutomaticDamageRow[] },
+    { member: DoublesSelectedMember; rows: AutomaticDamageRow[] },
+  ];
+
+  const hpThreshold = Math.max(0, target.hpPercent);
+
+  return {
+    target,
+    singles: attackerRows.map(({ member, rows }) => {
+      const speedOutcome = getSpeedRelationSummary(member, target);
+
+      return {
+        member,
+        bestRow: getBestAutomaticDamageRow(rows),
+        speedRelation: speedOutcome.relation,
+        timingSummary: member.protect
+          ? `${member.pokemon.name} is using Protect this turn.`
+          : speedOutcome.summary,
+      };
+    }),
+    bestDoubleUp: getBestCombinedDamageSummary(attackerRows[0].rows, attackerRows[1].rows, "any", hpThreshold),
+    bestDoubleUpTiming: getComboTimingSummary([attackerRows[0].member, attackerRows[1].member], target),
+    bestSpreadSingle: getBestCombinedDamageSummary(
+      attackerRows[0].rows,
+      attackerRows[1].rows,
+      "spreadAndSingle",
+      hpThreshold,
+    ),
+    bestSpreadSingleTiming: getComboTimingSummary([attackerRows[0].member, attackerRows[1].member], target),
+  };
+}
+
+function getDoublesRelationPriority(relation: DoublesVisualPlan["relation"]) {
+  switch (relation) {
+    case "before":
+      return 4;
+    case "tie":
+      return 3;
+    case "split":
+      return 2;
+    case "after":
+    default:
+      return 1;
+  }
+}
+
+function formatDoublesTimingLabel(
+  relation: DoublesVisualPlan["relation"],
+  perspective: "ally" | "enemy",
+) {
+  if (relation === "before") {
+    return perspective === "ally" ? "Before Move" : "Before Your Move";
+  }
+
+  if (relation === "tie") {
+    return "Speed Tie";
+  }
+
+  if (relation === "split") {
+    return "Acts Between";
+  }
+
+  return perspective === "ally" ? "After Move" : "After Your Move";
+}
+
+function getDoublesPlanTone(options: {
+  guaranteedKo: boolean;
+  possibleKo: boolean;
+  averagePercent: number;
+  perspective: "ally" | "enemy";
+}) {
+  const { guaranteedKo, possibleKo, averagePercent, perspective } = options;
+
+  if (perspective === "ally") {
+    if (guaranteedKo) {
+      return "great" as const;
+    }
+
+    if (possibleKo) {
+      return "good" as const;
+    }
+
+    if (averagePercent >= 70) {
+      return "warn" as const;
+    }
+
+    return "neutral" as const;
+  }
+
+  if (guaranteedKo) {
+    return "danger" as const;
+  }
+
+  if (possibleKo) {
+    return "warn" as const;
+  }
+
+  if (averagePercent >= 70) {
+    return "warn" as const;
+  }
+
+  return "neutral" as const;
+}
+
+function formatDoublesStatusLabel(options: {
+  guaranteedKo: boolean;
+  possibleKo: boolean;
+  averagePercent: number;
+  perspective: "ally" | "enemy";
+}) {
+  const { guaranteedKo, possibleKo, averagePercent, perspective } = options;
+
+  if (guaranteedKo) {
+    return "Guaranteed KO";
+  }
+
+  if (possibleKo) {
+    return perspective === "ally" ? "Roll KO" : "KO Threat";
+  }
+
+  if (averagePercent >= 70) {
+    return perspective === "ally" ? "Heavy Pressure" : "Heavy Threat";
+  }
+
+  if (averagePercent >= 40) {
+    return perspective === "ally" ? "Pressure" : "Threat";
+  }
+
+  return perspective === "ally" ? "Safe For Now" : "Low Threat";
+}
+
+function createComboVisualPlan(options: {
+  summary: CombinedDamageSummary;
+  timing: DoublesComboTiming;
+  perspective: "ally" | "enemy";
+  kind: "double" | "spread";
+}) {
+  const { summary, timing, perspective, kind } = options;
+  const averagePercent = summary.averagePercent;
+  const statusLabel = formatDoublesStatusLabel({
+    guaranteedKo: summary.guaranteedKo,
+    possibleKo: summary.possibleKo,
+    averagePercent,
+    perspective,
+  });
+
+  return {
+    kind,
+    guaranteedKo: summary.guaranteedKo,
+    possibleKo: summary.possibleKo,
+    relation: timing.relation,
+    statusLabel,
+    timingLabel: formatDoublesTimingLabel(timing.relation, perspective),
+    tone: getDoublesPlanTone({
+      guaranteedKo: summary.guaranteedKo,
+      possibleKo: summary.possibleKo,
+      averagePercent,
+      perspective,
+    }),
+    actorsLabel:
+      kind === "spread"
+        ? `${getAttackLabel(summary.first.attack)} + ${getAttackLabel(summary.second.attack)}`
+        : `${summary.first.attack.label?.trim() ? summary.first.attack.label : getAttackLabel(summary.first.attack)} + ${
+            summary.second.attack.label?.trim() ? summary.second.attack.label : getAttackLabel(summary.second.attack)
+          }`,
+    attacksLabel: `${TYPE_META[summary.first.estimate.effectiveAttackType].label} + ${
+      TYPE_META[summary.second.estimate.effectiveAttackType].label
+    }`,
+    rangeLabel: `${formatPercent(summary.minPercent)}% - ${formatPercent(summary.maxPercent)}%`,
+    note: timing.summary,
+    averagePercent,
+  } satisfies DoublesVisualPlan;
+}
+
+function createBlockedVisualPlan(
+  target: DoublesSelectedMember,
+  perspective: "ally" | "enemy",
+): DoublesVisualPlan {
+  return {
+    kind: "none",
+    guaranteedKo: false,
+    possibleKo: false,
+    relation: "tie",
+    statusLabel: "Blocked by Protect",
+    timingLabel: "Protect",
+    tone: "neutral",
+    actorsLabel: target.pokemon.name,
+    attacksLabel: `${target.pokemon.name} is using Protect this turn`,
+    rangeLabel: "--",
+    note: perspective === "ally" ? "No damage goes through — plan around it." : "You are safe this turn.",
+    averagePercent: 0,
+  };
+}
+
+function createSingleVisualPlan(options: {
+  summary: DoublesSingleLineSummary;
+  perspective: "ally" | "enemy";
+  targetHpPercent: number;
+}) {
+  const { summary, perspective, targetHpPercent } = options;
+
+  if (summary.member.protect) {
+    return {
+      kind: "none",
+      guaranteedKo: false,
+      possibleKo: false,
+      relation: "after",
+      statusLabel: perspective === "ally" ? "Protecting" : "Protecting",
+      timingLabel: "Protect",
+      tone: "neutral",
+      actorsLabel: summary.member.pokemon.name,
+      attacksLabel: `${summary.member.pokemon.name} is using Protect`,
+      rangeLabel: "--",
+      note: summary.timingSummary,
+      averagePercent: 0,
+    } satisfies DoublesVisualPlan;
+  }
+
+  if (!summary.bestRow) {
+    return {
+      kind: "none",
+      guaranteedKo: false,
+      possibleKo: false,
+      relation: "after",
+      statusLabel: perspective === "ally" ? "No Line" : "No Threat",
+      timingLabel: "No Damage",
+      tone: "neutral",
+      actorsLabel: summary.member.pokemon.name,
+      attacksLabel: "No damaging move found",
+      rangeLabel: "--",
+      note: summary.timingSummary,
+      averagePercent: 0,
+    } satisfies DoublesVisualPlan;
+  }
+
+  const threshold = Math.max(0, targetHpPercent);
+  const guaranteedKo = summary.bestRow.estimate.minPercent >= threshold;
+  const possibleKo = summary.bestRow.estimate.maxPercent >= threshold;
+  const averagePercent = summary.bestRow.estimate.averagePercent;
+
+  return {
+    kind: "single",
+    guaranteedKo,
+    possibleKo,
+    relation: summary.speedRelation,
+    statusLabel: formatDoublesStatusLabel({
+      guaranteedKo,
+      possibleKo,
+      averagePercent,
+      perspective,
+    }),
+    timingLabel: formatDoublesTimingLabel(summary.speedRelation, perspective),
+    tone: getDoublesPlanTone({
+      guaranteedKo,
+      possibleKo,
+      averagePercent,
+      perspective,
+    }),
+    actorsLabel: summary.member.pokemon.name,
+    attacksLabel: getAttackLabel(summary.bestRow.attack),
+    rangeLabel: `${formatPercent(summary.bestRow.estimate.minPercent)}% - ${formatPercent(summary.bestRow.estimate.maxPercent)}%`,
+    note: summary.timingSummary,
+    averagePercent,
+  } satisfies DoublesVisualPlan;
+}
+
+function getDoublesVisualPlanScore(plan: DoublesVisualPlan) {
+  return (
+    (plan.guaranteedKo ? 10000 : plan.possibleKo ? 7000 : 0) +
+    getDoublesRelationPriority(plan.relation) * 1000 +
+    Math.round(plan.averagePercent)
+  );
+}
+
+function getBestDoublesVisualPlan(summary: DoublesTargetSummary, perspective: "ally" | "enemy") {
+  if (summary.target.protect) {
+    return createBlockedVisualPlan(summary.target, perspective);
+  }
+
+  const plans: DoublesVisualPlan[] = [];
+
+  if (summary.bestDoubleUp && summary.bestDoubleUpTiming) {
+    plans.push(
+      createComboVisualPlan({
+        summary: summary.bestDoubleUp,
+        timing: summary.bestDoubleUpTiming,
+        perspective,
+        kind: "double",
+      }),
+    );
+  }
+
+  if (summary.bestSpreadSingle && summary.bestSpreadSingleTiming) {
+    plans.push(
+      createComboVisualPlan({
+        summary: summary.bestSpreadSingle,
+        timing: summary.bestSpreadSingleTiming,
+        perspective,
+        kind: "spread",
+      }),
+    );
+  }
+
+  for (const singleSummary of summary.singles) {
+    plans.push(
+      createSingleVisualPlan({
+        summary: singleSummary,
+        perspective,
+        targetHpPercent: summary.target.hpPercent,
+      }),
+    );
+  }
+
+  if (plans.length === 0) {
+    return {
+      kind: "none",
+      guaranteedKo: false,
+      possibleKo: false,
+      relation: "after",
+      statusLabel: perspective === "ally" ? "No Line" : "No Threat",
+      timingLabel: "No Damage",
+      tone: "neutral",
+      actorsLabel: summary.target.pokemon.name,
+      attacksLabel: "No attacking line found",
+      rangeLabel: "--",
+      note: "",
+      averagePercent: 0,
+    } satisfies DoublesVisualPlan;
+  }
+
+  return plans.slice(1).reduce<DoublesVisualPlan>(
+    (best, current) => (getDoublesVisualPlanScore(current) > getDoublesVisualPlanScore(best) ? current : best),
+    plans[0],
+  );
+}
+
+type DoublesAssignmentHit = {
+  attacker: DoublesSelectedMember;
+  row: AutomaticDamageRow;
+  landsBeforeTarget: boolean;
+};
+
+type DoublesStrategyTargetResult = {
+  target: DoublesSelectedMember;
+  hits: DoublesAssignmentHit[];
+  minPercent: number;
+  maxPercent: number;
+  averagePercent: number;
+  guaranteedKo: boolean;
+  possibleKo: boolean;
+  koBeforeTarget: boolean;
+  overkillPercent: number;
+  rangeLabel: string;
+  statusLabel: string;
+  tone: "great" | "good" | "warn" | "danger" | "neutral";
+  timingLabel: string;
+  relation: "before" | "tie" | "split" | "after";
+};
+
+type DoublesStrategyAssignment = {
+  attacker: DoublesSelectedMember;
+  target: DoublesSelectedMember;
+  row: AutomaticDamageRow | null;
+  landsBeforeTarget: boolean;
+  mode: "attack" | "protect";
+};
+
+type DoublesStrategyPlan = {
+  id: string;
+  label: string;
+  assignments: DoublesStrategyAssignment[];
+  targetResults: DoublesStrategyTargetResult[];
+  score: number;
+  koCount: number;
+  preemptiveKoCount: number;
+  protectSlots: number[];
+};
+
+function computeDoublesStrategyTargetResult(
+  target: DoublesSelectedMember,
+  rawHits: Array<{ attacker: DoublesSelectedMember; row: AutomaticDamageRow | null }>,
+  perspective: "ally" | "enemy",
+): DoublesStrategyTargetResult {
+  if (target.protect) {
+    return {
+      target,
+      hits: [],
+      minPercent: 0,
+      maxPercent: 0,
+      averagePercent: 0,
+      guaranteedKo: false,
+      possibleKo: false,
+      koBeforeTarget: false,
+      overkillPercent: 0,
+      rangeLabel: "--",
+      statusLabel: "Blocked by Protect",
+      tone: "neutral",
+      timingLabel: "Protect",
+      relation: "tie",
+    };
+  }
+
+  const hits: DoublesAssignmentHit[] = rawHits
+    .filter(
+      (entry): entry is { attacker: DoublesSelectedMember; row: AutomaticDamageRow } =>
+        Boolean(entry.row) && !entry.attacker.protect,
+    )
+    .map((entry) => ({
+      attacker: entry.attacker,
+      row: entry.row,
+      landsBeforeTarget: actsBeforeTarget(entry.attacker, target) === "before",
+    }));
+
+  if (hits.length === 0) {
+    return {
+      target,
+      hits: [],
+      minPercent: 0,
+      maxPercent: 0,
+      averagePercent: 0,
+      guaranteedKo: false,
+      possibleKo: false,
+      koBeforeTarget: false,
+      overkillPercent: 0,
+      rangeLabel: "--",
+      statusLabel: perspective === "ally" ? "Ignored" : "Safe",
+      tone: "neutral",
+      timingLabel: "No Hit",
+      relation: "after",
+    };
+  }
+
+  const hpThreshold = Math.max(0, target.hpPercent);
+  const minPercent = hits.reduce((sum, hit) => sum + hit.row.estimate.minPercent, 0);
+  const maxPercent = hits.reduce((sum, hit) => sum + hit.row.estimate.maxPercent, 0);
+  const averagePercent = hits.reduce((sum, hit) => sum + hit.row.estimate.averagePercent, 0);
+  const guaranteedKo = minPercent >= hpThreshold;
+  const possibleKo = maxPercent >= hpThreshold;
+  const koBeforeTarget = hits.every((hit) => hit.landsBeforeTarget);
+  const overkillPercent = guaranteedKo ? Math.max(0, minPercent - hpThreshold) : 0;
+
+  const statusLabel = formatDoublesStatusLabel({
+    guaranteedKo,
+    possibleKo,
+    averagePercent,
+    perspective,
+  });
+  const tone = getDoublesPlanTone({
+    guaranteedKo,
+    possibleKo,
+    averagePercent,
+    perspective,
+  });
+
+  let relation: DoublesStrategyTargetResult["relation"];
+  if (hits.length === 1) {
+    const single = actsBeforeTarget(hits[0].attacker, target);
+    relation = single;
+  } else {
+    const relations = hits.map((hit) => actsBeforeTarget(hit.attacker, target));
+    const beforeCount = relations.filter((r) => r === "before").length;
+    const afterCount = relations.filter((r) => r === "after").length;
+    const tieCount = relations.filter((r) => r === "tie").length;
+    if (beforeCount === relations.length) {
+      relation = "before";
+    } else if (afterCount === relations.length) {
+      relation = "after";
+    } else if (beforeCount === 0 && tieCount > 0) {
+      relation = "tie";
+    } else {
+      relation = "split";
+    }
+  }
+
+  return {
+    target,
+    hits,
+    minPercent,
+    maxPercent,
+    averagePercent,
+    guaranteedKo,
+    possibleKo,
+    koBeforeTarget,
+    overkillPercent,
+    rangeLabel: `${formatPercent(minPercent)}% - ${formatPercent(maxPercent)}%`,
+    statusLabel,
+    tone,
+    timingLabel: formatDoublesTimingLabel(relation, perspective),
+    relation,
+  };
+}
+
+function scoreDoublesStrategyResults(results: DoublesStrategyTargetResult[]): {
+  score: number;
+  koCount: number;
+  preemptiveKoCount: number;
+} {
+  let score = 0;
+  let koCount = 0;
+  let preemptiveKoCount = 0;
+
+  for (const result of results) {
+    if (result.target.protect) {
+      continue;
+    }
+
+    if (result.guaranteedKo) {
+      score += result.koBeforeTarget ? 12000 : 7000;
+      score -= result.overkillPercent * 4;
+      koCount += 1;
+      if (result.koBeforeTarget) {
+        preemptiveKoCount += 1;
+      }
+    } else if (result.possibleKo) {
+      score += result.koBeforeTarget ? 4500 : 2500;
+      score += Math.min(result.averagePercent, result.target.hpPercent) * 0.2;
+    } else {
+      score += Math.min(result.averagePercent, result.target.hpPercent);
+    }
+  }
+
+  if (koCount >= 2) {
+    score += 6000;
+  }
+
+  return { score, koCount, preemptiveKoCount };
+}
+
+function buildDoublesStrategies(
+  attackers: [DoublesSelectedMember, DoublesSelectedMember],
+  targets: [DoublesSelectedMember, DoublesSelectedMember],
+  summaryByTarget: DoublesTargetSummary[],
+  perspective: "ally" | "enemy",
+): DoublesStrategyPlan[] {
+  if (summaryByTarget.length !== 2) {
+    return [];
+  }
+
+  const [sumT0, sumT1] = summaryByTarget;
+  const plans: DoublesStrategyPlan[] = [];
+
+  const makeAssignment = (
+    attacker: DoublesSelectedMember,
+    target: DoublesSelectedMember,
+    row: AutomaticDamageRow | null,
+  ): DoublesStrategyAssignment => ({
+    attacker,
+    target,
+    row,
+    landsBeforeTarget: actsBeforeTarget(attacker, target) === "before",
+    mode: "attack",
+  });
+
+  const makeProtectAssignment = (attacker: DoublesSelectedMember): DoublesStrategyAssignment => ({
+    attacker,
+    target: attacker,
+    row: null,
+    landsBeforeTarget: false,
+    mode: "protect",
+  });
+
+  const pushPlan = (
+    id: DoublesStrategyPlan["id"],
+    label: string,
+    assignments: DoublesStrategyAssignment[],
+    targetResults: DoublesStrategyTargetResult[],
+  ) => {
+    const { score, koCount, preemptiveKoCount } = scoreDoublesStrategyResults(targetResults);
+    const protectSlots = assignments
+      .filter((a) => a.mode === "protect")
+      .map((a) => a.attacker.slotIndex);
+    plans.push({ id, label, assignments, targetResults, score, koCount, preemptiveKoCount, protectSlots });
+  };
+
+  if (sumT0.bestDoubleUp) {
+    const combo = sumT0.bestDoubleUp;
+    const res0 = computeDoublesStrategyTargetResult(
+      targets[0],
+      [
+        { attacker: attackers[0], row: combo.first },
+        { attacker: attackers[1], row: combo.second },
+      ],
+      perspective,
+    );
+    const res1 = computeDoublesStrategyTargetResult(targets[1], [], perspective);
+    pushPlan(
+      "focus-t0",
+      `Focus fire ${targets[0].pokemon.name}`,
+      [
+        makeAssignment(attackers[0], targets[0], combo.first),
+        makeAssignment(attackers[1], targets[0], combo.second),
+      ],
+      [res0, res1],
+    );
+  }
+
+  if (sumT1.bestDoubleUp) {
+    const combo = sumT1.bestDoubleUp;
+    const res0 = computeDoublesStrategyTargetResult(targets[0], [], perspective);
+    const res1 = computeDoublesStrategyTargetResult(
+      targets[1],
+      [
+        { attacker: attackers[0], row: combo.first },
+        { attacker: attackers[1], row: combo.second },
+      ],
+      perspective,
+    );
+    pushPlan(
+      "focus-t1",
+      `Focus fire ${targets[1].pokemon.name}`,
+      [
+        makeAssignment(attackers[0], targets[1], combo.first),
+        makeAssignment(attackers[1], targets[1], combo.second),
+      ],
+      [res0, res1],
+    );
+  }
+
+  {
+    const rowAT0 = sumT0.singles[0]?.bestRow ?? null;
+    const rowBT1 = sumT1.singles[1]?.bestRow ?? null;
+    const res0 = computeDoublesStrategyTargetResult(
+      targets[0],
+      [{ attacker: attackers[0], row: rowAT0 }],
+      perspective,
+    );
+    const res1 = computeDoublesStrategyTargetResult(
+      targets[1],
+      [{ attacker: attackers[1], row: rowBT1 }],
+      perspective,
+    );
+    pushPlan(
+      "split-ab",
+      `${attackers[0].pokemon.name} → ${targets[0].pokemon.name}, ${attackers[1].pokemon.name} → ${targets[1].pokemon.name}`,
+      [makeAssignment(attackers[0], targets[0], rowAT0), makeAssignment(attackers[1], targets[1], rowBT1)],
+      [res0, res1],
+    );
+  }
+
+  {
+    const rowAT1 = sumT1.singles[0]?.bestRow ?? null;
+    const rowBT0 = sumT0.singles[1]?.bestRow ?? null;
+    const res0 = computeDoublesStrategyTargetResult(
+      targets[0],
+      [{ attacker: attackers[1], row: rowBT0 }],
+      perspective,
+    );
+    const res1 = computeDoublesStrategyTargetResult(
+      targets[1],
+      [{ attacker: attackers[0], row: rowAT1 }],
+      perspective,
+    );
+    pushPlan(
+      "split-ba",
+      `${attackers[0].pokemon.name} → ${targets[1].pokemon.name}, ${attackers[1].pokemon.name} → ${targets[0].pokemon.name}`,
+      [makeAssignment(attackers[0], targets[1], rowAT1), makeAssignment(attackers[1], targets[0], rowBT0)],
+      [res0, res1],
+    );
+  }
+
+  if (!attackers[0].protect && !attackers[1].protect) {
+    const protectTemplates: Array<{
+      id: DoublesStrategyPlan["id"];
+      protectingIndex: 0 | 1;
+      attackingIndex: 0 | 1;
+      targetIndex: 0 | 1;
+    }> = [
+      { id: "protect-a-hit-t0", protectingIndex: 0, attackingIndex: 1, targetIndex: 0 },
+      { id: "protect-a-hit-t1", protectingIndex: 0, attackingIndex: 1, targetIndex: 1 },
+      { id: "protect-b-hit-t0", protectingIndex: 1, attackingIndex: 0, targetIndex: 0 },
+      { id: "protect-b-hit-t1", protectingIndex: 1, attackingIndex: 0, targetIndex: 1 },
+    ];
+
+    for (const template of protectTemplates) {
+      const protector = attackers[template.protectingIndex];
+      const attacker = attackers[template.attackingIndex];
+      const target = targets[template.targetIndex];
+      const row = summaryByTarget[template.targetIndex].singles[template.attackingIndex]?.bestRow ?? null;
+
+      const hits = [{ attacker, row }];
+      const otherTargetIndex = template.targetIndex === 0 ? 1 : 0;
+      const resultAttacked = computeDoublesStrategyTargetResult(target, hits, perspective);
+      const resultIdle = computeDoublesStrategyTargetResult(targets[otherTargetIndex], [], perspective);
+
+      const results =
+        template.targetIndex === 0 ? [resultAttacked, resultIdle] : [resultIdle, resultAttacked];
+
+      const assignments =
+        template.protectingIndex === 0
+          ? [makeProtectAssignment(protector), makeAssignment(attacker, target, row)]
+          : [makeAssignment(attacker, target, row), makeProtectAssignment(protector)];
+
+      pushPlan(
+        template.id,
+        `Protect ${protector.pokemon.name}, ${attacker.pokemon.name} → ${target.pokemon.name}`,
+        assignments,
+        results,
+      );
+    }
+  }
+
+  return plans;
+}
+
+function adjustDoublesStrategyWithTargetProtect(
+  strategy: DoublesStrategyPlan,
+  protectedTargetSlotIndices: Set<number>,
+): DoublesStrategyPlan {
+  if (protectedTargetSlotIndices.size === 0) {
+    return strategy;
+  }
+
+  const adjustedResults = strategy.targetResults.map((result) => {
+    if (protectedTargetSlotIndices.has(result.target.slotIndex)) {
+      return {
+        ...result,
+        hits: [],
+        minPercent: 0,
+        maxPercent: 0,
+        averagePercent: 0,
+        guaranteedKo: false,
+        possibleKo: false,
+        koBeforeTarget: false,
+        overkillPercent: 0,
+        rangeLabel: "--",
+        statusLabel: "Blocked by Protect",
+        tone: "neutral" as const,
+        timingLabel: "Protect",
+        relation: "tie" as const,
+      };
+    }
+    return result;
+  });
+
+  const { score, koCount, preemptiveKoCount } = scoreDoublesStrategyResults(adjustedResults);
+
+  return {
+    ...strategy,
+    targetResults: adjustedResults,
+    score,
+    koCount,
+    preemptiveKoCount,
+  };
+}
+
+function getBestCombinedDamageSummary(
+  leftRows: AutomaticDamageRow[],
+  rightRows: AutomaticDamageRow[],
+  mode: "any" | "spreadAndSingle",
+  hpPercent: number = 100,
+) {
+  let best: CombinedDamageSummary | null = null;
+
+  for (const left of leftRows) {
+    for (const right of rightRows) {
+      if (mode === "spreadAndSingle" && left.isSpreadMove === right.isSpreadMove) {
+        continue;
+      }
+
+      const combined = getCombinedDamageSummary(left, right, hpPercent);
+
+      if (!best) {
+        best = combined;
+        continue;
+      }
+
+      if (combined.averagePercent !== best.averagePercent) {
+        best = combined.averagePercent > best.averagePercent ? combined : best;
+        continue;
+      }
+
+      if (combined.maxPercent !== best.maxPercent) {
+        best = combined.maxPercent > best.maxPercent ? combined : best;
+        continue;
+      }
+
+      if (combined.minPercent !== best.minPercent) {
+        best = combined.minPercent > best.minPercent ? combined : best;
+      }
     }
   }
 
@@ -546,28 +1978,34 @@ function getStoredOrPresetSavedAttacks(
   speciesMovesetByKey: ReadonlyMap<string, PersistedSpeciesMoveset>,
   moveByKey: ReadonlyMap<string, MoveRecord>,
   limit = MAX_SPECIES_MOVESET_SIZE,
-): { savedAttacks: PersistedSavedAttack[]; movesetSource: StoredMovesetSource } {
-  const speciesMoveset = speciesMovesetByKey.get(getPokemonMovesetKey(pokemon)) ?? null;
-
-  if (speciesMoveset?.savedAttacks?.length) {
-    return {
-      savedAttacks: sanitizeSavedAttacks(speciesMoveset.savedAttacks, pokemon, limit),
-      movesetSource: "custom",
-    };
-  }
-
+): ResolvedSpeciesMoveset {
+  const inheritedMovesetKey = getInheritedMovesetKey(pokemon);
+  const speciesMoveset =
+    speciesMovesetByKey.get(getPokemonMovesetKey(pokemon)) ??
+    (inheritedMovesetKey ? speciesMovesetByKey.get(inheritedMovesetKey) : null) ??
+    null;
+  const preset = getOpponentPreset(pokemon);
+  const customSavedAttacks = speciesMoveset?.savedAttacks?.length
+    ? sanitizeSavedAttacks(speciesMoveset.savedAttacks, pokemon, limit)
+    : [];
   const presetSavedAttacks = getOpponentPresetSavedAttacks(pokemon, moveByKey).slice(0, limit);
-
-  if (presetSavedAttacks.length > 0) {
-    return {
-      savedAttacks: presetSavedAttacks,
-      movesetSource: "preset",
-    };
-  }
+  const customAbilityName = getResolvedFieldValue(speciesMoveset?.abilityName);
+  const customItemName = getResolvedFieldValue(speciesMoveset?.itemName);
+  const presetAbilityName = getResolvedFieldValue(preset?.abilityName);
+  const presetItemName = getResolvedFieldValue(preset?.itemName);
+  const hasCustomOverride = Boolean(speciesMoveset && (customSavedAttacks.length > 0 || customAbilityName || customItemName));
 
   return {
-    savedAttacks: [],
-    movesetSource: "none",
+    savedAttacks: customSavedAttacks.length > 0 ? customSavedAttacks : presetSavedAttacks,
+    allMoveNames:
+      customSavedAttacks.length > 0
+        ? customSavedAttacks.map((attack) => getAttackLabel(attack))
+        : preset?.moveNames
+          ? [...preset.moveNames]
+          : [],
+    abilityName: customAbilityName ?? presetAbilityName,
+    itemName: customItemName ?? presetItemName,
+    movesetSource: hasCustomOverride ? "custom" : preset ? "preset" : "none",
   };
 }
 
@@ -582,6 +2020,7 @@ function getEditablePokemonEntries(
 
       return (
         (pokemon.forme === null && POKEMON_CHAMPIONS_LEGAL_SPECIES_KEY_SET.has(baseSpeciesKey)) ||
+        isChampionsMegaEntry(pokemon) ||
         OPPONENT_MOVE_PRESET_KEY_SET.has(movesetKey) ||
         speciesMovesetByKey.has(movesetKey)
       );
@@ -592,6 +2031,28 @@ function getEditablePokemonEntries(
 
       return leftOrder - rightOrder || left.name.localeCompare(right.name);
     });
+}
+
+function getTeamBuilderFormatEntries(
+  database: PokemonRecord[] | null,
+  speciesMovesetByKey: ReadonlyMap<string, PersistedSpeciesMoveset>,
+  format: TeamBuilderFormat,
+) {
+  if (format === "all") {
+    return database ?? [];
+  }
+
+  return (database ?? []).filter((pokemon) => {
+    const movesetKey = getPokemonMovesetKey(pokemon);
+    const baseSpeciesKey = getPokemonBaseSpeciesKey(pokemon);
+    const isLegalBaseSpecies = pokemon.forme === null && POKEMON_CHAMPIONS_LEGAL_SPECIES_KEY_SET.has(baseSpeciesKey);
+    const isSupportedLegalForm =
+      pokemon.forme !== null &&
+      POKEMON_CHAMPIONS_LEGAL_SPECIES_KEY_SET.has(baseSpeciesKey) &&
+      (OPPONENT_MOVE_PRESET_KEY_SET.has(movesetKey) || speciesMovesetByKey.has(movesetKey));
+
+    return isLegalBaseSpecies || isChampionsMegaEntry(pokemon) || isSupportedLegalForm;
+  });
 }
 
 function formatMatrixCell(multiplier: number | null, mode: TeamMatrixMode) {
@@ -843,6 +2304,54 @@ function normalizeOpenerSelection(
   }
 
   return [first, second];
+}
+
+function normalizePairSelection(
+  selection: OpenerSelection,
+  availableIndices: number[],
+  preferredOffset: number,
+): OpenerSelection {
+  if (availableIndices.length === 0) {
+    return [null, null];
+  }
+
+  const fallbackFirst = availableIndices[preferredOffset] ?? availableIndices[0] ?? null;
+  const fallbackSecond =
+    availableIndices[preferredOffset + 1] ??
+    availableIndices.find((index) => index !== fallbackFirst) ??
+    null;
+
+  const first =
+    selection[0] !== null && availableIndices.includes(selection[0]) ? selection[0] : fallbackFirst;
+  let second: number | null =
+    selection[1] !== null && availableIndices.includes(selection[1]) && selection[1] !== first
+      ? selection[1]
+      : fallbackSecond;
+
+  if (second === first) {
+    second = availableIndices.find((index) => index !== first) ?? null;
+  }
+
+  return [first, second];
+}
+
+function togglePairSelection(selection: OpenerSelection, slotIndex: number): OpenerSelection {
+  const current = selection.filter((entry): entry is number => entry !== null);
+
+  if (current.includes(slotIndex)) {
+    const next = current.filter((entry) => entry !== slotIndex);
+    return [next[0] ?? null, next[1] ?? null];
+  }
+
+  if (current.length === 0) {
+    return [slotIndex, null];
+  }
+
+  if (current.length === 1) {
+    return [current[0], slotIndex];
+  }
+
+  return [current[0], slotIndex];
 }
 
 function normalizeTeamSlots(slots: PersistedTeamSlot[]): TeamSlotState[] {
@@ -1126,7 +2635,7 @@ function TeamSlotCard({
           id={`team-slot-${slotIndex}`}
           className="team-pokemon-input"
           list="pokemon-options"
-          placeholder={databaseLoaded ? "Start typing a Pokemon name" : "Loading local database..."}
+          placeholder={databaseLoaded ? "Start typing a legal Pokemon name" : "Loading local database..."}
           value={slot.query}
           onChange={(event) => onQueryChange(slotIndex, event.target.value)}
           disabled={!databaseLoaded}
@@ -1661,6 +3170,7 @@ function TeamBuilderView() {
   const [storageMessage, setStorageMessage] = useState<string | null>(null);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [activeSavedTeamId, setActiveSavedTeamId] = useState<string | null>(null);
+  const [teamBuilderFormat, setTeamBuilderFormat] = useState<TeamBuilderFormat>("regulationMA");
   const [quickPokemonQuery, setQuickPokemonQuery] = useState("");
   const [quickMoveQuery, setQuickMoveQuery] = useState("");
   const [teamSlots, setTeamSlots] = useState<TeamSlotState[]>(
@@ -1675,10 +3185,40 @@ function TeamBuilderView() {
   const [damageDefenderGrounded, setDamageDefenderGrounded] = useState(true);
   const [damageAttackStage, setDamageAttackStage] = useState(0);
   const [damageDefenseStage, setDamageDefenseStage] = useState(0);
+  const [damageAttackerAbility, setDamageAttackerAbility] = useState<DamageAbilityId>("none");
+  const [damageDefenderAbility, setDamageDefenderAbility] = useState<DamageAbilityId>("none");
+  const [damageAttackerItem, setDamageAttackerItem] = useState<DamageItemId>("none");
+  const [damageDefenderItem, setDamageDefenderItem] = useState<DamageItemId>("none");
+  const [damageHelpingHand, setDamageHelpingHand] = useState(false);
   const [damageMoveConfigs, setDamageMoveConfigs] = useState<
     Record<string, Partial<Record<string, DamageMoveConfig>>>
   >({});
   const [defenseMoveConfigs, setDefenseMoveConfigs] = useState<Record<string, ManualDamageMoveConfig>>({});
+  const [doublesAllySelection, setDoublesAllySelection] = useState<OpenerSelection>([null, null]);
+  const [doublesEnemySelection, setDoublesEnemySelection] = useState<OpenerSelection>([null, null]);
+  const [doublesAllyTailwind, setDoublesAllyTailwind] = useState(false);
+  const [doublesEnemyTailwind, setDoublesEnemyTailwind] = useState(false);
+  const [doublesTrickRoom, setDoublesTrickRoom] = useState(false);
+  const [doublesRuntime, setDoublesRuntime] = useState<Record<string, DoublesMemberRuntime>>({});
+
+  const getDoublesRuntime = (side: "ally" | "enemy", slotIndex: number): DoublesMemberRuntime =>
+    doublesRuntime[`${side}-${slotIndex}`] ?? DEFAULT_DOUBLES_RUNTIME;
+
+  const updateDoublesRuntime = (
+    side: "ally" | "enemy",
+    slotIndex: number,
+    patch: Partial<DoublesMemberRuntime>,
+  ) => {
+    setDoublesRuntime((current) => {
+      const key = `${side}-${slotIndex}`;
+      const existing = current[key] ?? DEFAULT_DOUBLES_RUNTIME;
+      return { ...current, [key]: { ...existing, ...patch } };
+    });
+  };
+
+  const resetDoublesTurn = () => {
+    setDoublesRuntime({});
+  };
 
   useEffect(() => {
     let active = true;
@@ -1783,6 +3323,23 @@ function TeamBuilderView() {
     return map;
   }, [speciesMovesets]);
 
+  const teamBuilderPokemonPool = useMemo(
+    () => getTeamBuilderFormatEntries(database, speciesMovesetByKey, teamBuilderFormat),
+    [database, speciesMovesetByKey, teamBuilderFormat],
+  );
+
+  const teamBuilderPokemonByKey = useMemo(() => {
+    const map = new Map<string, PokemonRecord>();
+
+    for (const pokemon of teamBuilderPokemonPool) {
+      map.set(pokemon.id, pokemon);
+      map.set(pokemon.name.toLowerCase(), pokemon);
+      map.set(String(pokemon.num), pokemon);
+    }
+
+    return map;
+  }, [teamBuilderPokemonPool]);
+
   const team = useMemo(
     () =>
       teamSlots.map((slot) => {
@@ -1822,25 +3379,30 @@ function TeamBuilderView() {
             pokemon: null,
             savedAttacks: [],
             presetMoveNames: [],
+            abilityName: null,
+            itemName: null,
             movesetSource: "none",
           };
         }
 
-        const pokemon = pokemonByKey.get(trimmed.toLowerCase()) ?? pokemonByKey.get(trimmed) ?? null;
+        const pokemon =
+          teamBuilderPokemonByKey.get(trimmed.toLowerCase()) ?? teamBuilderPokemonByKey.get(trimmed) ?? null;
         const storedMoves = pokemon
           ? getStoredOrPresetSavedAttacks(pokemon, speciesMovesetByKey, moveByKey, MAX_SPECIES_MOVESET_SIZE)
-          : { savedAttacks: [], movesetSource: "none" as const };
+          : { savedAttacks: [], allMoveNames: [], abilityName: null, itemName: null, movesetSource: "none" as const };
 
         return {
           slotIndex,
           query,
           pokemon,
           savedAttacks: storedMoves.savedAttacks,
-          presetMoveNames: pokemon ? getOpponentPresetMoveNames(pokemon) : [],
+          presetMoveNames: storedMoves.allMoveNames,
+          abilityName: storedMoves.abilityName,
+          itemName: storedMoves.itemName,
           movesetSource: storedMoves.movesetSource,
         };
       }),
-    [moveByKey, opponentQueries, pokemonByKey, speciesMovesetByKey],
+    [moveByKey, opponentQueries, speciesMovesetByKey, teamBuilderPokemonByKey],
   );
 
   const opponentEntries = useMemo(
@@ -1854,6 +3416,8 @@ function TeamBuilderView() {
                 pokemon: entry.pokemon,
                 savedAttacks: entry.savedAttacks,
                 presetMoveNames: entry.presetMoveNames,
+                abilityName: entry.abilityName,
+                itemName: entry.itemName,
                 movesetSource: entry.movesetSource,
               }
             : null,
@@ -1867,10 +3431,16 @@ function TeamBuilderView() {
             pokemon: PokemonRecord;
             savedAttacks: PersistedSavedAttack[];
             presetMoveNames: string[];
+            abilityName: string | null;
+            itemName: string | null;
             movesetSource: "custom" | "preset" | "none";
           } => Boolean(entry),
         ),
     [opponentRoster],
+  );
+  const opponentEntryBySlot = useMemo(
+    () => new Map(opponentEntries.map((entry) => [entry.slotIndex, entry] as const)),
+    [opponentEntries],
   );
 
   const quickPokemon = useMemo(() => {
@@ -1880,8 +3450,8 @@ function TeamBuilderView() {
       return null;
     }
 
-    return pokemonByKey.get(trimmed.toLowerCase()) ?? pokemonByKey.get(trimmed) ?? null;
-  }, [pokemonByKey, quickPokemonQuery]);
+    return teamBuilderPokemonByKey.get(trimmed.toLowerCase()) ?? teamBuilderPokemonByKey.get(trimmed) ?? null;
+  }, [quickPokemonQuery, teamBuilderPokemonByKey]);
 
   const quickMove = useMemo(() => {
     const trimmed = quickMoveQuery.trim();
@@ -1938,7 +3508,10 @@ function TeamBuilderView() {
   );
 
   const updateSlotQuery = (slotIndex: number, nextQuery: string) => {
-    const match = pokemonByKey.get(nextQuery.trim().toLowerCase()) ?? pokemonByKey.get(nextQuery.trim()) ?? null;
+    const match =
+      teamBuilderPokemonByKey.get(nextQuery.trim().toLowerCase()) ??
+      teamBuilderPokemonByKey.get(nextQuery.trim()) ??
+      null;
 
     setTeamSlots((current) =>
       current.map((slot, index) =>
@@ -2118,6 +3691,10 @@ function TeamBuilderView() {
       return availableIndices[0] ?? null;
     });
   }, [filledLeadOptions]);
+  useEffect(() => {
+    const availableIndices = filledLeadOptions.map((entry) => entry.index);
+    setDoublesAllySelection((current) => normalizePairSelection(current, availableIndices, 0));
+  }, [filledLeadOptions]);
 
   useEffect(() => {
     const availableIndices = opponentEntries.map((entry) => entry.slotIndex);
@@ -2129,6 +3706,10 @@ function TeamBuilderView() {
 
       return availableIndices[0] ?? null;
     });
+  }, [opponentEntries]);
+  useEffect(() => {
+    const availableIndices = opponentEntries.map((entry) => entry.slotIndex);
+    setDoublesEnemySelection((current) => normalizePairSelection(current, availableIndices, 0));
   }, [opponentEntries]);
 
   const openerSummaries = useMemo(
@@ -2262,6 +3843,9 @@ function TeamBuilderView() {
   const defenseAttackTypeOptions = selectedDamageDefenderPokemon
     ? getPokemonAttackTypeOptions(selectedDamageDefenderPokemon)
     : [];
+  const damageAbilityOptions = useMemo(() => getDamageAbilityOptions(), []);
+  const damageAttackerItemOptions = useMemo(() => getDamageItemOptions("attacker"), []);
+  const damageDefenderItemOptions = useMemo(() => getDamageItemOptions("defender"), []);
 
   useEffect(() => {
     setDamageAttackerGrounded(isLikelyGrounded(selectedDamageAttackerPokemon));
@@ -2270,6 +3854,34 @@ function TeamBuilderView() {
   useEffect(() => {
     setDamageDefenderGrounded(isLikelyGrounded(selectedDamageDefenderPokemon));
   }, [selectedDamageDefenderPokemon]);
+
+  useEffect(() => {
+    setDamageAttackerAbility(getDefaultDamageAbilityId(selectedDamageAttackerPokemon));
+  }, [selectedDamageAttackerPokemon?.id]);
+
+  useEffect(() => {
+    const defaultAbilityId =
+      selectedDamageDefender?.abilityName
+        ? getDefaultDamageAbilityIdFromNames([selectedDamageDefender.abilityName])
+        : getDefaultDamageAbilityId(selectedDamageDefenderPokemon);
+    setDamageDefenderAbility(defaultAbilityId);
+  }, [selectedDamageDefender?.abilityName, selectedDamageDefenderPokemon?.id]);
+
+  useEffect(() => {
+    const suggestedItemId =
+      damageCalcMode === "defend"
+        ? normalizeDamageItemId(selectedDamageDefender?.itemName) ?? "none"
+        : "none";
+    setDamageAttackerItem(suggestedItemId);
+  }, [damageCalcMode, selectedDamageDefender?.itemName, selectedDamageDefenderPokemon?.id]);
+
+  useEffect(() => {
+    const suggestedItemId =
+      damageCalcMode === "attack"
+        ? normalizeDamageItemId(selectedDamageDefender?.itemName) ?? "none"
+        : "none";
+    setDamageDefenderItem(suggestedItemId);
+  }, [damageCalcMode, selectedDamageDefender?.itemName, selectedDamageDefenderPokemon?.id]);
 
   const damageMoveRows = useMemo(() => {
     if (!selectedDamageAttackerPokemon || !selectedDamageDefenderPokemon) {
@@ -2299,6 +3911,7 @@ function TeamBuilderView() {
                 attacker: selectedDamageAttackerPokemon,
                 defender: selectedDamageDefenderPokemon,
                 attackType: attack.type,
+                moveName: attack.label?.trim() || undefined,
                 basePower,
                 category: config.category,
                 isSpreadMove: config.isSpreadMove,
@@ -2308,16 +3921,26 @@ function TeamBuilderView() {
                 defenderGrounded: damageDefenderGrounded,
                 attackerStatStage: damageAttackStage,
                 defenderStatStage: damageDefenseStage,
+                attackerAbility: damageAttackerAbility,
+                defenderAbility: damageDefenderAbility,
+                attackerItem: damageAttackerItem,
+                defenderItem: damageDefenderItem,
+                helpingHand: damageHelpingHand,
               })
             : null,
       };
     });
   }, [
     damageAttackStage,
+    damageAttackerAbility,
     damageAttackerGrounded,
+    damageAttackerItem,
     damageAttackerSlotIndex,
     damageDefenseStage,
+    damageDefenderAbility,
     damageDefenderGrounded,
+    damageDefenderItem,
+    damageHelpingHand,
     damageTerrain,
     damageWeather,
     damageMoveConfigs,
@@ -2325,6 +3948,613 @@ function TeamBuilderView() {
     selectedDamageAttackerPokemon,
     selectedDamageDefenderPokemon,
   ]);
+
+  const bestEnemyIncomingHit = useMemo(() => {
+    if (!selectedDamageAttackerPokemon || !selectedDamageDefenderPokemon || selectedDamageEnemySavedAttacks.length === 0) {
+      return null;
+    }
+    return getBestDamageEstimateAgainstPokemon(
+      selectedDamageDefenderPokemon,
+      selectedDamageAttackerPokemon,
+      selectedDamageEnemySavedAttacks,
+      {
+        weather: damageWeather,
+        terrain: damageTerrain,
+        attackerGrounded: damageDefenderGrounded,
+        defenderGrounded: damageAttackerGrounded,
+        attackerStatStage: 0,
+        defenderStatStage: 0,
+        attackerAbility: damageDefenderAbility,
+        defenderAbility: damageAttackerAbility,
+        attackerItem: damageDefenderItem,
+        defenderItem: damageAttackerItem,
+        helpingHand: false,
+      }
+    );
+  }, [
+    selectedDamageAttackerPokemon,
+    selectedDamageDefenderPokemon,
+    selectedDamageEnemySavedAttacks,
+    damageWeather,
+    damageTerrain,
+    damageDefenderGrounded,
+    damageAttackerGrounded,
+    damageDefenderAbility,
+    damageAttackerAbility,
+    damageDefenderItem,
+    damageAttackerItem,
+  ]);
+
+  const defensePresetMoveRows = useMemo(() => {
+    if (!selectedDamageDefenderPokemon || !selectedDamageAttackerPokemon) {
+      return [];
+    }
+
+    return selectedDamageEnemySavedAttacks.map((attack) => {
+      const basePower = getResolvedAttackBasePower(attack);
+      const category = getResolvedAttackCategory(attack, selectedDamageDefenderPokemon);
+      const isSpreadMove = getResolvedAttackSpread(attack);
+
+      return {
+        attack,
+        basePower,
+        category,
+        isSpreadMove,
+        estimate:
+          basePower !== null
+            ? calculateRoughDamage({
+                attacker: selectedDamageDefenderPokemon,
+                defender: selectedDamageAttackerPokemon,
+                attackType: attack.type,
+                moveName: attack.label?.trim() || undefined,
+                basePower,
+                category,
+                isSpreadMove,
+                weather: damageWeather,
+                terrain: damageTerrain,
+                attackerGrounded: damageDefenderGrounded,
+                defenderGrounded: damageAttackerGrounded,
+                attackerStatStage: damageAttackStage,
+                defenderStatStage: damageDefenseStage,
+                attackerAbility: damageDefenderAbility,
+                defenderAbility: damageAttackerAbility,
+                attackerItem: damageAttackerItem,
+                defenderItem: damageDefenderItem,
+                helpingHand: damageHelpingHand,
+              })
+            : null,
+      };
+    });
+  }, [
+    damageAttackStage,
+    damageAttackerAbility,
+    damageAttackerGrounded,
+    damageAttackerItem,
+    damageDefenseStage,
+    damageDefenderAbility,
+    damageDefenderGrounded,
+    damageDefenderItem,
+    damageHelpingHand,
+    damageTerrain,
+    damageWeather,
+    selectedDamageAttackerPokemon,
+    selectedDamageDefenderPokemon,
+    selectedDamageEnemySavedAttacks,
+  ]);
+  const doublesAllyMembers = useMemo<DoublesSelectedMember[]>(
+    () =>
+      doublesAllySelection
+        .map((slotIndex) => {
+          if (slotIndex === null) {
+            return null;
+          }
+
+          const slot = team[slotIndex];
+          if (!slot?.pokemon) {
+            return null;
+          }
+
+          const runtime = doublesRuntime[`ally-${slotIndex}`] ?? DEFAULT_DOUBLES_RUNTIME;
+          const member: DoublesSelectedMember = {
+            side: "ally" as const,
+            slotIndex,
+            pokemon: slot.pokemon,
+            savedAttacks: slot.savedAttacks,
+            movesetSourceLabel: "Saved",
+            speedStat: getLevel50OtherStatValue(slot.pokemon.baseStats.spe),
+            hpPercent: runtime.hpPercent,
+            protect: runtime.protect,
+            priority: runtime.priority,
+          };
+          return member;
+        })
+        .filter((entry): entry is DoublesSelectedMember => Boolean(entry)),
+    [doublesAllySelection, doublesRuntime, team],
+  );
+  const doublesEnemyMembers = useMemo<DoublesSelectedMember[]>(
+    () =>
+      doublesEnemySelection
+        .map((slotIndex) => {
+          if (slotIndex === null) {
+            return null;
+          }
+
+          const entry = opponentEntryBySlot.get(slotIndex);
+          if (!entry) {
+            return null;
+          }
+
+          const savedAttacks =
+            entry.savedAttacks.length > 0 ? entry.savedAttacks : createStabProxySavedAttacks(entry.pokemon);
+
+          const runtime = doublesRuntime[`enemy-${slotIndex}`] ?? DEFAULT_DOUBLES_RUNTIME;
+          const member: DoublesSelectedMember = {
+            side: "enemy" as const,
+            slotIndex,
+            pokemon: entry.pokemon,
+            savedAttacks,
+            movesetSourceLabel:
+              entry.savedAttacks.length > 0
+                ? entry.movesetSource === "custom"
+                  ? "Custom"
+                  : "Preset"
+                : "STAB proxy",
+            speedStat: getLevel50OtherStatValue(entry.pokemon.baseStats.spe),
+            hpPercent: runtime.hpPercent,
+            protect: runtime.protect,
+            priority: runtime.priority,
+          };
+          return member;
+        })
+        .filter((entry): entry is DoublesSelectedMember => Boolean(entry)),
+    [doublesEnemySelection, doublesRuntime, opponentEntryBySlot],
+  );
+  const selectedDoublesEnemyEntries = useMemo(
+    () =>
+      doublesEnemySelection
+        .map((slotIndex) => (slotIndex === null ? null : opponentEntryBySlot.get(slotIndex) ?? null))
+        .filter(
+          (
+            entry,
+          ): entry is {
+            slotIndex: number;
+            query: string;
+            pokemon: PokemonRecord;
+            savedAttacks: PersistedSavedAttack[];
+            presetMoveNames: string[];
+            abilityName: string | null;
+            itemName: string | null;
+            movesetSource: "custom" | "preset" | "none";
+          } => Boolean(entry),
+        ),
+    [doublesEnemySelection, opponentEntryBySlot],
+  );
+  const doublesTurnOrder = useMemo(
+    () => [...doublesAllyMembers, ...doublesEnemyMembers].sort(compareDoublesTurnOrder),
+    [doublesAllyMembers, doublesEnemyMembers],
+  );
+  const doublesOutgoingSummaries = useMemo(() => {
+    if (doublesAllyMembers.length !== 2 || doublesEnemyMembers.length !== 2) {
+      return [];
+    }
+
+    const attackers = [doublesAllyMembers[0], doublesAllyMembers[1]] as [DoublesSelectedMember, DoublesSelectedMember];
+
+    return doublesEnemyMembers.map((target) =>
+      buildDoublesTargetSummary(
+        attackers,
+        target,
+        (member, defender) =>
+          getAutomaticDamageRows({
+            attackerPokemon: member.pokemon,
+            defenderPokemon: defender.pokemon,
+            savedAttacks: member.savedAttacks,
+            weather: damageWeather,
+            terrain: damageTerrain,
+            attackerGrounded: isLikelyGrounded(member.pokemon),
+            defenderGrounded: isLikelyGrounded(defender.pokemon),
+            attackerStatStage: damageAttackStage,
+            defenderStatStage: damageDefenseStage,
+          }),
+      ),
+    );
+  }, [
+    damageAttackStage,
+    damageDefenseStage,
+    damageTerrain,
+    damageWeather,
+    doublesAllyMembers,
+    doublesEnemyMembers,
+  ]);
+  const doublesIncomingThreatSummaries = useMemo(() => {
+    if (doublesAllyMembers.length !== 2 || doublesEnemyMembers.length !== 2) {
+      return [];
+    }
+
+    const attackers = [doublesEnemyMembers[0], doublesEnemyMembers[1]] as [DoublesSelectedMember, DoublesSelectedMember];
+
+    return doublesAllyMembers.map((target) =>
+      buildDoublesTargetSummary(
+        attackers,
+        target,
+        (member, defender) =>
+          getAutomaticDamageRows({
+            attackerPokemon: member.pokemon,
+            defenderPokemon: defender.pokemon,
+            savedAttacks: member.savedAttacks,
+            weather: damageWeather,
+            terrain: damageTerrain,
+            attackerGrounded: isLikelyGrounded(member.pokemon),
+            defenderGrounded: isLikelyGrounded(defender.pokemon),
+            attackerStatStage: damageAttackStage,
+            defenderStatStage: damageDefenseStage,
+          }),
+      ),
+    );
+  }, [
+    damageAttackStage,
+    damageDefenseStage,
+    damageTerrain,
+    damageWeather,
+    doublesAllyMembers,
+    doublesEnemyMembers,
+  ]);
+  const doublesOutgoingDoubleKoCount = doublesOutgoingSummaries.filter((entry) => entry.bestDoubleUp?.possibleKo).length;
+  const doublesOutgoingSpreadKoCount = doublesOutgoingSummaries.filter(
+    (entry) => entry.bestSpreadSingle?.possibleKo,
+  ).length;
+  const doublesOutgoingPlans = useMemo(
+    () =>
+      doublesOutgoingSummaries.map((summary) => ({
+        summary,
+        plan: getBestDoublesVisualPlan(summary, "ally"),
+      })),
+    [doublesOutgoingSummaries],
+  );
+  const doublesIncomingDoubleKoCount = doublesIncomingThreatSummaries.filter(
+    (entry) => entry.bestDoubleUp?.possibleKo,
+  ).length;
+  const doublesIncomingSpreadKoCount = doublesIncomingThreatSummaries.filter(
+    (entry) => entry.bestSpreadSingle?.possibleKo,
+  ).length;
+  const doublesIncomingPlans = useMemo(
+    () =>
+      doublesIncomingThreatSummaries.map((summary) => ({
+        summary,
+        plan: getBestDoublesVisualPlan(summary, "enemy"),
+      })),
+    [doublesIncomingThreatSummaries],
+  );
+  const doublesOutgoingPreMoveKoCount = doublesOutgoingSummaries.filter(
+    (entry) => entry.bestDoubleUp?.possibleKo && entry.bestDoubleUpTiming?.relation === "before",
+  ).length;
+  const doublesIncomingPreMoveKoCount = doublesIncomingThreatSummaries.filter(
+    (entry) => entry.bestDoubleUp?.possibleKo && entry.bestDoubleUpTiming?.relation === "before",
+  ).length;
+  const doublesOutgoingImmediateCount = doublesOutgoingPlans.filter(
+    (entry) => entry.plan.possibleKo && entry.plan.relation === "before",
+  ).length;
+  const doublesIncomingImmediateCount = doublesIncomingPlans.filter(
+    (entry) => entry.plan.possibleKo && entry.plan.relation === "before",
+  ).length;
+  const doublesOutgoingGuaranteedCount = doublesOutgoingPlans.filter((entry) => entry.plan.guaranteedKo).length;
+  const doublesIncomingGuaranteedCount = doublesIncomingPlans.filter((entry) => entry.plan.guaranteedKo).length;
+
+  const doublesOwnStrategies = useMemo<DoublesStrategyPlan[]>(() => {
+    if (doublesAllyMembers.length !== 2 || doublesEnemyMembers.length !== 2) {
+      return [];
+    }
+    return buildDoublesStrategies(
+      [doublesAllyMembers[0], doublesAllyMembers[1]] as [DoublesSelectedMember, DoublesSelectedMember],
+      [doublesEnemyMembers[0], doublesEnemyMembers[1]] as [DoublesSelectedMember, DoublesSelectedMember],
+      doublesOutgoingSummaries,
+      "ally",
+    );
+  }, [doublesAllyMembers, doublesEnemyMembers, doublesOutgoingSummaries]);
+
+  const doublesEnemyStrategies = useMemo<DoublesStrategyPlan[]>(() => {
+    if (doublesAllyMembers.length !== 2 || doublesEnemyMembers.length !== 2) {
+      return [];
+    }
+    return buildDoublesStrategies(
+      [doublesEnemyMembers[0], doublesEnemyMembers[1]] as [DoublesSelectedMember, DoublesSelectedMember],
+      [doublesAllyMembers[0], doublesAllyMembers[1]] as [DoublesSelectedMember, DoublesSelectedMember],
+      doublesIncomingThreatSummaries,
+      "enemy",
+    );
+  }, [doublesAllyMembers, doublesEnemyMembers, doublesIncomingThreatSummaries]);
+
+  const doublesOwnNetEvaluations = useMemo(() => {
+    if (doublesOwnStrategies.length === 0 || doublesEnemyStrategies.length === 0) {
+      return [];
+    }
+
+    const baselineProtectSlots = new Set<number>(
+      doublesAllyMembers.filter((ally) => ally.protect).map((ally) => ally.slotIndex),
+    );
+
+    return doublesOwnStrategies.map((ownStrategy) => {
+      const effectiveProtectSlots = new Set<number>(baselineProtectSlots);
+      for (const slot of ownStrategy.protectSlots) {
+        effectiveProtectSlots.add(slot);
+      }
+
+      const adjustedEnemyStrategies = doublesEnemyStrategies.map((strategy) =>
+        adjustDoublesStrategyWithTargetProtect(strategy, effectiveProtectSlots),
+      );
+      const enemyResponse = adjustedEnemyStrategies.reduce((best, current) =>
+        current.score > best.score ? current : best,
+      );
+      const netScore = ownStrategy.score - enemyResponse.score;
+
+      return { ownStrategy, enemyResponse, netScore };
+    });
+  }, [doublesAllyMembers, doublesEnemyStrategies, doublesOwnStrategies]);
+
+  const doublesBestOwnEvaluation = useMemo(() => {
+    if (doublesOwnNetEvaluations.length === 0) {
+      return null;
+    }
+    return doublesOwnNetEvaluations.reduce((best, current) =>
+      current.netScore > best.netScore ? current : best,
+    );
+  }, [doublesOwnNetEvaluations]);
+
+  const doublesBestOwnStrategy = doublesBestOwnEvaluation?.ownStrategy ?? null;
+  const doublesWorstEnemyStrategy = doublesBestOwnEvaluation?.enemyResponse ?? null;
+
+  const doublesTurnVerdict = useMemo(() => {
+    if (!doublesBestOwnStrategy || !doublesWorstEnemyStrategy) {
+      return null;
+    }
+
+    const ownKos = doublesBestOwnStrategy.koCount;
+    const ownPreemptive = doublesBestOwnStrategy.preemptiveKoCount;
+    const enemyKos = doublesWorstEnemyStrategy.koCount;
+    const ownAnyPossibleKo = doublesBestOwnStrategy.targetResults.some((r) => r.possibleKo);
+
+    let verdict: "double-ko" | "kill-first" | "clean-ko" | "trade-ko" | "pressure" | "defensive" | "stall";
+    if (ownKos >= 2) {
+      verdict = "double-ko";
+    } else if (ownKos === 1 && ownPreemptive >= 1 && enemyKos === 0) {
+      verdict = "kill-first";
+    } else if (ownKos === 1 && enemyKos >= 1) {
+      verdict = "trade-ko";
+    } else if (ownKos === 1) {
+      verdict = "clean-ko";
+    } else if (ownAnyPossibleKo) {
+      verdict = "pressure";
+    } else if (enemyKos >= 1) {
+      verdict = "defensive";
+    } else {
+      verdict = "stall";
+    }
+
+    const label =
+      verdict === "double-ko"
+        ? "Double KO"
+        : verdict === "kill-first"
+          ? "Kill First"
+          : verdict === "clean-ko"
+            ? "Clean KO"
+            : verdict === "trade-ko"
+              ? "Trade KO"
+              : verdict === "pressure"
+                ? "Apply Pressure"
+                : verdict === "defensive"
+                  ? "Brace For Hit"
+                  : "Stall Turn";
+
+    const tone: "great" | "good" | "warn" | "danger" | "neutral" =
+      verdict === "double-ko" || verdict === "kill-first"
+        ? "great"
+        : verdict === "clean-ko" || verdict === "pressure"
+          ? "good"
+          : verdict === "trade-ko"
+            ? "warn"
+            : verdict === "defensive"
+              ? "danger"
+              : "neutral";
+
+    return { verdict, label, tone } as const;
+  }, [doublesBestOwnStrategy, doublesWorstEnemyStrategy]);
+
+  const doublesSwitchSuggestions = useMemo(() => {
+    if (doublesAllyMembers.length !== 2 || doublesEnemyMembers.length !== 2) {
+      return [] as Array<{
+        ally: DoublesSelectedMember;
+        enemyResult: DoublesStrategyTargetResult | null;
+        candidates: Array<{
+          slotIndex: number;
+          pokemon: PokemonRecord;
+          savedAttacks: PersistedSavedAttack[];
+          elo: MatchupEloSummary;
+          targetResults: MatchupEloTargetResult[];
+          survivesAllHits: boolean;
+          guaranteedOhkoCount: number;
+          possibleOhkoCount: number;
+        }>;
+      }>;
+    }
+
+    const benchSlots = team
+      .map((slot, index) => ({ slot, index }))
+      .filter(
+        ({ slot, index }) =>
+          slot.pokemon &&
+          !doublesAllySelection.includes(index),
+      );
+
+    if (benchSlots.length === 0) {
+      return [];
+    }
+
+    const enemyAttackersForMatchup = doublesEnemyMembers;
+
+    return doublesAllyMembers
+      .map((ally) => {
+        const enemyResult =
+          doublesWorstEnemyStrategy?.targetResults.find(
+            (result) => result.target.slotIndex === ally.slotIndex,
+          ) ?? null;
+
+        const atRisk = Boolean(enemyResult && (enemyResult.guaranteedKo || enemyResult.possibleKo));
+
+        if (!atRisk) {
+          return { ally, enemyResult, candidates: [] };
+        }
+
+        const candidates = benchSlots
+          .map(({ slot, index }) => {
+            if (!slot.pokemon) {
+              return null;
+            }
+
+            const pokemon = slot.pokemon;
+            const targetResults = enemyAttackersForMatchup.map((enemy) =>
+              buildMatchupEloTargetResult({
+                attackerPokemon: pokemon,
+                attackerSavedAttacks: slot.savedAttacks,
+                targetPokemon: enemy.pokemon,
+                targetSavedAttacks: enemy.savedAttacks,
+                weather: damageWeather,
+                terrain: damageTerrain,
+                attackerGrounded: isLikelyGrounded(pokemon),
+                targetGrounded: isLikelyGrounded(enemy.pokemon),
+                attackerStatStage: damageAttackStage,
+                defenderStatStage: damageDefenseStage,
+                targetSlotIndex: enemy.slotIndex,
+              }),
+            );
+            const elo = summarizeMatchupElo(targetResults);
+            const survivesAllHits = targetResults.every(
+              (result) => result.survivesBestIncomingHit === true,
+            );
+            const guaranteedOhkoCount = targetResults.filter((result) => result.guaranteedOhko).length;
+            const possibleOhkoCount = targetResults.filter((result) => result.possibleOhko).length;
+
+            return {
+              slotIndex: index,
+              pokemon,
+              savedAttacks: slot.savedAttacks,
+              elo,
+              targetResults,
+              survivesAllHits,
+              guaranteedOhkoCount,
+              possibleOhkoCount,
+            };
+          })
+          .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+          .sort((a, b) => {
+            if (a.survivesAllHits !== b.survivesAllHits) {
+              return a.survivesAllHits ? -1 : 1;
+            }
+            return compareMatchupEloSummaries(a.elo, b.elo);
+          })
+          .slice(0, 2);
+
+        return { ally, enemyResult, candidates };
+      })
+      .filter((entry) => entry.candidates.length > 0);
+  }, [
+    damageAttackStage,
+    damageDefenseStage,
+    damageTerrain,
+    damageWeather,
+    doublesAllyMembers,
+    doublesAllySelection,
+    doublesEnemyMembers,
+    doublesWorstEnemyStrategy,
+    team,
+  ]);
+  const threatTurnSettings = useMemo<ThreatTurnSettings>(
+    () => ({
+      allyTailwind: doublesAllyTailwind,
+      enemyTailwind: doublesEnemyTailwind,
+      trickRoom: doublesTrickRoom,
+    }),
+    [doublesAllyTailwind, doublesEnemyTailwind, doublesTrickRoom],
+  );
+  const doublesThreatReady = doublesAllyMembers.length === 2 && doublesEnemyMembers.length === 2;
+  const incomingThreatCards = useMemo(() => {
+    if (!doublesThreatReady) {
+      return [];
+    }
+
+    return buildThreatCards({
+      attackers: [doublesEnemyMembers[0], doublesEnemyMembers[1]] as [DoublesSelectedMember, DoublesSelectedMember],
+      targets: [doublesAllyMembers[0], doublesAllyMembers[1]] as [DoublesSelectedMember, DoublesSelectedMember],
+      buildRows: (member, defender) =>
+        getAutomaticDamageRows({
+          attackerPokemon: member.pokemon,
+          defenderPokemon: defender.pokemon,
+          savedAttacks: member.savedAttacks,
+          weather: damageWeather,
+          terrain: damageTerrain,
+          attackerGrounded: isLikelyGrounded(member.pokemon),
+          defenderGrounded: isLikelyGrounded(defender.pokemon),
+          attackerStatStage: damageAttackStage,
+          defenderStatStage: damageDefenseStage,
+        }),
+      turnSettings: threatTurnSettings,
+    });
+  }, [
+    damageAttackStage,
+    damageDefenseStage,
+    damageTerrain,
+    damageWeather,
+    doublesAllyMembers,
+    doublesEnemyMembers,
+    doublesThreatReady,
+    threatTurnSettings,
+  ]);
+  const outgoingThreatCards = useMemo(() => {
+    if (!doublesThreatReady) {
+      return [];
+    }
+
+    return buildThreatCards({
+      attackers: [doublesAllyMembers[0], doublesAllyMembers[1]] as [DoublesSelectedMember, DoublesSelectedMember],
+      targets: [doublesEnemyMembers[0], doublesEnemyMembers[1]] as [DoublesSelectedMember, DoublesSelectedMember],
+      buildRows: (member, defender) =>
+        getAutomaticDamageRows({
+          attackerPokemon: member.pokemon,
+          defenderPokemon: defender.pokemon,
+          savedAttacks: member.savedAttacks,
+          weather: damageWeather,
+          terrain: damageTerrain,
+          attackerGrounded: isLikelyGrounded(member.pokemon),
+          defenderGrounded: isLikelyGrounded(defender.pokemon),
+          attackerStatStage: damageAttackStage,
+          defenderStatStage: damageDefenseStage,
+        }),
+      turnSettings: threatTurnSettings,
+    });
+  }, [
+    damageAttackStage,
+    damageDefenseStage,
+    damageTerrain,
+    damageWeather,
+    doublesAllyMembers,
+    doublesEnemyMembers,
+    doublesThreatReady,
+    threatTurnSettings,
+  ]);
+  const threatTurnOrder = useMemo(() => {
+    if (!doublesThreatReady) {
+      return [];
+    }
+
+    return [...doublesAllyMembers, ...doublesEnemyMembers]
+      .sort((left, right) => compareThreatTurnOrder(left, right, threatTurnSettings))
+      .map((member) => ({
+        member,
+        effectiveSpeed: getThreatEffectiveSpeed(member, threatTurnSettings),
+        tailwindActive:
+          (member.side === "ally" && threatTurnSettings.allyTailwind) ||
+          (member.side === "enemy" && threatTurnSettings.enemyTailwind),
+      }));
+  }, [doublesAllyMembers, doublesEnemyMembers, doublesThreatReady, threatTurnSettings]);
 
   const opponentOhkoMap = useMemo(
     () =>
@@ -2351,6 +4581,7 @@ function TeamBuilderView() {
                     attacker: attackerPokemon,
                     defender: entry.pokemon,
                     attackType: attack.type,
+                    moveName: attack.label?.trim() || undefined,
                     basePower,
                     category: getResolvedAttackCategory(attack, attackerPokemon),
                     isSpreadMove: getResolvedAttackSpread(attack),
@@ -2360,6 +4591,8 @@ function TeamBuilderView() {
                     defenderGrounded: isLikelyGrounded(entry.pokemon),
                     attackerStatStage: damageAttackStage,
                     defenderStatStage: damageDefenseStage,
+                    attackerAbility: getDefaultDamageAbilityId(attackerPokemon),
+                    defenderAbility: getDefaultDamageAbilityId(entry.pokemon),
                   });
 
                   if (estimate.maxPercent < 100) {
@@ -2400,6 +4633,68 @@ function TeamBuilderView() {
     [damageAttackStage, damageDefenseStage, damageTerrain, damageWeather, opponentEntries, team],
   );
 
+  const teamMatchupEloRows = useMemo(
+    () =>
+      team
+        .map((slot, slotIndex) => {
+          if (!slot.pokemon) {
+            return null;
+          }
+
+          const attackerPokemon = slot.pokemon;
+          const attackerGrounded = isLikelyGrounded(attackerPokemon);
+          const targetResults = opponentEntries.map((entry) =>
+            buildMatchupEloTargetResult({
+              attackerPokemon,
+              attackerSavedAttacks: slot.savedAttacks,
+              targetPokemon: entry.pokemon,
+              targetSavedAttacks:
+                entry.savedAttacks.length > 0 ? entry.savedAttacks : createStabProxySavedAttacks(entry.pokemon),
+              weather: damageWeather,
+              terrain: damageTerrain,
+              attackerGrounded,
+              targetGrounded: isLikelyGrounded(entry.pokemon),
+              attackerStatStage: damageAttackStage,
+              defenderStatStage: damageDefenseStage,
+              targetSlotIndex: entry.slotIndex,
+            }),
+          );
+
+          return {
+            slotIndex,
+            pokemon: attackerPokemon,
+            targetResults,
+            ...summarizeMatchupElo(targetResults),
+          };
+        })
+        .filter(
+          (
+            row,
+          ): row is {
+            slotIndex: number;
+            pokemon: PokemonRecord;
+            targetResults: MatchupEloTargetResult[];
+            coverageCount: number;
+            guaranteedCount: number;
+            surviveCount: number;
+            nonLosingSurviveCount: number;
+            fasterCount: number;
+            notSlowerCount: number;
+            minTargetScore: number;
+            averageTargetScore: number;
+          } => Boolean(row),
+        )
+        .sort((left, right) => compareMatchupEloSummaries(left, right)),
+    [damageAttackStage, damageDefenseStage, damageTerrain, damageWeather, opponentEntries, team],
+  );
+  const teamMatchupEloCoversAll = teamMatchupEloRows.filter((row) => row.coverageCount === opponentEntries.length);
+  const teamMatchupEloGuaranteesAll = teamMatchupEloRows.filter(
+    (row) => row.guaranteedCount === opponentEntries.length,
+  );
+  const teamMatchupEloLivesAll = teamMatchupEloRows.filter(
+    (row) => row.nonLosingSurviveCount === opponentEntries.length,
+  );
+
   const defenseMoveEstimate = useMemo(() => {
     const parsedPower = Number(defenseMoveConfig.power);
     const basePower = Number.isFinite(parsedPower) && parsedPower > 0 ? parsedPower : null;
@@ -2421,12 +4716,22 @@ function TeamBuilderView() {
       defenderGrounded: damageAttackerGrounded,
       attackerStatStage: damageAttackStage,
       defenderStatStage: damageDefenseStage,
+      attackerAbility: damageDefenderAbility,
+      defenderAbility: damageAttackerAbility,
+      attackerItem: damageAttackerItem,
+      defenderItem: damageDefenderItem,
+      helpingHand: damageHelpingHand,
     });
   }, [
     damageAttackStage,
+    damageAttackerAbility,
     damageAttackerGrounded,
+    damageAttackerItem,
     damageDefenseStage,
+    damageDefenderAbility,
     damageDefenderGrounded,
+    damageDefenderItem,
+    damageHelpingHand,
     damageTerrain,
     damageWeather,
     defenseMoveConfig,
@@ -2439,12 +4744,12 @@ function TeamBuilderView() {
       return [];
     }
 
-    return Object.entries(quickPokemon.abilities)
-      .map(([slot, abilityName]) => {
+    return getPokemonAbilityNames(quickPokemon)
+      .map((abilityName, index) => {
         const ability = abilityByKey.get(abilityName.toLowerCase()) ?? null;
 
         return {
-          slot,
+          slot: String(index + 1),
           name: abilityName,
           ability,
         };
@@ -2481,6 +4786,7 @@ function TeamBuilderView() {
       attacker: currentDamageAttackerPokemon,
       defender: currentDamageDefenderPokemon,
       attackType: moveType,
+      moveName: quickMove.name,
       basePower: quickMove.basePower,
       category: quickMove.category.toLowerCase() as DamageCategory,
       isSpreadMove: isSpreadTarget(quickMove.target),
@@ -2490,12 +4796,16 @@ function TeamBuilderView() {
       defenderGrounded: damageCalcMode === "attack" ? damageDefenderGrounded : damageAttackerGrounded,
       attackerStatStage: damageAttackStage,
       defenderStatStage: damageDefenseStage,
+      attackerAbility: damageCalcMode === "attack" ? damageAttackerAbility : damageDefenderAbility,
+      defenderAbility: damageCalcMode === "attack" ? damageDefenderAbility : damageAttackerAbility,
     });
   }, [
     damageAttackStage,
+    damageAttackerAbility,
     currentDamageAttackerPokemon,
     currentDamageDefenderPokemon,
     damageAttackerGrounded,
+    damageDefenderAbility,
     damageCalcMode,
     damageDefenseStage,
     damageDefenderGrounded,
@@ -2519,6 +4829,12 @@ function TeamBuilderView() {
       next[openerIndex] = pair;
       return next;
     });
+  };
+  const toggleDoublesAllySelection = (slotIndex: number) => {
+    setDoublesAllySelection((current) => togglePairSelection(current, slotIndex));
+  };
+  const toggleDoublesEnemySelection = (slotIndex: number) => {
+    setDoublesEnemySelection((current) => togglePairSelection(current, slotIndex));
   };
 
   const updateOpponentQuery = (slotIndex: number, query: string) => {
@@ -2577,10 +4893,25 @@ function TeamBuilderView() {
             coverage, matchup pressure, and possible one-hit KOs into the enemy team below.
           </p>
         </div>
-        <div className="team-builder-meta">
-          <span>{selectedPokemon.length} / 6 selected</span>
-          <span>{selectedSavedAttackCount} saved attacks</span>
-          <span>{selectedAttackTypes.length} unique attack types</span>
+        <div className="team-builder-hero-side">
+          <label className="team-format-field" htmlFor="team-builder-format">
+            <span className="team-input-label">Format</span>
+            <select
+              id="team-builder-format"
+              value={teamBuilderFormat}
+              onChange={(event) => setTeamBuilderFormat(event.target.value as TeamBuilderFormat)}
+            >
+              <option value="regulationMA">{POKEMON_CHAMPIONS_ACTIVE_REGULATION}</option>
+              <option value="all">All Local Dex</option>
+            </select>
+          </label>
+
+          <div className="team-builder-meta">
+            <span>{selectedPokemon.length} / 6 selected</span>
+            <span>{selectedSavedAttackCount} saved attacks</span>
+            <span>{selectedAttackTypes.length} unique attack types</span>
+            <span>{teamBuilderPokemonPool.length} available picks</span>
+          </div>
         </div>
       </section>
 
@@ -2782,7 +5113,13 @@ function TeamBuilderView() {
                 id="quick-pokemon-search"
                 list="pokemon-options"
                 className="team-pokemon-input"
-                placeholder={database ? "Search Pokemon" : "Loading local database..."}
+                placeholder={
+                  database
+                    ? teamBuilderFormat === "regulationMA"
+                      ? `Search ${POKEMON_CHAMPIONS_ACTIVE_REGULATION} Pokemon`
+                      : "Search Pokemon"
+                    : "Loading local database..."
+                }
                 value={quickPokemonQuery}
                 onChange={(event) => setQuickPokemonQuery(event.target.value)}
                 disabled={!database}
@@ -3043,7 +5380,13 @@ function TeamBuilderView() {
               <input
                 list="pokemon-options"
                 className="team-pokemon-input"
-                placeholder={database ? "Search Pokemon" : "Loading local database..."}
+                placeholder={
+                  database
+                    ? teamBuilderFormat === "regulationMA"
+                      ? `Search ${POKEMON_CHAMPIONS_ACTIVE_REGULATION} Pokemon`
+                      : "Search Pokemon"
+                    : "Loading local database..."
+                }
                 value={query}
                 onChange={(event) => updateOpponentQuery(slotIndex, event.target.value)}
                 disabled={!database}
@@ -3051,6 +5394,174 @@ function TeamBuilderView() {
             </label>
           ))}
         </div>
+
+        {opponentEntries.length > 0 ? (
+          <section className="team-elo-panel">
+            <div className="scout-section-header">
+              <p className="eyebrow">6v6 Matchup Elo</p>
+              <span>{teamMatchupEloRows.length} allies ranked</span>
+            </div>
+
+            {selectedPokemon.length > 0 ? (
+              <>
+                <div className="damage-assumption-row">
+                  <span className="damage-assumption-pill">{opponentEntries.length} enemies scored</span>
+                  <span className="damage-assumption-pill">
+                    {teamMatchupEloCoversAll.length} cover all loaded enemies
+                  </span>
+                  <span className="damage-assumption-pill">
+                    {teamMatchupEloGuaranteesAll.length} guarantee every matchup
+                  </span>
+                  <span className="damage-assumption-pill">
+                    {teamMatchupEloLivesAll.length} live every best hit
+                  </span>
+                </div>
+
+                <p className="selector-note team-elo-note">
+                  Reuses the OHKO Scanner matchup Elo across the full enemy six: OHKO coverage first, then guaranteed
+                  KOs, survival into the enemy&apos;s best loaded hit, speed control, and worst-case pressure under the
+                  current damage assumptions.
+                </p>
+
+                <div className="ohko-result-list">
+                  {teamMatchupEloRows.map((row, rankIndex) => (
+                    <article
+                      key={`team-elo-${row.slotIndex}`}
+                      className={`opponent-coverage-row ohko-result-row ${
+                        rankIndex === 0 || row.guaranteedCount === opponentEntries.length ? "strong" : ""
+                      }`}
+                    >
+                      <div className="ohko-result-top">
+                        <div className="opponent-coverage-main">
+                          <PokemonSprite pokemon={row.pokemon} />
+                          <div>
+                            <strong>{row.pokemon.name}</strong>
+                            <p>
+                              Rank #{rankIndex + 1} • Covers {row.coverageCount} / {opponentEntries.length} matchup
+                              {opponentEntries.length === 1 ? "" : "s"} • {row.guaranteedCount} guaranteed •{" "}
+                              {row.surviveCount} clean survives
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="ohko-summary-side">
+                          <span className="mini-type-pill neutral-pill">Slot {row.slotIndex + 1}</span>
+                          <span className="mini-type-pill neutral-pill">
+                            Faster into {row.fasterCount} / {opponentEntries.length}
+                          </span>
+                          <span className="mini-type-pill neutral-pill">
+                            Worst-case Elo {Math.round(row.minTargetScore)}
+                          </span>
+                          <span className="mini-type-pill neutral-pill">
+                            Avg Elo {Math.round(row.averageTargetScore)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="ohko-breakdown-grid">
+                        {row.targetResults.map((result) => (
+                          <article
+                            key={`${row.slotIndex}-vs-${result.targetSlotIndex ?? result.targetPokemon.id}`}
+                            className={`ohko-breakdown-card ${
+                              result.guaranteedOhko ? "strong" : result.possibleOhko ? "good" : ""
+                            }`}
+                          >
+                            <div className="ohko-breakdown-top">
+                              <div className="opponent-coverage-main">
+                                <PokemonSprite pokemon={result.targetPokemon} />
+                                <div>
+                                  <strong>{result.targetPokemon.name}</strong>
+                                  <p>
+                                    {result.bestOutgoingHit
+                                      ? `${getAttackLabel(result.bestOutgoingHit.attack)} • ${
+                                          result.guaranteedOhko
+                                            ? "Guaranteed OHKO"
+                                            : result.possibleOhko
+                                              ? "Possible OHKO"
+                                              : "Best pressure"
+                                        }`
+                                      : "No damaging move found"}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <span
+                                className={`speed-matchup-pill ${
+                                  result.speedDelta > 0 ? "faster" : result.speedDelta < 0 ? "slower" : "tie"
+                                }`}
+                              >
+                                {result.speedDelta > 0
+                                  ? `Outspeeds by ${result.speedDelta}`
+                                  : result.speedDelta < 0
+                                    ? `Slower by ${Math.abs(result.speedDelta)}`
+                                    : "Speed tie"}
+                              </span>
+                            </div>
+
+                            <div className="coverage-chip-list">
+                              {result.bestOutgoingHit ? (
+                                <>
+                                  <span
+                                    className="mini-type-pill"
+                                    style={
+                                      {
+                                        "--type-color": TYPE_META[result.bestOutgoingHit.estimate.effectiveAttackType]
+                                          .color,
+                                        "--type-accent":
+                                          TYPE_META[result.bestOutgoingHit.estimate.effectiveAttackType].accent,
+                                      } as CSSProperties
+                                    }
+                                  >
+                                    {TYPE_META[result.bestOutgoingHit.estimate.effectiveAttackType].label}
+                                  </span>
+                                  <span className="mini-type-pill neutral-pill">
+                                    {formatPercent(result.bestOutgoingHit.estimate.minPercent)}% -{" "}
+                                    {formatPercent(result.bestOutgoingHit.estimate.maxPercent)}%
+                                  </span>
+                                  <span className="mini-type-pill neutral-pill">
+                                    Elo {Math.round(result.targetScore)}
+                                  </span>
+                                </>
+                              ) : (
+                                <span className="mini-type-pill neutral-pill">No pressure</span>
+                              )}
+
+                              <span
+                                className={`mini-type-pill neutral-pill ${
+                                  result.survivesBestIncomingHit === true
+                                    ? "survival-pill good"
+                                    : result.survivesBestIncomingHit === false
+                                      ? "survival-pill bad"
+                                      : ""
+                                }`}
+                              >
+                                {result.survivesBestIncomingHit === true
+                                  ? "Lives best hit"
+                                  : result.survivesBestIncomingHit === false
+                                    ? "Loses to best hit"
+                                    : "No enemy moves"}
+                              </span>
+                            </div>
+
+                            {result.bestIncomingHit ? (
+                              <p className="ohko-result-subnote">
+                                Incoming {getAttackLabel(result.bestIncomingHit.attack)}:{" "}
+                                {formatPercent(result.bestIncomingHit.estimate.minPercent)}% -{" "}
+                                {formatPercent(result.bestIncomingHit.estimate.maxPercent)}%
+                              </p>
+                            ) : null}
+                          </article>
+                        ))}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="team-slot-empty">Add Pokemon to your team to rank the full 6v6 matchup board.</div>
+            )}
+          </section>
+        ) : null}
 
         {opponentEntries.length === 0 ? (
           <div className="matchup-empty-board">
@@ -3119,7 +5630,7 @@ function TeamBuilderView() {
                     <div className="enemy-coverage-block">
                       <div className="coverage-preview-header">
                         <p className="eyebrow">
-                          {opponentEntry.movesetSource === "custom" ? "Custom Moves" : "Preset Moves"}
+                          {opponentEntry.movesetSource === "custom" ? "Custom Set" : "Imported Set"}
                         </p>
                         <span>
                           {opponentEntry.savedAttacks.length > 0
@@ -3129,6 +5640,13 @@ function TeamBuilderView() {
                             : "No preset"}
                         </span>
                       </div>
+
+                      {opponentEntry.abilityName || opponentEntry.itemName ? (
+                        <div className="quick-meta-row">
+                          {opponentEntry.abilityName ? <span>Ability {opponentEntry.abilityName}</span> : null}
+                          {opponentEntry.itemName ? <span>Item {opponentEntry.itemName}</span> : null}
+                        </div>
+                      ) : null}
 
                       <div className="coverage-chip-list">
                         {opponentEntry.movesetSource === "custom" && opponentEntry.savedAttacks.length > 0 ? (
@@ -3730,7 +6248,9 @@ function TeamBuilderView() {
                   <span className="damage-assumption-pill">Level 50</span>
                   <span className="damage-assumption-pill">0 IV / 0 EV</span>
                   <span className="damage-assumption-pill">Neutral nature</span>
-                  <span className="damage-assumption-pill">No items / abilities</span>
+                  <span className="damage-assumption-pill">Supported items and berries</span>
+                  <span className="damage-assumption-pill">Helping Hand toggle available</span>
+                  <span className="damage-assumption-pill">Supported ability effects only</span>
                   <span className="damage-assumption-pill">Spread toggle = {SPREAD_MOVE_MULTIPLIER}x</span>
                 </div>
 
@@ -3763,6 +6283,66 @@ function TeamBuilderView() {
                     </select>
                   </label>
 
+                  <label className="damage-type-field">
+                    <span>My Ability</span>
+                    <select
+                      value={damageAttackerAbility}
+                      onChange={(event) => setDamageAttackerAbility(event.target.value as DamageAbilityId)}
+                      title={getDamageAbilityDescription(damageAttackerAbility)}
+                    >
+                      {damageAbilityOptions.map((option) => (
+                        <option key={`damage-attacker-ability-${option.id}`} value={option.id}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="damage-type-field">
+                    <span>Enemy Ability</span>
+                    <select
+                      value={damageDefenderAbility}
+                      onChange={(event) => setDamageDefenderAbility(event.target.value as DamageAbilityId)}
+                      title={getDamageAbilityDescription(damageDefenderAbility)}
+                    >
+                      {damageAbilityOptions.map((option) => (
+                        <option key={`damage-defender-ability-${option.id}`} value={option.id}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="damage-type-field">
+                    <span>Attacker Item</span>
+                    <select
+                      value={damageAttackerItem}
+                      onChange={(event) => setDamageAttackerItem(event.target.value as DamageItemId)}
+                      title={getDamageItemDescription(damageAttackerItem)}
+                    >
+                      {damageAttackerItemOptions.map((option) => (
+                        <option key={`damage-attacker-item-${option.id}`} value={option.id}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="damage-type-field">
+                    <span>Defender Item</span>
+                    <select
+                      value={damageDefenderItem}
+                      onChange={(event) => setDamageDefenderItem(event.target.value as DamageItemId)}
+                      title={getDamageItemDescription(damageDefenderItem)}
+                    >
+                      {damageDefenderItemOptions.map((option) => (
+                        <option key={`damage-defender-item-${option.id}`} value={option.id}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
                   <label className={`damage-spread-toggle ${damageAttackerGrounded ? "active" : ""}`}>
                     <input
                       type="checkbox"
@@ -3779,6 +6359,15 @@ function TeamBuilderView() {
                       onChange={(event) => setDamageDefenderGrounded(event.target.checked)}
                     />
                     <span>Enemy Grounded</span>
+                  </label>
+
+                  <label className={`damage-spread-toggle ${damageHelpingHand ? "active" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={damageHelpingHand}
+                      onChange={(event) => setDamageHelpingHand(event.target.checked)}
+                    />
+                    <span>Helping Hand Boost</span>
                   </label>
 
                   <div className="damage-stage-control">
@@ -3829,102 +6418,132 @@ function TeamBuilderView() {
                 {damageCalcMode === "attack" ? (
                   selectedDamageSavedAttacks.length > 0 ? (
                   <div className="damage-move-list">
+                    {bestEnemyIncomingHit ? (
+                      <p className="selector-note team-elo-note" style={{ margin: "0 0 1rem 0" }}>
+                        <strong>Best Return Fire:</strong> {selectedDamageDefenderPokemon!.name} hits back with {getAttackLabel(bestEnemyIncomingHit.attack)} for <strong>{formatPercent(bestEnemyIncomingHit.estimate.minPercent)}% - {formatPercent(bestEnemyIncomingHit.estimate.maxPercent)}%</strong>.
+                      </p>
+                    ) : null}
                     {damageMoveRows.map((row) => (
                       <article key={`damage-row-${row.attack.id}`} className="damage-move-row">
-                        <div className="damage-move-main">
-                          <span
-                            className="inline-type-pill"
-                            style={
-                              {
-                                "--type-color": TYPE_META[row.attack.type].color,
-                                "--type-accent": TYPE_META[row.attack.type].accent,
-                              } as CSSProperties
-                            }
-                          >
-                            <img src={getTypeIconUrl(row.attack.type)} alt="" aria-hidden="true" />
-                            {TYPE_META[row.attack.type].label}
-                          </span>
-
-                          <strong>{getAttackLabel(row.attack)}</strong>
-
-                          <label className="damage-power-field">
-                            <span>Base Power</span>
-                            <input
-                              type="number"
-                              min="1"
-                              step="1"
-                              inputMode="numeric"
-                              value={row.config.power || (row.defaultPower ? String(row.defaultPower) : "")}
-                              onChange={(event) =>
-                                updateDamageMoveConfig(
-                                  damageAttackerSlotIndex ?? 0,
-                                  selectedDamageAttackerPokemon!.id,
-                                  row.attack.id,
-                                  row.config,
-                                  { power: event.target.value },
-                                )
-                              }
-                              placeholder={row.defaultPower ? String(row.defaultPower) : "80"}
-                            />
-                          </label>
-                        </div>
-
-                        <div className="damage-move-controls">
-                          <div className="damage-category-toggle" role="group" aria-label="Move category">
-                            {(["physical", "special"] as const).map((category) => (
-                              <button
-                                key={`${row.attack.id}-${category}`}
-                                type="button"
-                                className={`damage-category-button ${
-                                  row.config.category === category ? "active" : ""
-                                }`}
-                                onClick={() =>
-                                  updateDamageMoveConfig(
-                                    damageAttackerSlotIndex ?? 0,
-                                    selectedDamageAttackerPokemon!.id,
-                                    row.attack.id,
-                                    row.config,
-                                    { category },
-                                  )
+                        <div className="damage-move-row-layout">
+                          <div className="damage-move-column">
+                            <div className="damage-move-head">
+                              <span
+                                className="inline-type-pill"
+                                style={
+                                  {
+                                    "--type-color": TYPE_META[row.estimate?.effectiveAttackType ?? row.attack.type].color,
+                                    "--type-accent": TYPE_META[row.estimate?.effectiveAttackType ?? row.attack.type].accent,
+                                  } as CSSProperties
                                 }
                               >
-                                {category === "physical" ? "Physical" : "Special"}
-                              </button>
-                            ))}
+                                <img
+                                  src={getTypeIconUrl(row.estimate?.effectiveAttackType ?? row.attack.type)}
+                                  alt=""
+                                  aria-hidden="true"
+                                />
+                                {TYPE_META[row.estimate?.effectiveAttackType ?? row.attack.type].label}
+                              </span>
+                              <strong>{getAttackLabel(row.attack)}</strong>
+                            </div>
+
+                            <div className="damage-move-main">
+                              <label className="damage-power-field">
+                                <span>Base Power</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  step="1"
+                                  inputMode="numeric"
+                                  value={row.config.power || (row.defaultPower ? String(row.defaultPower) : "")}
+                                  onChange={(event) =>
+                                    updateDamageMoveConfig(
+                                      damageAttackerSlotIndex ?? 0,
+                                      selectedDamageAttackerPokemon!.id,
+                                      row.attack.id,
+                                      row.config,
+                                      { power: event.target.value },
+                                    )
+                                  }
+                                  placeholder={row.defaultPower ? String(row.defaultPower) : "80"}
+                                />
+                              </label>
+
+                              <div className="damage-move-controls">
+                                <div className="damage-category-toggle" role="group" aria-label="Move category">
+                                  {(["physical", "special"] as const).map((category) => (
+                                    <button
+                                      key={`${row.attack.id}-${category}`}
+                                      type="button"
+                                      className={`damage-category-button ${
+                                        row.config.category === category ? "active" : ""
+                                      }`}
+                                      onClick={() =>
+                                        updateDamageMoveConfig(
+                                          damageAttackerSlotIndex ?? 0,
+                                          selectedDamageAttackerPokemon!.id,
+                                          row.attack.id,
+                                          row.config,
+                                          { category },
+                                        )
+                                      }
+                                    >
+                                      {category === "physical" ? "Physical" : "Special"}
+                                    </button>
+                                  ))}
+                                </div>
+
+                                <label className={`damage-spread-toggle ${row.config.isSpreadMove ? "active" : ""}`}>
+                                  <input
+                                    type="checkbox"
+                                    checked={row.config.isSpreadMove}
+                                    onChange={(event) =>
+                                      updateDamageMoveConfig(
+                                        damageAttackerSlotIndex ?? 0,
+                                        selectedDamageAttackerPokemon!.id,
+                                        row.attack.id,
+                                        row.config,
+                                        { isSpreadMove: event.target.checked },
+                                      )
+                                    }
+                                  />
+                                  <span>Spread Move</span>
+                                </label>
+                              </div>
+                            </div>
                           </div>
 
-                          <label className={`damage-spread-toggle ${row.config.isSpreadMove ? "active" : ""}`}>
-                            <input
-                              type="checkbox"
-                              checked={row.config.isSpreadMove}
-                              onChange={(event) =>
-                                updateDamageMoveConfig(
-                                  damageAttackerSlotIndex ?? 0,
-                                  selectedDamageAttackerPokemon!.id,
-                                  row.attack.id,
-                                  row.config,
-                                  { isSpreadMove: event.target.checked },
-                                )
-                              }
-                            />
-                            <span>Spread Move</span>
-                          </label>
+                          <div className={`damage-result-card damage-result-card-side ${row.estimate ? "ready" : ""}`}>
+                            {row.estimate ? (
+                              <>
+                                <div className="damage-result-topline">
+                                  <strong>{formatPercent(row.estimate.averagePercent)}%</strong>
+                                  <span>
+                                    {formatPercent(row.estimate.minPercent)}% - {formatPercent(row.estimate.maxPercent)}%
+                                  </span>
+                                </div>
+                                <p>
+                                  Avg {row.estimate.averageDamage} HP
+                                  {row.estimate.typeMultiplier === 0 ? " • no effect" : ""}
+                                </p>
+                              </>
+                            ) : (
+                              <>
+                                <strong>Enter power</strong>
+                                <p>
+                                  Add the move’s base power to calculate a rough percentage.
+                                  {row.defaultPower ? ` Default saved value: ${row.defaultPower}.` : ""}
+                                </p>
+                              </>
+                            )}
+                          </div>
                         </div>
 
-                        <div className={`damage-result-card ${row.estimate ? "ready" : ""}`}>
+                        <div className={`damage-result-card damage-result-card-footer ${row.estimate ? "ready" : ""}`}>
                           {row.estimate ? (
                             <>
-                              <div className="damage-result-topline">
-                                <strong>{formatPercent(row.estimate.averagePercent)}%</strong>
-                                <span>
-                                  {formatPercent(row.estimate.minPercent)}% - {formatPercent(row.estimate.maxPercent)}%
-                                </span>
-                              </div>
-                              <p>
-                                Avg {row.estimate.averageDamage} HP
-                                {row.estimate.typeMultiplier === 0 ? " • no effect" : ""}
-                              </p>
                               <div className="damage-modifier-row">
+                                <span>Move {TYPE_META[row.estimate.effectiveAttackType].label}</span>
                                 <span>
                                   {row.config.category === "physical" ? "Atk" : "SpA"} {row.estimate.attackStat}
                                 </span>
@@ -3936,18 +6555,18 @@ function TeamBuilderView() {
                                 <span>Spread {formatFlatMultiplier(row.estimate.spreadMultiplier)}</span>
                                 <span>Weather {formatFlatMultiplier(row.estimate.weatherMultiplier)}</span>
                                 <span>Terrain {formatFlatMultiplier(row.estimate.terrainMultiplier)}</span>
+                                <span>Ability {formatFlatMultiplier(row.estimate.abilityMultiplier)}</span>
+                                <span>Item {formatFlatMultiplier(row.estimate.itemMultiplier)}</span>
+                                <span>Helping Hand {formatFlatMultiplier(row.estimate.helpingHandMultiplier)}</span>
                                 <span>Atk {formatFlatMultiplier(row.estimate.attackerStageMultiplier)}</span>
                                 <span>Def {formatFlatMultiplier(row.estimate.defenderStageMultiplier)}</span>
                               </div>
                             </>
                           ) : (
-                            <>
-                              <strong>Enter power</strong>
-                              <p>
-                                Add the move’s base power to calculate a rough percentage.
-                                {row.defaultPower ? ` Default saved value: ${row.defaultPower}.` : ""}
-                              </p>
-                            </>
+                            <p>
+                              Add the move’s base power to calculate a rough percentage.
+                              {row.defaultPower ? ` Default saved value: ${row.defaultPower}.` : ""}
+                            </p>
                           )}
                         </div>
                       </article>
@@ -4134,6 +6753,7 @@ function TeamBuilderView() {
                               {defenseMoveEstimate.typeMultiplier === 0 ? " • no effect" : ""}
                             </p>
                             <div className="damage-modifier-row">
+                              <span>Move {TYPE_META[defenseMoveEstimate.effectiveAttackType].label}</span>
                               <span>
                                 {defenseMoveConfig.category === "physical" ? "Atk" : "SpA"}{" "}
                                 {defenseMoveEstimate.attackStat}
@@ -4147,6 +6767,9 @@ function TeamBuilderView() {
                               <span>Spread {formatFlatMultiplier(defenseMoveEstimate.spreadMultiplier)}</span>
                               <span>Weather {formatFlatMultiplier(defenseMoveEstimate.weatherMultiplier)}</span>
                               <span>Terrain {formatFlatMultiplier(defenseMoveEstimate.terrainMultiplier)}</span>
+                              <span>Ability {formatFlatMultiplier(defenseMoveEstimate.abilityMultiplier)}</span>
+                              <span>Item {formatFlatMultiplier(defenseMoveEstimate.itemMultiplier)}</span>
+                              <span>Helping Hand {formatFlatMultiplier(defenseMoveEstimate.helpingHandMultiplier)}</span>
                               <span>Atk {formatFlatMultiplier(defenseMoveEstimate.attackerStageMultiplier)}</span>
                               <span>Def {formatFlatMultiplier(defenseMoveEstimate.defenderStageMultiplier)}</span>
                             </div>
@@ -4159,6 +6782,88 @@ function TeamBuilderView() {
                         )}
                       </div>
                     </article>
+
+                    {defensePresetMoveRows.length > 0 ? (
+                      <section className="damage-loaded-move-list">
+                        <div className="coverage-preview-header">
+                          <p className="eyebrow">Loaded Enemy Moves</p>
+                          <span>{defensePresetMoveRows.length} shown</span>
+                        </div>
+
+                        {defensePresetMoveRows.map((row) => (
+                          <article key={`defense-loaded-${row.attack.id}`} className="damage-loaded-move-row">
+                            <div className="damage-loaded-move-top">
+                              <div className="damage-loaded-move-main">
+                                <span
+                                  className="inline-type-pill"
+                                  style={
+                                    {
+                                      "--type-color": TYPE_META[row.estimate?.effectiveAttackType ?? row.attack.type]
+                                        .color,
+                                      "--type-accent":
+                                        TYPE_META[row.estimate?.effectiveAttackType ?? row.attack.type].accent,
+                                    } as CSSProperties
+                                  }
+                                >
+                                  <img
+                                    src={getTypeIconUrl(row.estimate?.effectiveAttackType ?? row.attack.type)}
+                                    alt=""
+                                    aria-hidden="true"
+                                  />
+                                  {TYPE_META[row.estimate?.effectiveAttackType ?? row.attack.type].label}
+                                </span>
+
+                                <div className="damage-loaded-move-copy">
+                                  <strong>{getAttackLabel(row.attack)}</strong>
+                                  <p>
+                                    {row.category === "physical" ? "Physical" : "Special"}
+                                    {row.basePower !== null ? ` • Power ${row.basePower}` : " • Missing power"}
+                                    {row.isSpreadMove ? " • Spread" : ""}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <span className="mini-type-pill neutral-pill">
+                                {row.estimate ? `${formatPercent(row.estimate.averagePercent)}% avg` : "No rough calc"}
+                              </span>
+                            </div>
+
+                            <div className={`damage-result-card ${row.estimate ? "ready" : ""}`}>
+                              {row.estimate ? (
+                                <>
+                                  <div className="damage-result-topline">
+                                    <strong>{formatPercent(row.estimate.averagePercent)}%</strong>
+                                    <span>
+                                      {formatPercent(row.estimate.minPercent)}% -{" "}
+                                      {formatPercent(row.estimate.maxPercent)}%
+                                    </span>
+                                  </div>
+                                  <p>
+                                    Avg {row.estimate.averageDamage} HP taken
+                                    {row.estimate.typeMultiplier === 0 ? " • no effect" : ""}
+                                  </p>
+                                  <div className="damage-modifier-row">
+                                    <span>{row.category === "physical" ? "Physical" : "Special"}</span>
+                                    <span>Power {row.basePower}</span>
+                                    <span>{row.isSpreadMove ? "Spread move" : "Single-target"}</span>
+                                    <span>STAB {formatFlatMultiplier(row.estimate.stabMultiplier)}</span>
+                                    <span>Type {formatFlatMultiplier(row.estimate.typeMultiplier)}</span>
+                                    <span>Ability {formatFlatMultiplier(row.estimate.abilityMultiplier)}</span>
+                                    <span>Item {formatFlatMultiplier(row.estimate.itemMultiplier)}</span>
+                                    <span>Helping Hand {formatFlatMultiplier(row.estimate.helpingHandMultiplier)}</span>
+                                  </div>
+                                </>
+                              ) : (
+                                <>
+                                  <strong>No rough percentage</strong>
+                                  <p>This loaded move does not have a supported base power in the current data.</p>
+                                </>
+                              )}
+                            </div>
+                          </article>
+                        ))}
+                      </section>
+                    ) : null}
                   </div>
                 )}
               </>
@@ -4200,10 +6905,477 @@ function TeamBuilderView() {
             </div>
           </section>
         </div>
+
+        <section className="damage-doubles-panel">
+          <div className="board-header">
+            <div>
+              <p className="eyebrow">2v2 Threat Board</p>
+              <h2>See the biggest hit on each slot</h2>
+            </div>
+            <div className="damage-assumption-row">
+              <span className="damage-assumption-pill">Uses current weather / terrain / stage settings</span>
+              <span className="damage-assumption-pill">Shows each attacker’s best single hit</span>
+              <span className="damage-assumption-pill">Turn order uses Speed plus Tailwind / Trick Room</span>
+            </div>
+          </div>
+
+          <div className="damage-doubles-selector-grid">
+            <article className="damage-doubles-side">
+              <div className="coverage-preview-header">
+                <p className="eyebrow">My Side</p>
+                <span>{doublesAllyMembers.length} / 2 selected</span>
+              </div>
+
+              <div className="damage-doubles-selector-actions">
+                {openerSummaries.map((summary, index) =>
+                  summary ? (
+                    <button
+                      key={`doubles-opener-${summary.label}`}
+                      type="button"
+                      className="secondary-button"
+                      onClick={() =>
+                        setDoublesAllySelection(
+                          normalizePairSelection(
+                            openerSelections[index],
+                            filledLeadOptions.map((entry) => entry.index),
+                            index * 2,
+                          ),
+                        )
+                      }
+                    >
+                      Use {summary.label}
+                    </button>
+                  ) : null,
+                )}
+              </div>
+
+              <p className="selector-note">Pick the two allies you want to evaluate.</p>
+
+              <div className="damage-picker-grid">
+                {team.map((slot, slotIndex) => {
+                  const selectionRank = doublesAllySelection.indexOf(slotIndex);
+
+                  return (
+                    <DamagePickerCard
+                      key={`doubles-ally-${slotIndex}`}
+                      label={`Slot ${slotIndex + 1}`}
+                      isSelected={selectionRank !== -1}
+                      isDisabled={!slot.pokemon}
+                      pokemon={slot.pokemon}
+                      subtitle={
+                        slot.pokemon
+                          ? `${slot.pokemon.types.join(" / ")}`
+                          : loadError
+                            ? loadError
+                            : "Pick a Pokemon above"
+                      }
+                      footer={
+                        slot.pokemon
+                          ? selectionRank !== -1
+                            ? `Selected ${selectionRank + 1}`
+                            : `${slot.savedAttacks.length} saved ${
+                                slot.savedAttacks.length === 1 ? "attack" : "attacks"
+                              }`
+                          : "Unavailable"
+                      }
+                      onClick={() => toggleDoublesAllySelection(slotIndex)}
+                    />
+                  );
+                })}
+              </div>
+            </article>
+
+            <article className="damage-doubles-side">
+              <div className="coverage-preview-header">
+                <p className="eyebrow">Enemy Side</p>
+                <span>{doublesEnemyMembers.length} / 2 selected</span>
+              </div>
+
+              <p className="selector-note">Pick the two enemies you want to compare against.</p>
+
+              <div className="damage-picker-grid">
+                {opponentRoster.map((entry) => {
+                  const selectionRank = doublesEnemySelection.indexOf(entry.slotIndex);
+
+                  return (
+                    <DamagePickerCard
+                      key={`doubles-enemy-${entry.slotIndex}`}
+                      label={`Enemy ${entry.slotIndex + 1}`}
+                      isSelected={selectionRank !== -1}
+                      isDisabled={!entry.pokemon}
+                      pokemon={entry.pokemon}
+                      subtitle={entry.pokemon ? `${entry.pokemon.types.join(" / ")}` : "Pick a Pokemon above"}
+                      footer={
+                        entry.pokemon
+                          ? selectionRank !== -1
+                            ? `Selected ${selectionRank + 1}`
+                            : entry.movesetSource === "custom" && entry.savedAttacks.length > 0
+                              ? `${entry.savedAttacks.length} custom ${
+                                  entry.savedAttacks.length === 1 ? "move" : "moves"
+                                }`
+                              : entry.movesetSource === "preset" && entry.presetMoveNames.length > 0
+                                ? `${entry.presetMoveNames.length} preset ${
+                                    entry.presetMoveNames.length === 1 ? "move" : "moves"
+                                  }`
+                                : `HP ${getLevel50HpValue(entry.pokemon.baseStats.hp)} at rough Lv. 50`
+                          : "Unavailable"
+                      }
+                      onClick={() => toggleDoublesEnemySelection(entry.slotIndex)}
+                    />
+                  );
+                })}
+              </div>
+            </article>
+          </div>
+
+          {selectedDoublesEnemyEntries.length > 0 ? (
+            <section className="damage-doubles-block damage-doubles-scout-panel">
+              <div className="coverage-preview-header">
+                <p className="eyebrow">Selected Enemy Scouting</p>
+                <span>{selectedDoublesEnemyEntries.length} shown</span>
+              </div>
+
+              <div className="damage-doubles-scout-grid">
+                {selectedDoublesEnemyEntries.map((entry) => {
+                  const displayedMoveEntries =
+                    entry.movesetSource === "custom" && entry.savedAttacks.length > 0
+                      ? entry.savedAttacks.map((attack) => {
+                          const name = getAttackLabel(attack);
+                          return {
+                            name,
+                            move: getMoveRecordByName(name, moveByKey),
+                          };
+                        })
+                      : entry.presetMoveNames.map((name) => ({
+                          name,
+                          move: getMoveRecordByName(name, moveByKey),
+                        }));
+
+                  return (
+                    <article key={`doubles-enemy-pool-${entry.slotIndex}`} className="damage-doubles-scout-card">
+                      <div className="damage-doubles-scout-head">
+                        <div className="damage-doubles-scout-identity">
+                          <PokemonSprite pokemon={entry.pokemon} className="damage-side-sprite" />
+                          <div>
+                            <strong>{entry.pokemon.name}</strong>
+                            <p>{entry.movesetSource === "custom" ? "Custom set" : "Imported set"}</p>
+                          </div>
+                        </div>
+                        <span className="mini-type-pill neutral-pill">
+                          {displayedMoveEntries.length} move{displayedMoveEntries.length === 1 ? "" : "s"}
+                        </span>
+                      </div>
+
+                      <div className="damage-doubles-scout-meta">
+                        {entry.abilityName ? <span>Ability {entry.abilityName}</span> : null}
+                        {entry.itemName ? <span>Item {entry.itemName}</span> : null}
+                      </div>
+
+                      <div className="coverage-chip-list">
+                        {displayedMoveEntries.length > 0 ? (
+                          displayedMoveEntries.map((moveEntry) => {
+                            const resolvedType = moveEntry.move ? getTypeFromLabel(moveEntry.move.type) : null;
+                            const chipClassName = resolvedType ? "mini-type-pill" : "mini-type-pill neutral-pill";
+
+                            return (
+                              <span
+                                key={`doubles-enemy-pool-${entry.slotIndex}-${moveEntry.name}`}
+                                className={chipClassName}
+                                style={
+                                  resolvedType
+                                    ? ({
+                                        "--type-color": TYPE_META[resolvedType].color,
+                                        "--type-accent": TYPE_META[resolvedType].accent,
+                                      } as CSSProperties)
+                                    : undefined
+                                }
+                              >
+                                {moveEntry.name}
+                              </span>
+                            );
+                          })
+                        ) : (
+                          <span className="subtle-empty">No saved move data for this enemy yet.</span>
+                        )}
+                      </div>
+
+                      <details className="damage-doubles-scout-details">
+                        <summary>Move Details</summary>
+                        <div className="damage-doubles-scout-detail-list">
+                          {displayedMoveEntries.map((moveEntry) => (
+                            <article
+                              key={`doubles-enemy-pool-detail-${entry.slotIndex}-${moveEntry.name}`}
+                              className="damage-doubles-scout-detail"
+                            >
+                              <div className="damage-doubles-scout-detail-top">
+                                <strong>{moveEntry.name}</strong>
+                                <span>
+                                  {moveEntry.move
+                                    ? `${moveEntry.move.category}${moveEntry.move.basePower > 0 ? ` • Power ${moveEntry.move.basePower}` : ""}`
+                                    : "Move data not found."}
+                                </span>
+                              </div>
+                              <p>{moveEntry.move?.shortDesc || moveEntry.move?.desc || "No description found."}</p>
+                            </article>
+                          ))}
+                        </div>
+                      </details>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
+
+          {doublesThreatReady ? (
+            <div className="damage-threat-layout">
+              <div className="damage-threat-columns">
+                <section className="damage-doubles-block">
+                  <div className="coverage-preview-header">
+                    <p className="eyebrow">Enemy Damage On You</p>
+                    <span>Best single hit from each enemy into each ally</span>
+                  </div>
+
+                  <div className="damage-threat-card-grid">
+                    {incomingThreatCards.map((card) => {
+                      const tone = getThreatCardTone(card.strongestLine, "incoming");
+
+                      return (
+                        <article
+                          key={`incoming-threat-${card.target.slotIndex}`}
+                          className={`damage-threat-card incoming ${tone}`}
+                        >
+                          <div className="damage-threat-card-head">
+                            <div className="opponent-coverage-main">
+                              <PokemonSprite pokemon={card.target.pokemon} />
+                              <div>
+                                <strong>{card.target.pokemon.name}</strong>
+                                <p>Slot {card.target.slotIndex + 1}</p>
+                              </div>
+                            </div>
+                            <span className={`damage-threat-card-badge ${tone}`}>
+                              {card.strongestLine?.bestRow
+                                ? `Max ${formatPercent(card.strongestLine.bestRow.estimate.maxPercent)}%`
+                                : "No damage"}
+                            </span>
+                          </div>
+
+                          <div className="damage-threat-line-list">
+                            {card.lines.map((line) => {
+                              const isStrongest =
+                                card.strongestLine?.attacker.side === line.attacker.side &&
+                                card.strongestLine?.attacker.slotIndex === line.attacker.slotIndex;
+
+                              return (
+                                <div
+                                  key={`incoming-threat-line-${card.target.slotIndex}-${line.attacker.slotIndex}`}
+                                  className={`damage-threat-line ${isStrongest ? "is-strongest" : ""}`}
+                                >
+                                  <div className="damage-threat-line-head">
+                                    <strong>
+                                      Enemy {line.attacker.slotIndex + 1} • {line.attacker.pokemon.name}
+                                    </strong>
+                                    <span>
+                                      {line.bestRow
+                                        ? `${formatPercent(line.bestRow.estimate.maxPercent)}% max`
+                                        : "No damaging move"}
+                                    </span>
+                                  </div>
+                                  <p className="damage-threat-line-copy">
+                                    {line.bestRow
+                                      ? `${getAttackLabel(line.bestRow.attack)} • ${formatDamageHpRange(line.bestRow)} • ${formatDamagePercentRange(line.bestRow)}`
+                                      : "No supported damaging move found for this attacker."}
+                                  </p>
+                                  <div className="damage-threat-line-badges">
+                                    <span
+                                      className={`speed-matchup-pill ${
+                                        line.timing === "before"
+                                          ? "faster"
+                                          : line.timing === "after"
+                                            ? "slower"
+                                            : "tie"
+                                      }`}
+                                    >
+                                      {formatThreatTimingLabel(line.timing)}
+                                    </span>
+                                    {line.bestRow ? (
+                                      <span className="mini-type-pill neutral-pill">
+                                        {TYPE_META[line.bestRow.estimate.effectiveAttackType].label}
+                                      </span>
+                                    ) : null}
+                                    {line.bestRow?.isSpreadMove ? (
+                                      <span className="mini-type-pill neutral-pill">Spread</span>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section className="damage-doubles-block">
+                  <div className="coverage-preview-header">
+                    <p className="eyebrow">Your Threat On Them</p>
+                    <span>Best single hit from each ally into each enemy</span>
+                  </div>
+
+                  <div className="damage-threat-card-grid">
+                    {outgoingThreatCards.map((card) => {
+                      const tone = getThreatCardTone(card.strongestLine, "outgoing");
+
+                      return (
+                        <article
+                          key={`outgoing-threat-${card.target.slotIndex}`}
+                          className={`damage-threat-card outgoing ${tone}`}
+                        >
+                          <div className="damage-threat-card-head">
+                            <div className="opponent-coverage-main">
+                              <PokemonSprite pokemon={card.target.pokemon} />
+                              <div>
+                                <strong>{card.target.pokemon.name}</strong>
+                                <p>Enemy {card.target.slotIndex + 1}</p>
+                              </div>
+                            </div>
+                            <span className={`damage-threat-card-badge ${tone}`}>
+                              {card.strongestLine?.bestRow
+                                ? `Max ${formatPercent(card.strongestLine.bestRow.estimate.maxPercent)}%`
+                                : "No damage"}
+                            </span>
+                          </div>
+
+                          <div className="damage-threat-line-list">
+                            {card.lines.map((line) => {
+                              const isStrongest =
+                                card.strongestLine?.attacker.side === line.attacker.side &&
+                                card.strongestLine?.attacker.slotIndex === line.attacker.slotIndex;
+
+                              return (
+                                <div
+                                  key={`outgoing-threat-line-${card.target.slotIndex}-${line.attacker.slotIndex}`}
+                                  className={`damage-threat-line ${isStrongest ? "is-strongest" : ""}`}
+                                >
+                                  <div className="damage-threat-line-head">
+                                    <strong>
+                                      Slot {line.attacker.slotIndex + 1} • {line.attacker.pokemon.name}
+                                    </strong>
+                                    <span>
+                                      {line.bestRow
+                                        ? `${formatPercent(line.bestRow.estimate.maxPercent)}% max`
+                                        : "No damaging move"}
+                                    </span>
+                                  </div>
+                                  <p className="damage-threat-line-copy">
+                                    {line.bestRow
+                                      ? `${getAttackLabel(line.bestRow.attack)} • ${formatDamageHpRange(line.bestRow)} • ${formatDamagePercentRange(line.bestRow)}`
+                                      : "No supported damaging move found for this attacker."}
+                                  </p>
+                                  <div className="damage-threat-line-badges">
+                                    <span
+                                      className={`speed-matchup-pill ${
+                                        line.timing === "before"
+                                          ? "faster"
+                                          : line.timing === "after"
+                                            ? "slower"
+                                            : "tie"
+                                      }`}
+                                    >
+                                      {formatThreatTimingLabel(line.timing)}
+                                    </span>
+                                    {line.bestRow ? (
+                                      <span className="mini-type-pill neutral-pill">
+                                        {TYPE_META[line.bestRow.estimate.effectiveAttackType].label}
+                                      </span>
+                                    ) : null}
+                                    {line.bestRow?.isSpreadMove ? (
+                                      <span className="mini-type-pill neutral-pill">Spread</span>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </section>
+              </div>
+
+              <section className="damage-doubles-block damage-threat-turn-order-panel">
+                <div className="coverage-preview-header">
+                  <p className="eyebrow">Turn Order</p>
+                  <span>{doublesTrickRoom ? "Trick Room active" : "Normal speed order"}</span>
+                </div>
+
+                <div className="damage-threat-control-row">
+                  <label className={`damage-doubles-toggle ${doublesAllyTailwind ? "is-on" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={doublesAllyTailwind}
+                      onChange={(event) => setDoublesAllyTailwind(event.target.checked)}
+                    />
+                    My Tailwind
+                  </label>
+                  <label className={`damage-doubles-toggle ${doublesEnemyTailwind ? "is-on" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={doublesEnemyTailwind}
+                      onChange={(event) => setDoublesEnemyTailwind(event.target.checked)}
+                    />
+                    Enemy Tailwind
+                  </label>
+                  <label className={`damage-doubles-toggle ${doublesTrickRoom ? "is-on" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={doublesTrickRoom}
+                      onChange={(event) => setDoublesTrickRoom(event.target.checked)}
+                    />
+                    Trick Room
+                  </label>
+                </div>
+
+                <p className="selector-note damage-threat-order-note">
+                  Priority is not modeled here. This list only reflects rough Speed, Tailwind, and Trick Room.
+                </p>
+
+                <div className="speed-tier-list damage-threat-turn-order-list">
+                  {threatTurnOrder.map(({ member, effectiveSpeed, tailwindActive }, index) => (
+                    <div
+                      key={`threat-turn-order-${member.side}-${member.slotIndex}`}
+                      className={`speed-tier-chip damage-threat-turn-order-chip ${member.side}`}
+                    >
+                      <span className="speed-tier-rank">#{index + 1}</span>
+                      <span className="speed-tier-name">
+                        {member.pokemon.name}
+                        <br />
+                        <small>
+                          {member.side === "ally" ? `Slot ${member.slotIndex + 1}` : `Enemy ${member.slotIndex + 1}`}
+                        </small>
+                      </span>
+                      <span className="speed-tier-stat damage-threat-order-meta">
+                        {effectiveSpeed}
+                        {tailwindActive ? <small>Tailwind</small> : null}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </div>
+          ) : (
+            <div className="matchup-empty-board">
+              Pick two filled allies and two loaded enemies to see each slot’s biggest incoming hit, your best
+              outgoing threat, and the current turn order.
+            </div>
+          )}
+        </section>
       </section>
 
       <datalist id="pokemon-options">
-        {(database ?? []).map((pokemon) => (
+        {teamBuilderPokemonPool.map((pokemon) => (
           <option key={pokemon.id} value={pokemon.name} />
         ))}
       </datalist>
@@ -4228,6 +7400,8 @@ function MovesetDatabaseView() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSpeciesKey, setSelectedSpeciesKey] = useState<string | null>(null);
   const [draftSavedAttacks, setDraftSavedAttacks] = useState<PersistedSavedAttack[]>([]);
+  const [draftAbilityName, setDraftAbilityName] = useState("");
+  const [draftItemName, setDraftItemName] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -4334,28 +7508,60 @@ function MovesetDatabaseView() {
 
   const selectedCustomMoveset =
     selectedSpeciesKey !== null ? speciesMovesetByKey.get(selectedSpeciesKey) ?? null : null;
-  const selectedPresetMoves = useMemo(
-    () => (selectedPokemon ? getOpponentPresetSavedAttacks(selectedPokemon, moveByKey) : []),
-    [moveByKey, selectedPokemon],
+  const selectedHasCustomOverride = Boolean(
+    selectedCustomMoveset &&
+      (selectedCustomMoveset.savedAttacks.length > 0 || selectedCustomMoveset.abilityName || selectedCustomMoveset.itemName),
+  );
+  const selectedPreset = useMemo(() => (selectedPokemon ? getOpponentPreset(selectedPokemon) : null), [selectedPokemon]);
+  const selectedResolvedMoveset = useMemo(
+    () =>
+      selectedPokemon
+        ? getStoredOrPresetSavedAttacks(selectedPokemon, speciesMovesetByKey, moveByKey, MAX_SPECIES_MOVESET_SIZE)
+        : { savedAttacks: [], allMoveNames: [], abilityName: null, itemName: null, movesetSource: "none" as const },
+    [moveByKey, selectedPokemon, speciesMovesetByKey],
   );
   const selectedPresetMoveNames = useMemo(
-    () => (selectedPokemon ? getOpponentPresetMoveNames(selectedPokemon) : []),
-    [selectedPokemon],
+    () => (selectedPreset ? [...selectedPreset.moveNames] : []),
+    [selectedPreset],
+  );
+  const selectedPresetMoveEntries = useMemo(
+    () =>
+      selectedPresetMoveNames.map((moveName) => ({
+        name: moveName,
+        move: getMoveRecordByName(moveName, moveByKey),
+      })),
+    [moveByKey, selectedPresetMoveNames],
+  );
+  const selectedCustomMoveEntries = useMemo(
+    () =>
+      draftSavedAttacks.map((attack) => {
+        const moveName = getAttackLabel(attack);
+        return {
+          name: moveName,
+          move: getMoveRecordByName(moveName, moveByKey),
+          attack,
+        };
+      }),
+    [draftSavedAttacks, moveByKey],
   );
 
   useEffect(() => {
     if (!selectedPokemon) {
       setDraftSavedAttacks([]);
+      setDraftAbilityName("");
+      setDraftItemName("");
       return;
     }
 
     const nextDraft =
       selectedCustomMoveset?.savedAttacks?.length
         ? sanitizeSavedAttacks(selectedCustomMoveset.savedAttacks, selectedPokemon, MAX_SPECIES_MOVESET_SIZE)
-        : selectedPresetMoves;
+        : selectedResolvedMoveset.savedAttacks;
 
     setDraftSavedAttacks(nextDraft);
-  }, [selectedCustomMoveset, selectedPokemon, selectedPresetMoves]);
+    setDraftAbilityName(selectedResolvedMoveset.abilityName ?? "");
+    setDraftItemName(selectedResolvedMoveset.itemName ?? "");
+  }, [selectedCustomMoveset, selectedPokemon, selectedResolvedMoveset]);
 
   const updateDraftAttack = (attackId: string, patch: Partial<PersistedSavedAttack>) => {
     setDraftSavedAttacks((current) =>
@@ -4410,6 +7616,10 @@ function MovesetDatabaseView() {
         getPokemonMovesetKey(selectedPokemon),
         selectedPokemon.name,
         sanitizeSavedAttacks(nextAttacks, selectedPokemon, MAX_SPECIES_MOVESET_SIZE),
+        {
+          abilityName: draftAbilityName.trim() || undefined,
+          itemName: draftItemName.trim() || undefined,
+        },
       );
       const entries = await listSpeciesMovesets();
       setSpeciesMovesets(entries);
@@ -4436,7 +7646,9 @@ function MovesetDatabaseView() {
   };
 
   const resetDraftToPreset = () => {
-    setDraftSavedAttacks(selectedPresetMoves);
+    setDraftSavedAttacks(selectedResolvedMoveset.savedAttacks);
+    setDraftAbilityName(selectedResolvedMoveset.abilityName ?? "");
+    setDraftItemName(selectedResolvedMoveset.itemName ?? "");
   };
 
   return (
@@ -4447,8 +7659,8 @@ function MovesetDatabaseView() {
           <h2>Build defaults for legal Pokémon</h2>
           <p className="selector-note">
             This page tracks custom enemy defaults for {POKEMON_CHAMPIONS_ACTIVE_REGULATION}. The legal list is based
-            on the current Regulation M-A pool sourced on {POKEMON_CHAMPIONS_LEGAL_LIST_SOURCED_AT}, and those saved
-            movesets feed the enemy auto-fill in Team Builder.
+            on the current Regulation M-A pool sourced on {POKEMON_CHAMPIONS_LEGAL_LIST_SOURCED_AT}, and the imported
+            meta sets now include moves, abilities, and items for enemy auto-fill in Team Builder.
           </p>
         </div>
         <div className="team-builder-meta">
@@ -4487,6 +7699,10 @@ function MovesetDatabaseView() {
                 filteredPokemon.map((pokemon) => {
                   const speciesKey = getPokemonMovesetKey(pokemon);
                   const customMoveset = speciesMovesetByKey.get(speciesKey) ?? null;
+                  const hasCustomOverride = Boolean(
+                    customMoveset &&
+                      (customMoveset.savedAttacks.length > 0 || customMoveset.abilityName || customMoveset.itemName),
+                  );
                   const presetMoves = getOpponentPresetMoveNames(pokemon);
                   const isSelected = selectedSpeciesKey === speciesKey;
 
@@ -4502,8 +7718,10 @@ function MovesetDatabaseView() {
                         <div>
                           <strong>{pokemon.name}</strong>
                           <p>
-                            {customMoveset?.savedAttacks?.length
-                              ? `${customMoveset.savedAttacks.length} custom move${customMoveset.savedAttacks.length === 1 ? "" : "s"}`
+                            {hasCustomOverride
+                              ? customMoveset?.savedAttacks?.length
+                                ? `${customMoveset.savedAttacks.length} custom move${customMoveset.savedAttacks.length === 1 ? "" : "s"}`
+                                : "Custom ability/item override"
                               : presetMoves.length > 0
                                 ? `${presetMoves.length} preset move${presetMoves.length === 1 ? "" : "s"}`
                                 : "No preset yet"}
@@ -4561,12 +7779,15 @@ function MovesetDatabaseView() {
                   <div className="team-builder-meta">
                     <span>{selectedPokemon.baseSpecies}</span>
                     <span>
-                      {selectedCustomMoveset?.savedAttacks?.length
+                      {selectedHasCustomOverride
                         ? "Using custom moveset"
                         : selectedPresetMoveNames.length > 0
                           ? "Using built-in preset"
                           : "No preset available"}
                     </span>
+                    {selectedPreset ? <span>{selectedPreset.usageCount} uses</span> : null}
+                    {selectedPreset ? <span>{selectedPreset.rating.toFixed(1)} rating</span> : null}
+                    {selectedPreset ? <span>{selectedPreset.teamCount} teams</span> : null}
                   </div>
                 </div>
 
@@ -4605,8 +7826,9 @@ function MovesetDatabaseView() {
                 <div className="attack-editor always-open">
                   <div className="attack-editor-topbar">
                     <p className="selector-note">
-                      Save up to four damaging moves for this species. Team Builder will automatically use this custom
-                      set for enemy slots that match the same base species.
+                      The imported movepool below includes status and support moves with descriptions. Custom overrides
+                      here still target the damaging moves used by Team Builder and the rough damage tools, plus any
+                      ability or item override you want to apply.
                     </p>
                     <button
                       type="button"
@@ -4618,13 +7840,40 @@ function MovesetDatabaseView() {
                     </button>
                   </div>
 
+                  <div className="saved-attack-editor-grid">
+                    <label className="saved-attack-field">
+                      <span>Ability</span>
+                      <input
+                        className="team-pokemon-input"
+                        placeholder="Intimidate"
+                        value={draftAbilityName}
+                        onChange={(event) => setDraftAbilityName(event.target.value)}
+                      />
+                    </label>
+                    <label className="saved-attack-field">
+                      <span>Item</span>
+                      <input
+                        className="team-pokemon-input"
+                        placeholder="Sitrus Berry"
+                        value={draftItemName}
+                        onChange={(event) => setDraftItemName(event.target.value)}
+                      />
+                    </label>
+                  </div>
+
                   <div className="moveset-preset-row">
                     <span className="lead-section-label cover">Built-In Preset</span>
+                    {selectedPreset?.abilityName || selectedPreset?.itemName ? (
+                      <div className="quick-meta-row">
+                        {selectedPreset?.abilityName ? <span>Ability {selectedPreset.abilityName}</span> : null}
+                        {selectedPreset?.itemName ? <span>Item {selectedPreset.itemName}</span> : null}
+                      </div>
+                    ) : null}
                     <div className="coverage-chip-list">
-                      {selectedPresetMoveNames.length > 0 ? (
-                        selectedPresetMoveNames.map((moveName) => (
-                          <span key={`${selectedPokemon.id}-preset-name-${moveName}`} className="mini-type-pill neutral-pill">
-                            {moveName}
+                      {selectedPresetMoveEntries.length > 0 ? (
+                        selectedPresetMoveEntries.map((entry) => (
+                          <span key={`${selectedPokemon.id}-preset-name-${entry.name}`} className="mini-type-pill neutral-pill">
+                            {entry.name}
                           </span>
                         ))
                       ) : (
@@ -4632,6 +7881,54 @@ function MovesetDatabaseView() {
                       )}
                     </div>
                   </div>
+
+                  {selectedPresetMoveEntries.length > 0 ? (
+                    <section className="damage-loaded-move-list">
+                      <div className="coverage-preview-header">
+                        <p className="eyebrow">Imported Movepool</p>
+                        <span>{selectedPresetMoveEntries.length} moves</span>
+                      </div>
+
+                      {selectedPresetMoveEntries.map((entry) => {
+                        const resolvedType = entry.move ? getTypeFromLabel(entry.move.type) : null;
+
+                        return (
+                          <article key={`moveset-preset-detail-${selectedPokemon.id}-${entry.name}`} className="damage-loaded-move-row">
+                            <div className="damage-loaded-move-top">
+                              <div className="damage-loaded-move-main">
+                                {resolvedType ? (
+                                  <span
+                                    className="inline-type-pill"
+                                    style={
+                                      {
+                                        "--type-color": TYPE_META[resolvedType].color,
+                                        "--type-accent": TYPE_META[resolvedType].accent,
+                                      } as CSSProperties
+                                    }
+                                  >
+                                    <img src={getTypeIconUrl(resolvedType)} alt="" aria-hidden="true" />
+                                    {TYPE_META[resolvedType].label}
+                                  </span>
+                                ) : null}
+                                <div className="damage-loaded-move-copy">
+                                  <strong>{entry.name}</strong>
+                                  <p>
+                                    {entry.move
+                                      ? `${entry.move.category}${entry.move.basePower > 0 ? ` • Power ${entry.move.basePower}` : ""}${entry.move.priority !== 0 ? ` • Priority ${entry.move.priority}` : ""}`
+                                      : "Move data not found in the local battle database."}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="damage-result-card ready">
+                              <p>{entry.move?.desc || entry.move?.shortDesc || "No description found."}</p>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </section>
+                  ) : null}
 
                   {draftSavedAttacks.length > 0 ? (
                     <div className="saved-attack-editor-list">
@@ -4649,6 +7946,11 @@ function MovesetDatabaseView() {
                             >
                               Attack {attackIndex + 1}
                             </span>
+                            {selectedCustomMoveEntries[attackIndex]?.move ? (
+                              <span className="mini-type-pill neutral-pill">
+                                {selectedCustomMoveEntries[attackIndex]!.move!.category}
+                              </span>
+                            ) : null}
                             <button
                               type="button"
                               className="secondary-button"
@@ -4657,6 +7959,13 @@ function MovesetDatabaseView() {
                               Remove
                             </button>
                           </div>
+
+                          {selectedCustomMoveEntries[attackIndex]?.move?.desc || selectedCustomMoveEntries[attackIndex]?.move?.shortDesc ? (
+                            <p className="selector-note">
+                              {selectedCustomMoveEntries[attackIndex]!.move!.desc ||
+                                selectedCustomMoveEntries[attackIndex]!.move!.shortDesc}
+                            </p>
+                          ) : null}
 
                           <label className="saved-attack-field wide">
                             <span>Move Name</span>
@@ -4746,9 +8055,9 @@ function MovesetDatabaseView() {
                       type="button"
                       className="secondary-button"
                       onClick={resetDraftToPreset}
-                      disabled={selectedPresetMoves.length === 0}
+                      disabled={selectedResolvedMoveset.savedAttacks.length === 0}
                     >
-                      Reset To Preset
+                      Reset To Default
                     </button>
                     <button
                       type="button"
@@ -4957,80 +8266,31 @@ function OhkoFinderView() {
         );
 
         const targetResults = selectedTargets.map((targetPokemon) => {
-          const bestOutgoingHit = getBestDamageEstimateAgainstPokemon(
-            attackerPokemon,
-            targetPokemon,
-            storedMoves.savedAttacks,
-            {
-              weather: damageWeather,
-              terrain: damageTerrain,
-              attackerGrounded,
-              defenderGrounded: targetGrounded,
-              attackerStatStage: damageAttackStage,
-              defenderStatStage: damageDefenseStage,
-            },
-          );
           const targetStoredMoves = targetStoredMovesById.get(targetPokemon.id) ?? {
             savedAttacks: [],
             movesetSource: "none" as const,
           };
-          const bestIncomingHit =
-            targetStoredMoves.savedAttacks.length > 0
-              ? getBestDamageEstimateAgainstPokemon(targetPokemon, attackerPokemon, targetStoredMoves.savedAttacks, {
-                  weather: damageWeather,
-                  terrain: damageTerrain,
-                  attackerGrounded: targetGrounded,
-                  defenderGrounded: attackerGrounded,
-                  attackerStatStage: damageAttackStage,
-                  defenderStatStage: damageDefenseStage,
-                })
-              : null;
-          const survivesBestIncomingHit = bestIncomingHit ? bestIncomingHit.estimate.maxPercent < 100 : null;
-          const speedDelta = attackerPokemon.baseStats.spe - targetPokemon.baseStats.spe;
-          const possibleOhko = Boolean(bestOutgoingHit && bestOutgoingHit.estimate.maxPercent >= 100);
-          const guaranteedOhko = Boolean(bestOutgoingHit && bestOutgoingHit.estimate.minPercent >= 100);
-          const offensivePressure = bestOutgoingHit ? bestOutgoingHit.estimate.averagePercent : 0;
-          const targetScore =
-            (guaranteedOhko ? 900 : possibleOhko ? 620 : 0) +
-            (survivesBestIncomingHit === true ? 230 : survivesBestIncomingHit === false ? -260 : 35) +
-            (speedDelta > 0 ? 150 : speedDelta === 0 ? 70 : 0) +
-            offensivePressure +
-            (bestOutgoingHit ? Math.min(bestOutgoingHit.estimate.minPercent, 100) : 0);
 
-          return {
+          return buildMatchupEloTargetResult({
+            attackerPokemon,
+            attackerSavedAttacks: storedMoves.savedAttacks,
             targetPokemon,
-            bestOutgoingHit,
-            bestIncomingHit,
-            survivesBestIncomingHit,
-            speedDelta,
-            possibleOhko,
-            guaranteedOhko,
-            targetScore,
-          };
+            targetSavedAttacks: targetStoredMoves.savedAttacks,
+            weather: damageWeather,
+            terrain: damageTerrain,
+            attackerGrounded,
+            targetGrounded,
+            attackerStatStage: damageAttackStage,
+            defenderStatStage: damageDefenseStage,
+          });
         });
-
-        const coverageCount = targetResults.filter((result) => result.possibleOhko).length;
-        const guaranteedCount = targetResults.filter((result) => result.guaranteedOhko).length;
-        const surviveCount = targetResults.filter((result) => result.survivesBestIncomingHit === true).length;
-        const nonLosingSurviveCount = targetResults.filter((result) => result.survivesBestIncomingHit !== false).length;
-        const fasterCount = targetResults.filter((result) => result.speedDelta > 0).length;
-        const notSlowerCount = targetResults.filter((result) => result.speedDelta >= 0).length;
-        const minTargetScore = Math.min(...targetResults.map((result) => result.targetScore));
-        const averageTargetScore =
-          targetResults.reduce((total, result) => total + result.targetScore, 0) / targetResults.length;
+        const eloSummary = summarizeMatchupElo(targetResults);
 
         return {
           pokemon: attackerPokemon,
           movesetSource: storedMoves.movesetSource,
           targetResults,
-          coverageCount,
-          guaranteedCount,
-          surviveCount,
-          nonLosingSurviveCount,
-          fasterCount,
-          notSlowerCount,
-          minTargetScore,
-          averageTargetScore,
+          ...eloSummary,
         };
       })
       .filter((row) => row.coverageCount > 0)
@@ -5050,29 +8310,7 @@ function OhkoFinderView() {
 
         return matchesSpeed && matchesSurvival;
       })
-      .sort((left, right) => {
-        if (left.coverageCount !== right.coverageCount) {
-          return right.coverageCount - left.coverageCount;
-        }
-
-        if (left.guaranteedCount !== right.guaranteedCount) {
-          return right.guaranteedCount - left.guaranteedCount;
-        }
-
-        if (left.surviveCount !== right.surviveCount) {
-          return right.surviveCount - left.surviveCount;
-        }
-
-        if (left.fasterCount !== right.fasterCount) {
-          return right.fasterCount - left.fasterCount;
-        }
-
-        if (left.minTargetScore !== right.minTargetScore) {
-          return right.minTargetScore - left.minTargetScore;
-        }
-
-        return right.averageTargetScore - left.averageTargetScore;
-      });
+      .sort((left, right) => compareMatchupEloSummaries(left, right));
   }, [
     damageAttackStage,
     damageDefenseStage,
@@ -5191,46 +8429,101 @@ function OhkoFinderView() {
                   <span className="damage-assumption-pill">{selectedTargets.length} selected</span>
                 </div>
                 <div className="ohko-selected-target-list">
-                  {selectedTargets.map((targetPokemon) => (
-                    <article key={`selected-target-${targetPokemon.id}`} className="ohko-selected-target-card">
-                      <div className="ohko-selected-target-top">
-                        <PokemonSprite pokemon={targetPokemon} className="damage-side-sprite" />
-                        <div>
-                          <strong>{targetPokemon.name}</strong>
-                          <p>Spe {getLevel50OtherStatValue(targetPokemon.baseStats.spe)}</p>
-                        </div>
-                      </div>
-                      <div className="team-type-list">
-                        {targetPokemon.types.map((typeLabel) => {
-                          const type = getTypeFromLabel(typeLabel);
-                          if (!type) {
-                            return null;
-                          }
+                  {selectedTargets.map((targetPokemon) => {
+                    const weakTypes = TYPE_ORDER.filter(
+                      (attackType) => (getPokemonDefensiveMultiplier(targetPokemon, attackType) ?? 1) > 1,
+                    );
+                    const strongAgainstTypes = getCoveredDefendingTypes(getPokemonAttackTypeOptions(targetPokemon));
 
-                          return (
-                            <span
-                              key={`${targetPokemon.id}-${type}`}
-                              className="inline-type-pill"
-                              style={
-                                {
-                                  "--type-color": TYPE_META[type].color,
-                                  "--type-accent": TYPE_META[type].accent,
-                                } as CSSProperties
-                              }
-                            >
-                              <img src={getTypeIconUrl(type)} alt="" aria-hidden="true" />
-                              {TYPE_META[type].label}
-                            </span>
-                          );
-                        })}
-                      </div>
-                      <div className="damage-stat-strip">
-                        <span>HP {getLevel50HpValue(targetPokemon.baseStats.hp)}</span>
-                        <span>Def {getLevel50OtherStatValue(targetPokemon.baseStats.def)}</span>
-                        <span>SpD {getLevel50OtherStatValue(targetPokemon.baseStats.spd)}</span>
-                      </div>
-                    </article>
-                  ))}
+                    return (
+                      <article key={`selected-target-${targetPokemon.id}`} className="ohko-selected-target-card">
+                        <div className="ohko-selected-target-top">
+                          <PokemonSprite pokemon={targetPokemon} className="damage-side-sprite" />
+                          <div>
+                            <strong>{targetPokemon.name}</strong>
+                            <p>Spe {getLevel50OtherStatValue(targetPokemon.baseStats.spe)}</p>
+                          </div>
+                        </div>
+                        <div className="team-type-list">
+                          {targetPokemon.types.map((typeLabel) => {
+                            const type = getTypeFromLabel(typeLabel);
+                            if (!type) {
+                              return null;
+                            }
+
+                            return (
+                              <span
+                                key={`${targetPokemon.id}-${type}`}
+                                className="inline-type-pill"
+                                style={
+                                  {
+                                    "--type-color": TYPE_META[type].color,
+                                    "--type-accent": TYPE_META[type].accent,
+                                  } as CSSProperties
+                                }
+                              >
+                                <img src={getTypeIconUrl(type)} alt="" aria-hidden="true" />
+                                {TYPE_META[type].label}
+                              </span>
+                            );
+                          })}
+                        </div>
+                        <div className="damage-stat-strip">
+                          <span>HP {getLevel50HpValue(targetPokemon.baseStats.hp)}</span>
+                          <span>Def {getLevel50OtherStatValue(targetPokemon.baseStats.def)}</span>
+                          <span>SpD {getLevel50OtherStatValue(targetPokemon.baseStats.spd)}</span>
+                        </div>
+
+                        <div className="enemy-weakness-block">
+                          <span className="lead-section-label weak">Weak To</span>
+                          <div className="coverage-chip-list">
+                            {weakTypes.length > 0 ? (
+                              weakTypes.map((type) => (
+                                <span
+                                  key={`${targetPokemon.id}-ohko-weak-${type}`}
+                                  className="mini-type-pill"
+                                  style={
+                                    {
+                                      "--type-color": TYPE_META[type].color,
+                                      "--type-accent": TYPE_META[type].accent,
+                                    } as CSSProperties
+                                  }
+                                >
+                                  {TYPE_META[type].label}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="subtle-empty">No listed weaknesses.</span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="enemy-weakness-block">
+                          <span className="lead-section-label cover">Strong Against</span>
+                          <div className="coverage-chip-list">
+                            {strongAgainstTypes.length > 0 ? (
+                              strongAgainstTypes.map((type) => (
+                                <span
+                                  key={`${targetPokemon.id}-ohko-strong-${type}`}
+                                  className="mini-type-pill"
+                                  style={
+                                    {
+                                      "--type-color": TYPE_META[type].color,
+                                      "--type-accent": TYPE_META[type].accent,
+                                    } as CSSProperties
+                                  }
+                                >
+                                  {TYPE_META[type].label}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="subtle-empty">No STAB pressure shown.</span>
+                            )}
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })}
                 </div>
               </article>
 
@@ -5240,7 +8533,8 @@ function OhkoFinderView() {
                   <span className="damage-assumption-pill">{allTargetsCovered.length} cover all targets</span>
                   <span className="damage-assumption-pill">{allTargetsGuaranteed.length} OHKO all targets</span>
                   <span className="damage-assumption-pill">{allTargetsSurvived.length} live all best hits</span>
-                  <span className="damage-assumption-pill">No items / abilities</span>
+                  <span className="damage-assumption-pill">No items</span>
+                  <span className="damage-assumption-pill">Auto supported abilities</span>
                 </div>
 
                 <div className="damage-global-controls">
@@ -5370,9 +8664,9 @@ function OhkoFinderView() {
 
                 <p className="selector-note">
                   Attackers use their stored custom movesets first, then built-in presets. Fixed-damage or status moves
-                  are skipped when they cannot be evaluated by the current formula. Ranking maximizes target coverage
-                  first, then guaranteed KOs across the whole set, then clean survival into the selected targets'
-                  best configured hits, then speed control, then worst-case matchup quality.
+                  are skipped when they cannot be evaluated by the current formula. Matchup Elo prioritizes target
+                  coverage first, then guaranteed KOs across the whole set, then clean survival into the selected
+                  targets&apos; best configured hits, then speed control, then worst-case matchup quality.
                 </p>
               </article>
             </div>
@@ -5406,10 +8700,10 @@ function OhkoFinderView() {
 
                       <div className="ohko-summary-side">
                         <span className="mini-type-pill neutral-pill">
-                          Worst-case score {Math.round(row.minTargetScore)}
+                          Worst-case Elo {Math.round(row.minTargetScore)}
                         </span>
                         <span className="mini-type-pill neutral-pill">
-                          Avg score {Math.round(row.averageTargetScore)}
+                          Avg Elo {Math.round(row.averageTargetScore)}
                         </span>
                         <span className="mini-type-pill neutral-pill">
                           {row.movesetSource === "custom" ? "Custom" : "Preset"}
@@ -5464,12 +8758,13 @@ function OhkoFinderView() {
                                   className="mini-type-pill"
                                   style={
                                     {
-                                      "--type-color": TYPE_META[result.bestOutgoingHit.attack.type].color,
-                                      "--type-accent": TYPE_META[result.bestOutgoingHit.attack.type].accent,
+                                      "--type-color": TYPE_META[result.bestOutgoingHit.estimate.effectiveAttackType].color,
+                                      "--type-accent":
+                                        TYPE_META[result.bestOutgoingHit.estimate.effectiveAttackType].accent,
                                     } as CSSProperties
                                   }
                                 >
-                                  {TYPE_META[result.bestOutgoingHit.attack.type].label}
+                                  {TYPE_META[result.bestOutgoingHit.estimate.effectiveAttackType].label}
                                 </span>
                                 <span className="mini-type-pill neutral-pill">
                                   {formatPercent(result.bestOutgoingHit.estimate.minPercent)}% -{" "}
