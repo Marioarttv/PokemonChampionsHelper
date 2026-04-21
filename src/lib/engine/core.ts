@@ -341,13 +341,20 @@ function createCombatantState(
   const maxHp = getLevel50HpValue(member.pokemon.baseStats.hp);
   const currentHpPercent = member.currentHpPercent ?? 100;
   const currentHp =
-    currentHpPercent <= 0 ? 0 : Math.max(1, Math.min(maxHp, Math.round((maxHp * currentHpPercent) / 100)));
+    typeof member.currentHp === "number" && Number.isFinite(member.currentHp)
+      ? Math.max(0, Math.min(maxHp, Math.round(member.currentHp)))
+      : currentHpPercent <= 0
+        ? 0
+        : Math.max(1, Math.min(maxHp, Math.round((maxHp * currentHpPercent) / 100)));
   const explicitAbilityId = normalizeDamageAbilityId(member.abilityName);
   const defaultAbilityId =
     member.abilityName && member.abilityName.trim()
       ? getDefaultDamageAbilityIdFromNames([member.abilityName])
       : getDefaultDamageAbilityId(member.pokemon);
   const itemId = normalizeDamageItemId(member.itemName) ?? "none";
+  const statusCondition = member.statusCondition ?? "none";
+  const sleepTurns =
+    statusCondition === "sleep" ? Math.max(1, Math.round(member.sleepTurns ?? DEFAULT_SLEEP_TURNS)) : 0;
 
   return {
     id: member.id,
@@ -357,24 +364,24 @@ function createCombatantState(
     pokemon: member.pokemon,
     maxHp,
     currentHp,
-    turnsActive: 0,
+    turnsActive: Math.max(0, Math.round(member.turnsActive ?? 0)),
     abilityId: explicitAbilityId ?? defaultAbilityId,
     abilityName: member.abilityName?.trim() || null,
     itemId,
     itemName: member.itemName?.trim() || null,
     stages: {
-      attack: attackStage,
-      defense: defenseStage,
-      speed: 0,
+      attack: clampStage(member.stages?.attack ?? attackStage),
+      defense: clampStage(member.stages?.defense ?? defenseStage),
+      speed: clampStage(member.stages?.speed ?? 0),
     },
-    statusCondition: "none",
-    sleepTurns: 0,
-    tauntTurns: 0,
-    encoreTurns: 0,
-    encoredMoveId: null,
-    disableTurns: 0,
-    disabledMoveId: null,
-    helpingHandTurns: 0,
+    statusCondition,
+    sleepTurns,
+    tauntTurns: Math.max(0, Math.round(member.tauntTurns ?? 0)),
+    encoreTurns: Math.max(0, Math.round(member.encoreTurns ?? 0)),
+    encoredMoveId: member.encoredMoveId ?? null,
+    disableTurns: Math.max(0, Math.round(member.disableTurns ?? 0)),
+    disabledMoveId: member.disabledMoveId ?? null,
+    helpingHandTurns: Math.max(0, Math.round(member.helpingHandTurns ?? 0)),
     knownMoves: buildKnownMoves(
       member.id,
       member.savedAttacks,
@@ -383,10 +390,10 @@ function createCombatantState(
       moveByKey,
       universalProtect,
     ),
-    lastMoveId: null,
-    isProtected: false,
-    isFlinched: false,
-    wasSwitchedInThisTurn: false,
+    lastMoveId: member.lastMoveId ?? null,
+    isProtected: member.isProtected ?? false,
+    isFlinched: member.isFlinched ?? false,
+    wasSwitchedInThisTurn: member.wasSwitchedInThisTurn ?? false,
   };
 }
 
@@ -441,6 +448,9 @@ export function createBattleState(input: CreateBattleStateInput): BattleState {
   const universalProtect = input.universalProtect ?? true;
   const ally = createSideState("ally", input.ally, input.moveByKey, attackStage, defenseStage, universalProtect);
   const enemy = createSideState("enemy", input.enemy, input.moveByKey, attackStage, defenseStage, universalProtect);
+  const allyTailwindTurns = input.allySide?.tailwindTurns ?? (input.allyTailwind ? DEFAULT_TAILWIND_TURNS : 0);
+  const enemyTailwindTurns = input.enemySide?.tailwindTurns ?? (input.enemyTailwind ? DEFAULT_TAILWIND_TURNS : 0);
+  const trickRoomTurns = input.fieldState?.trickRoomTurns ?? (input.trickRoom ? DEFAULT_TRICK_ROOM_TURNS : 0);
 
   return {
     combatants: {
@@ -450,18 +460,24 @@ export function createBattleState(input: CreateBattleStateInput): BattleState {
     sides: {
       ally: {
         ...ally.sideState,
-        tailwindTurns: input.allyTailwind ? DEFAULT_TAILWIND_TURNS : 0,
+        ...input.allySide,
+        activeIds: ally.sideState.activeIds,
+        benchIds: ally.sideState.benchIds,
+        tailwindTurns: allyTailwindTurns,
       },
       enemy: {
         ...enemy.sideState,
-        tailwindTurns: input.enemyTailwind ? DEFAULT_TAILWIND_TURNS : 0,
+        ...input.enemySide,
+        activeIds: enemy.sideState.activeIds,
+        benchIds: enemy.sideState.benchIds,
+        tailwindTurns: enemyTailwindTurns,
       },
     },
     field: {
-      weather: input.weather ?? "none",
-      terrain: input.terrain ?? "none",
-      trickRoomTurns: input.trickRoom ? DEFAULT_TRICK_ROOM_TURNS : 0,
-      turn: 1,
+      weather: input.fieldState?.weather ?? input.weather ?? "none",
+      terrain: input.fieldState?.terrain ?? input.terrain ?? "none",
+      trickRoomTurns,
+      turn: input.fieldState?.turn ?? 1,
     },
   };
 }

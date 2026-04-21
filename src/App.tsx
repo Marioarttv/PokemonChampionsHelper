@@ -83,6 +83,7 @@ import {
 import {
   createBattleState,
   recommendBestPlan,
+  type BattleStatusCondition,
   type BattleStateMemberInput,
   type SearchPlanScore,
   type SearchRecommendation,
@@ -268,6 +269,13 @@ const TEAM_PREVIEW_SCAN_OPTIONS: Array<{ value: TeamPreviewSolverMode; label: st
   { value: "sparse", label: "Quickscan" },
   { value: "dense", label: "Full Scan" },
 ];
+const BATTLE_STATUS_OPTIONS: Array<{ value: BattleStatusCondition; label: string }> = [
+  { value: "none", label: "Healthy" },
+  { value: "burn", label: "Burn" },
+  { value: "paralysis", label: "Paralysis" },
+  { value: "sleep", label: "Sleep" },
+];
+const BATTLE_STAGE_OPTIONS = Array.from({ length: 13 }, (_, index) => index - 6);
 const LEGAL_ORDER_BY_KEY = new Map(
   POKEMON_CHAMPIONS_LEGAL_SPECIES_NAMES.map((name, index) => [normalizePokemonNameKey(name), index] as const),
 );
@@ -375,6 +383,27 @@ function formatFlatMultiplier(value: number) {
 
 function clampStatStage(value: number) {
   return Math.max(-6, Math.min(6, value));
+}
+
+function clampPercent(value: number) {
+  if (!Number.isFinite(value)) {
+    return 100;
+  }
+
+  return Math.max(0, Math.min(100, value));
+}
+
+function getLevel50CurrentHpFromPercent(maxHp: number, hpPercent: number) {
+  const normalizedPercent = clampPercent(hpPercent);
+  if (normalizedPercent <= 0) {
+    return 0;
+  }
+
+  return Math.max(1, Math.min(maxHp, Math.round((maxHp * normalizedPercent) / 100)));
+}
+
+function getBattleSimulatorStateKey(side: "ally" | "enemy", slotIndex: number, pokemonId: string) {
+  return `${side}-${slotIndex}-${pokemonId}`;
 }
 
 function getAttackBasePowerDisplay(basePower?: number) {
@@ -748,10 +777,28 @@ type DoublesMemberRuntime = {
   priority: boolean;
 };
 
+type BattleSimulatorMemberState = {
+  hpPercent: number;
+  attackStage: number;
+  defenseStage: number;
+  speedStage: number;
+  statusCondition: BattleStatusCondition;
+  sleepTurns: number;
+};
+
 const DEFAULT_DOUBLES_RUNTIME: DoublesMemberRuntime = {
   hpPercent: 100,
   protect: false,
   priority: false,
+};
+
+const DEFAULT_BATTLE_SIMULATOR_MEMBER_STATE: BattleSimulatorMemberState = {
+  hpPercent: 100,
+  attackStage: 0,
+  defenseStage: 0,
+  speedStage: 0,
+  statusCondition: "none",
+  sleepTurns: 0,
 };
 
 type DoublesSelectedMember = {
@@ -2447,6 +2494,145 @@ function DamageRosterTile({
       <strong>{pokemon ? pokemon.name : "Empty"}</strong>
       <em>{footer}</em>
     </button>
+  );
+}
+
+type BattleSimulatorCardProps = {
+  side: "ally" | "enemy";
+  slotIndex: number;
+  rankLabel: string;
+  pokemon: PokemonRecord;
+  state: BattleSimulatorMemberState;
+  onChange: (patch: Partial<BattleSimulatorMemberState>) => void;
+};
+
+function BattleSimulatorCard({
+  side,
+  slotIndex,
+  rankLabel,
+  pokemon,
+  state,
+  onChange,
+}: BattleSimulatorCardProps) {
+  const maxHp = getLevel50HpValue(pokemon.baseStats.hp);
+  const actualHp = getLevel50CurrentHpFromPercent(maxHp, state.hpPercent);
+  const boardLabel = side === "ally" ? `Slot ${slotIndex + 1}` : `Enemy ${slotIndex + 1}`;
+
+  return (
+    <article className={`battle-simulator-card ${side}`}>
+      <div className="battle-simulator-card-head">
+        <div className="battle-simulator-card-identity">
+          <span className={`battle-simulator-rank ${side}`}>{rankLabel}</span>
+          <PokemonSprite pokemon={pokemon} className="battle-simulator-sprite" />
+          <div>
+            <strong>{pokemon.name}</strong>
+            <p>{boardLabel}</p>
+          </div>
+        </div>
+        <span className="mini-type-pill neutral-pill">Spe {getLevel50OtherStatValue(pokemon.baseStats.spe)}</span>
+      </div>
+
+      <div className="battle-simulator-card-grid">
+        <label className="battle-simulator-field">
+          <span>{side === "ally" ? "Current HP" : "Enemy HP %"}</span>
+          <input
+            type="number"
+            min={0}
+            max={side === "ally" ? maxHp : 100}
+            step={side === "ally" ? 1 : 0.1}
+            value={side === "ally" ? actualHp : Number(state.hpPercent.toFixed(1))}
+            onChange={(event) => {
+              const nextValue = Number(event.target.value);
+              if (!Number.isFinite(nextValue)) {
+                return;
+              }
+
+              if (side === "ally") {
+                const normalizedHp = Math.max(0, Math.min(maxHp, Math.round(nextValue)));
+                onChange({
+                  hpPercent: maxHp > 0 ? (normalizedHp / maxHp) * 100 : 0,
+                });
+                return;
+              }
+
+              onChange({
+                hpPercent: clampPercent(nextValue),
+              });
+            }}
+          />
+          <small>
+            {side === "ally" ? `${formatPercent(state.hpPercent)}% of ${maxHp}` : `${actualHp} / ${maxHp} approx.`}
+          </small>
+        </label>
+
+        <label className="battle-simulator-field">
+          <span>Status</span>
+          <select
+            value={state.statusCondition}
+            onChange={(event) => {
+              const statusCondition = event.target.value as BattleStatusCondition;
+              onChange({
+                statusCondition,
+                sleepTurns:
+                  statusCondition === "sleep"
+                    ? Math.max(1, state.sleepTurns || DEFAULT_BATTLE_SIMULATOR_MEMBER_STATE.sleepTurns || 2)
+                    : 0,
+              });
+            }}
+          >
+            {BATTLE_STATUS_OPTIONS.map((option) => (
+              <option key={`battle-status-${option.value}`} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {state.statusCondition === "sleep" ? (
+          <label className="battle-simulator-field">
+            <span>Sleep turns</span>
+            <select
+              value={Math.max(1, state.sleepTurns || 2)}
+              onChange={(event) =>
+                onChange({
+                  sleepTurns: Math.max(1, Number(event.target.value) || 2),
+                })
+              }
+            >
+              {[1, 2, 3].map((turnCount) => (
+                <option key={`battle-sleep-turns-${turnCount}`} value={turnCount}>
+                  {turnCount}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+
+        {([
+          ["Atk", "attackStage"],
+          ["Def", "defenseStage"],
+          ["Spe", "speedStage"],
+        ] as const).map(([label, field]) => (
+          <label key={`battle-stage-${side}-${slotIndex}-${field}`} className="battle-simulator-field compact">
+            <span>{label}</span>
+            <select
+              value={state[field]}
+              onChange={(event) =>
+                onChange({
+                  [field]: clampStatStage(Number(event.target.value) || 0),
+                })
+              }
+            >
+              {BATTLE_STAGE_OPTIONS.map((stageValue) => (
+                <option key={`battle-stage-option-${stageValue}`} value={stageValue}>
+                  {stageValue >= 0 ? `+${stageValue}` : stageValue}
+                </option>
+              ))}
+            </select>
+          </label>
+        ))}
+      </div>
+    </article>
   );
 }
 
@@ -4374,7 +4560,11 @@ function CalculatorView() {
   );
 }
 
-function TeamBuilderView() {
+type TeamBuilderViewProps = {
+  onStartNewTeam: () => void;
+};
+
+function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const [teamMatrixMode, setTeamMatrixMode] = useState<TeamMatrixMode>("defense");
   const [openerSelections, setOpenerSelections] = useState<[OpenerSelection, OpenerSelection]>([
     [null, null],
@@ -4402,6 +4592,7 @@ function TeamBuilderView() {
   );
   const [damageCalcMode, setDamageCalcMode] = useState<DamageCalcMode>("attack");
   const [doublesEnemyScoutDetailsOpen, setDoublesEnemyScoutDetailsOpen] = useState(false);
+  const [perSlotMatchupEloOpen, setPerSlotMatchupEloOpen] = useState(false);
   const [damageAttackerSlotIndex, setDamageAttackerSlotIndex] = useState<number | null>(null);
   const [damageDefenderSlotIndex, setDamageDefenderSlotIndex] = useState<number | null>(null);
   const [damageWeather, setDamageWeather] = useState<DamageWeather>("none");
@@ -4425,6 +4616,7 @@ function TeamBuilderView() {
   const [doublesEnemyTailwind, setDoublesEnemyTailwind] = useState(false);
   const [doublesTrickRoom, setDoublesTrickRoom] = useState(false);
   const [doublesRuntime, setDoublesRuntime] = useState<Record<string, DoublesMemberRuntime>>({});
+  const [battleSimulatorState, setBattleSimulatorState] = useState<Record<string, BattleSimulatorMemberState>>({});
   const [battleEngineRecommendation, setBattleEngineRecommendation] = useState<SearchRecommendation | null>(null);
   const [battleEngineAnalysisSignature, setBattleEngineAnalysisSignature] = useState("");
 
@@ -4445,6 +4637,50 @@ function TeamBuilderView() {
 
   const resetDoublesTurn = () => {
     setDoublesRuntime({});
+  };
+
+  const getBattleSimulatorMemberState = (
+    side: "ally" | "enemy",
+    slotIndex: number,
+    pokemonId: string,
+  ): BattleSimulatorMemberState =>
+    battleSimulatorState[getBattleSimulatorStateKey(side, slotIndex, pokemonId)] ??
+    DEFAULT_BATTLE_SIMULATOR_MEMBER_STATE;
+
+  const updateBattleSimulatorMemberState = (
+    side: "ally" | "enemy",
+    slotIndex: number,
+    pokemonId: string,
+    patch: Partial<BattleSimulatorMemberState>,
+  ) => {
+    setBattleSimulatorState((current) => {
+      const key = getBattleSimulatorStateKey(side, slotIndex, pokemonId);
+      const existing = current[key] ?? DEFAULT_BATTLE_SIMULATOR_MEMBER_STATE;
+      const nextStatusCondition = patch.statusCondition ?? existing.statusCondition;
+      const nextSleepTurns =
+        nextStatusCondition === "sleep"
+          ? Math.max(1, Math.round(patch.sleepTurns ?? existing.sleepTurns ?? 2))
+          : 0;
+
+      return {
+        ...current,
+        [key]: {
+          ...existing,
+          ...patch,
+          hpPercent: clampPercent(patch.hpPercent ?? existing.hpPercent),
+          attackStage: clampStatStage(patch.attackStage ?? existing.attackStage),
+          defenseStage: clampStatStage(patch.defenseStage ?? existing.defenseStage),
+          speedStage: clampStatStage(patch.speedStage ?? existing.speedStage),
+          statusCondition: nextStatusCondition,
+          sleepTurns: nextSleepTurns,
+        },
+      };
+    });
+  };
+
+  const resetBattleSimulatorState = () => {
+    setBattleSimulatorState({});
+    resetDoublesTurn();
   };
 
   useEffect(() => {
@@ -4785,6 +5021,33 @@ function TeamBuilderView() {
   const refreshSavedTeams = async () => {
     const teams = await listSavedTeams();
     setSavedTeams(teams);
+  };
+
+  const hasTeamBuilderProgress = useMemo(() => {
+    if (activeSavedTeamId !== null) {
+      return true;
+    }
+
+    if (teamName.trim() && teamName.trim() !== "My Team") {
+      return true;
+    }
+
+    return teamSlots.some(
+      (slot) => Boolean(slot.pokemonId) || slot.query.trim().length > 0 || slot.savedAttacks.length > 0,
+    );
+  }, [activeSavedTeamId, teamName, teamSlots]);
+
+  const handleStartNewTeam = () => {
+    if (hasTeamBuilderProgress) {
+      const confirmed = window.confirm(
+        "Start a new team? Any unsaved changes in the current team builder will be lost.",
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    onStartNewTeam();
   };
 
   const saveCurrentTeam = async () => {
@@ -5141,6 +5404,72 @@ function TeamBuilderView() {
           } => Boolean(entry),
         ),
     [doublesEnemySelection, opponentEntryBySlot],
+  );
+  const battleSimulatorActiveAllies = useMemo(
+    () =>
+      (["A", "B"] as const)
+        .map((rankLabel, rankIndex) => {
+          const slotIndex = doublesAllySelection[rankIndex];
+          if (slotIndex === null) {
+            return null;
+          }
+
+          const slot = team[slotIndex];
+          if (!slot?.pokemon) {
+            return null;
+          }
+
+          return {
+            rankLabel,
+            slotIndex,
+            pokemon: slot.pokemon,
+            state: getBattleSimulatorMemberState("ally", slotIndex, slot.pokemon.id),
+          };
+        })
+        .filter(
+          (
+            entry,
+          ): entry is {
+            rankLabel: "A" | "B";
+            slotIndex: number;
+            pokemon: PokemonRecord;
+            state: BattleSimulatorMemberState;
+          } => Boolean(entry),
+        ),
+    [battleSimulatorState, doublesAllySelection, team],
+  );
+  const battleSimulatorActiveEnemies = useMemo(
+    () =>
+      (["A", "B"] as const)
+        .map((rankLabel, rankIndex) => {
+          const slotIndex = doublesEnemySelection[rankIndex];
+          if (slotIndex === null) {
+            return null;
+          }
+
+          const entry = opponentEntryBySlot.get(slotIndex);
+          if (!entry) {
+            return null;
+          }
+
+          return {
+            rankLabel,
+            slotIndex,
+            pokemon: entry.pokemon,
+            state: getBattleSimulatorMemberState("enemy", slotIndex, entry.pokemon.id),
+          };
+        })
+        .filter(
+          (
+            entry,
+          ): entry is {
+            rankLabel: "A" | "B";
+            slotIndex: number;
+            pokemon: PokemonRecord;
+            state: BattleSimulatorMemberState;
+          } => Boolean(entry),
+        ),
+    [battleSimulatorState, doublesEnemySelection, opponentEntryBySlot],
   );
   const doublesTurnOrder = useMemo(
     () => [...doublesAllyMembers, ...doublesEnemyMembers].sort(compareDoublesTurnOrder),
@@ -5501,7 +5830,8 @@ function TeamBuilderView() {
           moveByKey,
           MAX_SPECIES_MOVESET_SIZE,
         );
-        const runtime = getDoublesRuntime("ally", slotIndex);
+        const runtime = getBattleSimulatorMemberState("ally", slotIndex, slot.pokemon.id);
+        const maxHp = getLevel50HpValue(slot.pokemon.baseStats.hp);
 
         return [
           {
@@ -5509,7 +5839,7 @@ function TeamBuilderView() {
             label: `Slot ${slotIndex + 1}`,
             pokemon: slot.pokemon,
             teamIndex: slotIndex,
-            currentHpPercent: runtime.hpPercent,
+            currentHp: getLevel50CurrentHpFromPercent(maxHp, runtime.hpPercent),
             abilityName: resolvedMoveset.abilityName,
             itemName: resolvedMoveset.itemName,
             savedAttacks:
@@ -5521,16 +5851,23 @@ function TeamBuilderView() {
             moveNames: resolvedMoveset.allMoveNames,
             inferredMoveNames: [],
             knowledge: "known",
+            stages: {
+              attack: runtime.attackStage,
+              defense: runtime.defenseStage,
+              speed: runtime.speedStage,
+            },
+            statusCondition: runtime.statusCondition,
+            sleepTurns: runtime.statusCondition === "sleep" ? runtime.sleepTurns : 0,
             isActive: doublesAllySelection.includes(slotIndex),
           } satisfies BattleStateMemberInput,
         ];
       }),
-    [doublesAllySelection, getDoublesRuntime, moveByKey, speciesMovesetByKey, team],
+    [battleSimulatorState, doublesAllySelection, moveByKey, speciesMovesetByKey, team],
   );
   const battleEngineEnemyMembers = useMemo<BattleStateMemberInput[]>(
     () =>
       scoutingOpponentEntries.map((entry) => {
-        const runtime = getDoublesRuntime("enemy", entry.slotIndex);
+        const runtime = getBattleSimulatorMemberState("enemy", entry.slotIndex, entry.pokemon.id);
         return {
           id: `enemy-${entry.slotIndex}`,
           label: `Enemy ${entry.slotIndex + 1}`,
@@ -5555,10 +5892,17 @@ function TeamBuilderView() {
               : entry.movesetSource === "preset"
                 ? "partial"
                 : "unknown",
+          stages: {
+            attack: runtime.attackStage,
+            defense: runtime.defenseStage,
+            speed: runtime.speedStage,
+          },
+          statusCondition: runtime.statusCondition,
+          sleepTurns: runtime.statusCondition === "sleep" ? runtime.sleepTurns : 0,
           isActive: doublesEnemySelection.includes(entry.slotIndex),
         } satisfies BattleStateMemberInput;
       }),
-    [doublesEnemySelection, getDoublesRuntime, moveByKey, scoutingOpponentEntries],
+    [battleSimulatorState, doublesEnemySelection, moveByKey, scoutingOpponentEntries],
   );
   const doublesThreatReady = doublesAllyMembers.length === 2 && doublesEnemyMembers.length === 2;
   const canRunBattleEngine = doublesThreatReady && battleEngineAllyMembers.length >= 2 && battleEngineEnemyMembers.length >= 2;
@@ -5569,19 +5913,22 @@ function TeamBuilderView() {
         enemySelection: doublesEnemySelection,
         allyMembers: battleEngineAllyMembers.map((member) => ({
           id: member.id,
-          hp: member.currentHpPercent ?? 100,
+          hp: member.currentHp ?? member.currentHpPercent ?? 100,
+          stages: member.stages ?? null,
+          statusCondition: member.statusCondition ?? "none",
+          sleepTurns: member.sleepTurns ?? 0,
           active: member.isActive,
         })),
         enemyMembers: battleEngineEnemyMembers.map((member) => ({
           id: member.id,
           hp: member.currentHpPercent ?? 100,
+          stages: member.stages ?? null,
+          statusCondition: member.statusCondition ?? "none",
+          sleepTurns: member.sleepTurns ?? 0,
           active: member.isActive,
         })),
-        runtime: doublesRuntime,
         weather: damageWeather,
         terrain: damageTerrain,
-        attackStage: damageAttackStage,
-        defenseStage: damageDefenseStage,
         allyTailwind: doublesAllyTailwind,
         enemyTailwind: doublesEnemyTailwind,
         trickRoom: doublesTrickRoom,
@@ -5589,15 +5936,12 @@ function TeamBuilderView() {
     [
       battleEngineAllyMembers,
       battleEngineEnemyMembers,
-      damageAttackStage,
-      damageDefenseStage,
       damageTerrain,
       damageWeather,
       doublesAllySelection,
       doublesEnemySelection,
       doublesAllyTailwind,
       doublesEnemyTailwind,
-      doublesRuntime,
       doublesTrickRoom,
     ],
   );
@@ -5633,15 +5977,31 @@ function TeamBuilderView() {
           };
 
     return recommendTeamPreview({
-      ally: battleEngineAllyMembers,
+      ally: battleEngineAllyMembers.map((member) => ({
+        ...member,
+        currentHp: undefined,
+        currentHpPercent: 100,
+        stages: undefined,
+        statusCondition: "none",
+        sleepTurns: 0,
+        tauntTurns: 0,
+        encoreTurns: 0,
+        encoredMoveId: null,
+        disableTurns: 0,
+        disabledMoveId: null,
+        helpingHandTurns: 0,
+        turnsActive: 0,
+        isProtected: false,
+        isFlinched: false,
+        wasSwitchedInThisTurn: false,
+      })),
       enemy: analyzedOpponentEntries.map((entry) => {
-        const runtime = getDoublesRuntime("enemy", entry.slotIndex);
         return {
           id: `preview-enemy-${entry.slotIndex}`,
           label: `Enemy ${entry.slotIndex + 1}`,
           pokemon: entry.pokemon,
           teamIndex: entry.slotIndex,
-          currentHpPercent: runtime.hpPercent,
+          currentHpPercent: 100,
           abilityName: entry.abilityName,
           itemName: entry.itemName,
           savedAttacks:
@@ -5660,6 +6020,8 @@ function TeamBuilderView() {
               : entry.movesetSource === "preset"
                 ? "partial"
                 : "unknown",
+          statusCondition: "none",
+          sleepTurns: 0,
           isActive: entry.slotIndex < 2,
         } satisfies BattleStateMemberInput;
       }),
@@ -5683,7 +6045,6 @@ function TeamBuilderView() {
     doublesAllyTailwind,
     doublesEnemyTailwind,
     doublesTrickRoom,
-    getDoublesRuntime,
     moveByKey,
     teamPreviewSolverMode,
   ]);
@@ -6017,6 +6378,18 @@ function TeamBuilderView() {
     setOpponentQueries((current) => current.map((entry, index) => (index === slotIndex ? query : entry)));
   };
 
+  const loadSavedTeamAsOpponent = (savedTeam: PersistedTeam) => {
+    const filledSlots = Array.from({ length: MAX_OPPONENT_SCOUT_SLOTS }, (_, index) => {
+      const slot = savedTeam.slots[index];
+      return slot?.query?.trim() ?? "";
+    });
+
+    setOpponentQueries(filledSlots);
+    setAnalyzedOpponentEntries([]);
+    setStorageMessage(`Loaded "${savedTeam.name}" into the enemy board.`);
+    setStorageError(null);
+  };
+
   const runOpponentAnalysis = () => {
     if (!canRunOpponentAnalysis) {
       return;
@@ -6038,8 +6411,6 @@ function TeamBuilderView() {
       allyTailwind: doublesAllyTailwind,
       enemyTailwind: doublesEnemyTailwind,
       trickRoom: doublesTrickRoom,
-      attackStage: damageAttackStage,
-      defenseStage: damageDefenseStage,
       universalProtect: true,
     });
 
@@ -6093,6 +6464,7 @@ function TeamBuilderView() {
   const clearOpponentTeam = () => {
     setOpponentQueries(createEmptyOpponentSlots());
     setAnalyzedOpponentEntries([]);
+    resetBattleSimulatorState();
     setBattleEngineRecommendation(null);
     setBattleEngineAnalysisSignature("");
   };
@@ -6145,6 +6517,9 @@ function TeamBuilderView() {
           <div className="storage-button-row">
             <button type="button" className="primary-button" onClick={saveCurrentTeam}>
               Save Team
+            </button>
+            <button type="button" className="secondary-button" onClick={handleStartNewTeam}>
+              Start New Team
             </button>
             <button type="button" className="secondary-button" onClick={exportCurrentTeam}>
               Export JSON
@@ -6573,6 +6948,33 @@ function TeamBuilderView() {
           <div className="opponent-scout-actions">
             <span className="lead-available-count">{opponentEntries.length} / 6 loaded</span>
             <label className="opponent-scan-mode">
+              <span>Load Saved Team</span>
+              <select
+                value=""
+                onChange={(event) => {
+                  const selectedId = event.target.value;
+                  if (!selectedId) {
+                    return;
+                  }
+                  const savedTeam = savedTeams.find((team) => team.id === selectedId);
+                  if (savedTeam) {
+                    loadSavedTeamAsOpponent(savedTeam);
+                  }
+                  event.target.value = "";
+                }}
+                disabled={savedTeams.length === 0}
+              >
+                <option value="">
+                  {savedTeams.length === 0 ? "No saved teams" : "Pick a saved team"}
+                </option>
+                {savedTeams.map((savedTeam) => (
+                  <option key={savedTeam.id} value={savedTeam.id}>
+                    {savedTeam.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="opponent-scan-mode">
               <span>Preview mode</span>
               <select
                 value={teamPreviewSolverMode}
@@ -6858,18 +7260,38 @@ function TeamBuilderView() {
                   </span>
                 </div>
 
-                <div className="scout-section-header" style={{ marginTop: "1.5rem" }}>
-                  <p className="eyebrow">Per-Slot Matchup Elo</p>
-                  <span>{teamMatchupEloRows.length} allies ranked</span>
+                <div
+                  className={`scout-section-header collapsible-section-header${
+                    perSlotMatchupEloOpen ? " is-open" : ""
+                  }`}
+                  style={{ marginTop: "1.5rem" }}
+                >
+                  <div className="collapsible-section-title">
+                    <p className="eyebrow">Per-Slot Matchup Elo</p>
+                    <span>{teamMatchupEloRows.length} allies ranked</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="collapsible-section-toggle"
+                    onClick={() => setPerSlotMatchupEloOpen((prev) => !prev)}
+                    aria-expanded={perSlotMatchupEloOpen}
+                  >
+                    <span>{perSlotMatchupEloOpen ? "Hide" : "Show"}</span>
+                    <span className="collapsible-section-toggle-chevron" aria-hidden="true">
+                      {perSlotMatchupEloOpen ? "−" : "+"}
+                    </span>
+                  </button>
                 </div>
 
-                <p className="selector-note team-elo-note">
-                  Reuses the OHKO Scanner matchup Elo across the full enemy six: OHKO coverage first, then guaranteed
-                  KOs, survival into the enemy&apos;s best loaded hit, speed control, and worst-case pressure under the
-                  current damage assumptions.
-                </p>
+                {perSlotMatchupEloOpen ? (
+                  <>
+                    <p className="selector-note team-elo-note">
+                      Reuses the OHKO Scanner matchup Elo across the full enemy six: OHKO coverage first, then
+                      guaranteed KOs, survival into the enemy&apos;s best loaded hit, speed control, and worst-case
+                      pressure under the current damage assumptions.
+                    </p>
 
-                <div className="ohko-result-list">
+                    <div className="ohko-result-list">
                   {teamMatchupEloRows.map((row, rankIndex) => (
                     <article
                       key={`team-elo-${row.slotIndex}`}
@@ -7001,7 +7423,9 @@ function TeamBuilderView() {
                       </div>
                     </article>
                   ))}
-                </div>
+                    </div>
+                  </>
+                ) : null}
               </>
             ) : (
               <div className="team-slot-empty">Add Pokemon to your team to rank the full 6v6 matchup board.</div>
@@ -8235,6 +8659,65 @@ function TeamBuilderView() {
               </section>
             </div>
 
+            <section className="damage-doubles-block battle-simulator-panel">
+              <div className="coverage-preview-header">
+                <div>
+                  <p className="eyebrow">Battle Simulator</p>
+                  <h3>Edit the current board state</h3>
+                </div>
+                <div className="damage-assumption-row compact">
+                  <span className="damage-assumption-pill">Allies use exact HP</span>
+                  <span className="damage-assumption-pill">Enemies use HP %</span>
+                  <span className="damage-assumption-pill">Tailwind / Trick Room apply below</span>
+                </div>
+              </div>
+
+              <p className="selector-note battle-simulator-note">
+                Set the four active Pokemon to the board state you want the engine to start from. HP, burn,
+                paralysis, sleep, and per-Pokemon Atk / Def / Spe stages feed directly into the recommendation.
+                Bench Pokemon stay available for switches and keep any simulator values you already edited for them.
+              </p>
+
+              <div className="battle-simulator-grid">
+                {battleSimulatorActiveAllies.map((entry) => (
+                  <BattleSimulatorCard
+                    key={`battle-simulator-ally-${entry.slotIndex}-${entry.pokemon.id}`}
+                    side="ally"
+                    slotIndex={entry.slotIndex}
+                    rankLabel={entry.rankLabel}
+                    pokemon={entry.pokemon}
+                    state={entry.state}
+                    onChange={(patch) =>
+                      updateBattleSimulatorMemberState("ally", entry.slotIndex, entry.pokemon.id, patch)
+                    }
+                  />
+                ))}
+
+                {battleSimulatorActiveEnemies.map((entry) => (
+                  <BattleSimulatorCard
+                    key={`battle-simulator-enemy-${entry.slotIndex}-${entry.pokemon.id}`}
+                    side="enemy"
+                    slotIndex={entry.slotIndex}
+                    rankLabel={entry.rankLabel}
+                    pokemon={entry.pokemon}
+                    state={entry.state}
+                    onChange={(patch) =>
+                      updateBattleSimulatorMemberState("enemy", entry.slotIndex, entry.pokemon.id, patch)
+                    }
+                  />
+                ))}
+              </div>
+
+              <div className="battle-simulator-actions">
+                <button type="button" className="secondary-button" onClick={resetBattleSimulatorState}>
+                  Reset Battle State
+                </button>
+                <span className="selector-note">
+                  Weather and terrain still come from the damage calculator controls above.
+                </span>
+              </div>
+            </section>
+
             {canRunBattleEngine ? (
               <section className="damage-doubles-block battle-engine-panel">
                 <div className="coverage-preview-header">
@@ -8248,10 +8731,9 @@ function TeamBuilderView() {
                 <p className="selector-note battle-engine-note">
                   Searches legal doubles actions with switches, move priority, Fake Out, Protect, Tailwind, Trick
                   Room, Safeguard, Ally Switch, Feint, Encore, Disable, Helping Hand, redirection, screens, guards,
-                  common status moves, speed control, and simple self setup / healing lines. Search now mixes
-                  conservative / expected / optimistic branches for misses and secondary effects, and partial enemy
-                  sets get a few inferred utility options instead of only the explicitly loaded moves. It runs only
-                  when you press the button below.
+                  common status moves, speed control, and simple self setup / healing lines. The simulator state
+                  above is used as the starting board, then the search mixes conservative / expected / optimistic
+                  branches for misses and secondary effects. It runs only when you press the button below.
                 </p>
 
                 <div className="damage-assumption-row">
@@ -8386,7 +8868,7 @@ function TeamBuilderView() {
                   </>
                 ) : (
                   <div className="matchup-empty-board">
-                    Press <strong>Run Battle Engine</strong> to evaluate the current 2v2 board.
+                    Press <strong>Run Battle Engine</strong> to evaluate the simulator board state.
                   </div>
                 )}
               </section>
@@ -9939,6 +10421,7 @@ const SITE_SECTIONS: Array<{ id: SiteMode; index: string; label: string }> = [
 
 function App() {
   const [siteMode, setSiteMode] = useState<SiteMode>("calculator");
+  const [teamBuilderResetKey, setTeamBuilderResetKey] = useState(0);
 
   return (
     <div className="app-shell">
@@ -9994,7 +10477,10 @@ function App() {
         {siteMode === "calculator" ? (
           <CalculatorView />
         ) : siteMode === "team" ? (
-          <TeamBuilderView />
+          <TeamBuilderView
+            key={teamBuilderResetKey}
+            onStartNewTeam={() => setTeamBuilderResetKey((value) => value + 1)}
+          />
         ) : siteMode === "movesets" ? (
           <MovesetDatabaseView />
         ) : (

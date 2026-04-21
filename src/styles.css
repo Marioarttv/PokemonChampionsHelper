@@ -1077,36 +1077,56 @@ img {
 
 .ohko-result-list {
   display: grid;
-  gap: 0.7rem;
+  gap: 0.55rem;
+}
+
+@media (min-width: 1280px) {
+  .ohko-result-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.6rem 0.7rem;
+  }
 }
 
 .ohko-result-row {
   display: grid;
-  gap: 0.85rem;
-  padding: 0.85rem 0.9rem 0.95rem;
+  gap: 0.55rem;
+  padding: 0.65rem 0.75rem 0.75rem;
 }
 
 .ohko-result-top {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.75rem 1.25rem;
-  align-items: start;
-  padding-bottom: 0.7rem;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.4rem;
+  align-items: center;
+  padding-bottom: 0.45rem;
   border-bottom: 1px dashed rgba(226, 232, 255, 0.08);
+}
+
+@media (min-width: 640px) {
+  .ohko-result-top {
+    grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+    gap: 0.4rem 0.9rem;
+  }
 }
 
 .ohko-summary-side {
   display: flex;
   flex-wrap: wrap;
   gap: 0.3rem;
-  justify-content: flex-end;
-  max-width: min(480px, 55%);
+  justify-content: flex-start;
+  max-width: none;
+}
+
+@media (min-width: 640px) {
+  .ohko-summary-side {
+    justify-content: flex-end;
+  }
 }
 
 .ohko-breakdown-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 0.55rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.45rem;
 }
 
 /* ------------------------------------------------------------------
@@ -1116,9 +1136,9 @@ img {
 .ohko-breakdown-card {
   position: relative;
   display: grid;
-  gap: 0.4rem;
-  padding: 0.62rem 0.7rem 0.7rem 0.85rem;
-  border-radius: 12px;
+  gap: 0.3rem;
+  padding: 0.5rem 0.6rem 0.58rem 0.72rem;
+  border-radius: 10px;
   background:
     linear-gradient(180deg, rgba(30, 38, 66, 0.92), rgba(18, 24, 48, 0.82));
   border: 1px solid rgba(226, 232, 255, 0.08);
@@ -1178,7 +1198,7 @@ img {
 
 .ohko-breakdown-top {
   display: grid;
-  gap: 0.35rem;
+  gap: 0.25rem;
 }
 
 .ohko-result-subnote {
@@ -2502,6 +2522,76 @@ img {
   border-top: 1px solid rgba(226, 232, 255, 0.08);
 }
 
+.collapsible-section-header {
+  align-items: center;
+}
+
+.collapsible-section-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.collapsible-section-title .eyebrow {
+  margin: 0;
+}
+
+.collapsible-section-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.34rem 0.7rem;
+  border: 1px solid rgba(230, 200, 117, 0.3);
+  border-radius: 8px;
+  background: rgba(230, 200, 117, 0.08);
+  color: #e6c875;
+  font-family: var(--font-display);
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.collapsible-section-toggle:hover {
+  background: rgba(230, 200, 117, 0.16);
+  border-color: rgba(230, 200, 117, 0.5);
+  color: #f4dfa0;
+}
+
+.collapsible-section-toggle:focus-visible {
+  outline: 2px solid var(--accent-gold);
+  outline-offset: 2px;
+}
+
+.collapsible-section-header.is-open .collapsible-section-toggle {
+  background: rgba(230, 200, 117, 0.2);
+  border-color: rgba(230, 200, 117, 0.6);
+  color: #f8e6ac;
+}
+
+.collapsible-section-toggle-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 999px;
+  background: rgba(230, 200, 117, 0.18);
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1;
+  font-weight: 700;
+}
+
 .enemy-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -2666,9 +2756,9 @@ img {
   position: relative;
   display: grid;
   grid-template-columns: 1fr;
-  gap: 0.85rem;
-  padding: 1rem 1.05rem 1.1rem;
-  border-radius: 16px;
+  gap: 0.55rem;
+  padding: 0.7rem 0.85rem 0.8rem;
+  border-radius: 14px;
   background:
     radial-gradient(140% 120% at 0% 0%, rgba(122, 160, 255, 0.08), transparent 55%),
     linear-gradient(180deg, rgba(26, 34, 62, 0.96), rgba(16, 22, 44, 0.88));
@@ -2720,21 +2810,22 @@ img {
 .opponent-coverage-row.ohko-result-row .opponent-coverage-main strong {
   font-family: var(--font-display);
   font-weight: 700;
-  font-size: 1.02rem;
+  font-size: 0.9rem;
   letter-spacing: -0.005em;
   color: var(--ink-strong);
 }
 
 .opponent-coverage-row.ohko-result-row .opponent-coverage-main p {
-  font-size: 0.74rem;
+  font-size: 0.66rem;
   font-weight: 600;
   color: var(--ink-soft);
-  line-height: 1.45;
+  line-height: 1.35;
+  margin-top: 0.1rem;
 }
 
 .opponent-coverage-row.ohko-result-row .opponent-coverage-main img {
-  width: 2.15rem;
-  height: 2.15rem;
+  width: 1.75rem;
+  height: 1.75rem;
 }
 
 /* Inside the promoted row, target cards become slightly larger */
@@ -5193,6 +5284,139 @@ img {
   gap: 0.5rem;
 }
 
+.battle-simulator-panel,
+.battle-simulator-card,
+.battle-simulator-card-grid,
+.battle-simulator-actions {
+  display: grid;
+}
+
+.battle-simulator-panel {
+  gap: 0.7rem;
+}
+
+.battle-simulator-note {
+  margin: 0;
+}
+
+.battle-simulator-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(248px, 1fr));
+  gap: 0.55rem;
+}
+
+.battle-simulator-card {
+  gap: 0.65rem;
+  padding: 0.8rem;
+  border-radius: 18px;
+  background: rgba(16, 22, 44, 0.8);
+  border: 1px solid rgba(226, 232, 255, 0.08);
+}
+
+.battle-simulator-card.ally {
+  border-top: 3px solid rgba(74, 222, 128, 0.28);
+}
+
+.battle-simulator-card.enemy {
+  border-top: 3px solid rgba(255, 85, 101, 0.24);
+}
+
+.battle-simulator-card-head,
+.battle-simulator-card-identity {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.battle-simulator-card-head {
+  justify-content: space-between;
+}
+
+.battle-simulator-card-identity strong,
+.battle-simulator-card-identity p,
+.battle-simulator-field span,
+.battle-simulator-field small {
+  margin: 0;
+}
+
+.battle-simulator-card-identity p {
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.battle-simulator-rank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: rgba(122, 160, 255, 0.14);
+  color: var(--ink-strong);
+}
+
+.battle-simulator-rank.ally {
+  background: rgba(74, 222, 128, 0.16);
+  color: #9af3b3;
+}
+
+.battle-simulator-rank.enemy {
+  background: rgba(255, 85, 101, 0.14);
+  color: #ff9cab;
+}
+
+.battle-simulator-sprite {
+  width: 2.4rem;
+  height: 2.4rem;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.battle-simulator-card-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.battle-simulator-field {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.battle-simulator-field span {
+  color: var(--ink-soft);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.battle-simulator-field input,
+.battle-simulator-field select {
+  width: 100%;
+  min-width: 0;
+}
+
+.battle-simulator-field small {
+  color: var(--ink-soft);
+  font-size: 0.67rem;
+  font-weight: 700;
+}
+
+.battle-simulator-field.compact span {
+  text-align: center;
+}
+
+.battle-simulator-actions {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.75rem;
+}
+
 .damage-doubles-snapshot-card {
   display: grid;
   justify-items: center;
@@ -5943,6 +6167,10 @@ img {
     flex-direction: column;
   }
 
+  .battle-simulator-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .lead-panel-header {
     align-items: start;
     flex-direction: column;
@@ -5993,6 +6221,11 @@ img {
   .damage-picker-grid,
   .enemy-grid,
   .damage-threat-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .battle-simulator-card-grid,
+  .battle-simulator-actions {
     grid-template-columns: 1fr;
   }
 

@@ -206,6 +206,7 @@ export type BattleStateMemberInput = {
   label: string;
   pokemon: PokemonRecord;
   teamIndex: number;
+  currentHp?: number;
   currentHpPercent?: number;
   abilityName?: string | null;
   itemName?: string | null;
@@ -213,6 +214,20 @@ export type BattleStateMemberInput = {
   moveNames?: string[];
   inferredMoveNames?: string[];
   knowledge?: KnowledgeLevel;
+  stages?: Partial<BattleStatStages>;
+  statusCondition?: BattleStatusCondition;
+  sleepTurns?: number;
+  tauntTurns?: number;
+  encoreTurns?: number;
+  encoredMoveId?: string | null;
+  disableTurns?: number;
+  disabledMoveId?: string | null;
+  helpingHandTurns?: number;
+  lastMoveId?: string | null;
+  turnsActive?: number;
+  isProtected?: boolean;
+  isFlinched?: boolean;
+  wasSwitchedInThisTurn?: boolean;
   isActive: boolean;
 };
 
@@ -228,6 +243,9 @@ export type CreateBattleStateInput = {
   attackStage?: number;
   defenseStage?: number;
   universalProtect?: boolean;
+  allySide?: Partial<BattleSideState>;
+  enemySide?: Partial<BattleSideState>;
+  fieldState?: Partial<BattleFieldState>;
 };
 
 export type SearchBranchModel = "full" | "expectedOnly" | "expectedPlusRisk";
