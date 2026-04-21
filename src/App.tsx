@@ -6507,7 +6507,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     }),
     [doublesAllyTailwind, doublesEnemyTailwind, doublesTrickRoom],
   );
-  const battleEngineAllyMembers = useMemo<BattleStateMemberInput[]>(
+  const previewBattleEngineAllyMembers = useMemo<BattleStateMemberInput[]>(
     () =>
       team.flatMap((slot, slotIndex) => {
         if (!slot.pokemon) {
@@ -6570,42 +6570,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     [battleSimulatorState, doublesEnemySelection, moveByKey, scoutingOpponentEntries],
   );
   const doublesThreatReady = doublesAllyMembers.length === 2 && doublesEnemyMembers.length === 2;
-  const canRunBattleEngine = doublesThreatReady && battleEngineAllyMembers.length >= 2 && battleEngineEnemyMembers.length >= 2;
-  const battleEngineInputSignature = useMemo(
-    () =>
-      buildBattleEngineInputSignature({
-        allySelection: doublesAllySelection,
-        enemySelection: doublesEnemySelection,
-        allyMembers: battleEngineAllyMembers,
-        enemyMembers: battleEngineEnemyMembers,
-        weather: damageWeather,
-        terrain: damageTerrain,
-        allyTailwind: doublesAllyTailwind,
-        enemyTailwind: doublesEnemyTailwind,
-        trickRoom: doublesTrickRoom,
-      }),
-    [
-      battleEngineAllyMembers,
-      battleEngineEnemyMembers,
-      damageTerrain,
-      damageWeather,
-      doublesAllySelection,
-      doublesEnemySelection,
-      doublesAllyTailwind,
-      doublesEnemyTailwind,
-      doublesTrickRoom,
-    ],
-  );
-  const battleEngineIsStale =
-    battleEngineRecommendation !== null && battleEngineAnalysisSignature !== battleEngineInputSignature;
-  useEffect(() => {
-    if (!canRunBattleEngine && battleEngineRecommendation) {
-      setBattleEngineRecommendation(null);
-      setBattleEngineAnalysisSignature("");
-    }
-  }, [battleEngineRecommendation, canRunBattleEngine]);
   const teamPreviewRecommendation = useMemo<TeamPreviewRecommendation | null>(() => {
-    if (battleEngineAllyMembers.length < 4 || analyzedOpponentEntries.length < 4) {
+    if (previewBattleEngineAllyMembers.length < 4 || analyzedOpponentEntries.length < 4) {
       return null;
     }
 
@@ -6628,7 +6594,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           };
 
     return recommendTeamPreview({
-      ally: battleEngineAllyMembers.map((member) => ({
+      ally: previewBattleEngineAllyMembers.map((member) => ({
         ...member,
         isActive: false,
         currentHp: undefined,
@@ -6676,7 +6642,6 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     });
   }, [
     analyzedOpponentEntries,
-    battleEngineAllyMembers,
     damageAttackStage,
     damageDefenseStage,
     damageTerrain,
@@ -6685,8 +6650,9 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     doublesEnemyTailwind,
     doublesTrickRoom,
     moveByKey,
-      teamPreviewSolverMode,
-    ]);
+    previewBattleEngineAllyMembers,
+    teamPreviewSolverMode,
+  ]);
   const solverBringOrder = useMemo(() => {
     if (!teamPreviewRecommendation) {
       return [];
@@ -6787,10 +6753,62 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     setManualBringSlotIndices([]);
     seedThreatBoardLeadFromBringOrder(solverBringOrder);
   };
-  const battleEngineAllyMemberBySlot = useMemo(
-    () => new Map(battleEngineAllyMembers.map((member) => [member.teamIndex, member] as const)),
-    [battleEngineAllyMembers],
+  const battleEngineAllyMembers = useMemo(
+    () =>
+      previewBattleEngineAllyMembers.filter((member) => bringSelectedSlotSet.has(member.teamIndex)),
+    [bringSelectedSlotSet, previewBattleEngineAllyMembers],
   );
+  const battleEngineSelectableAllySlotIndices = useMemo(
+    () =>
+      bringSelection.bringSlotIndices.length > 0 ? bringSelection.bringSlotIndices : filledLeadOptions.map((entry) => entry.index),
+    [bringSelection.bringSlotIndices, filledLeadOptions],
+  );
+  useEffect(() => {
+    if (battleEngineSelectableAllySlotIndices.length === 0) {
+      return;
+    }
+
+    setDoublesAllySelection((current) => normalizePairSelection(current, battleEngineSelectableAllySlotIndices, 0));
+  }, [battleEngineSelectableAllySlotIndices]);
+  const previewBattleEngineAllyMemberBySlot = useMemo(
+    () => new Map(previewBattleEngineAllyMembers.map((member) => [member.teamIndex, member] as const)),
+    [previewBattleEngineAllyMembers],
+  );
+  const canRunBattleEngine =
+    doublesThreatReady && battleEngineAllyMembers.length >= 2 && battleEngineEnemyMembers.length >= 2;
+  const battleEngineInputSignature = useMemo(
+    () =>
+      buildBattleEngineInputSignature({
+        allySelection: doublesAllySelection,
+        enemySelection: doublesEnemySelection,
+        allyMembers: battleEngineAllyMembers,
+        enemyMembers: battleEngineEnemyMembers,
+        weather: damageWeather,
+        terrain: damageTerrain,
+        allyTailwind: doublesAllyTailwind,
+        enemyTailwind: doublesEnemyTailwind,
+        trickRoom: doublesTrickRoom,
+      }),
+    [
+      battleEngineAllyMembers,
+      battleEngineEnemyMembers,
+      damageTerrain,
+      damageWeather,
+      doublesAllySelection,
+      doublesEnemySelection,
+      doublesAllyTailwind,
+      doublesEnemyTailwind,
+      doublesTrickRoom,
+    ],
+  );
+  const battleEngineIsStale =
+    battleEngineRecommendation !== null && battleEngineAnalysisSignature !== battleEngineInputSignature;
+  useEffect(() => {
+    if (!canRunBattleEngine && battleEngineRecommendation) {
+      setBattleEngineRecommendation(null);
+      setBattleEngineAnalysisSignature("");
+    }
+  }, [battleEngineRecommendation, canRunBattleEngine]);
   const opponentCoverageMap = useMemo(
     () =>
       new Map(
@@ -8075,7 +8093,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
 
                         <section className="bring-preview__lineup" aria-label="Recommended four">
                           {rec.bestFour.map((slotIndex) => {
-                            const member = battleEngineAllyMemberBySlot.get(slotIndex);
+                            const member = previewBattleEngineAllyMemberBySlot.get(slotIndex);
                             if (!member) {
                               return null;
                             }
@@ -8182,7 +8200,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                                   const leadNames = alternative.lead
                                     .map(
                                       (si) =>
-                                        battleEngineAllyMemberBySlot.get(si)?.pokemon.name ??
+                                        previewBattleEngineAllyMemberBySlot.get(si)?.pokemon.name ??
                                         `#${si + 1}`,
                                     )
                                     .join(" + ");
@@ -8193,7 +8211,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                                       <span className="bring-preview__alt-rank">#{index + 2}</span>
                                       <div className="bring-preview__alt-sprites">
                                         {alternative.four.map((si) => {
-                                          const m = battleEngineAllyMemberBySlot.get(si);
+                                          const m = previewBattleEngineAllyMemberBySlot.get(si);
                                           return m ? (
                                             <PokemonSprite
                                               key={`preview-alt-sprite-${index}-${si}`}
@@ -9265,7 +9283,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
               </div>
 
               <div className="doubles-lineup-track" role="list" aria-label="Team roster">
-                {team.map((slot, slotIndex) => {
+                {battleEngineSelectableAllySlotIndices.map((slotIndex) => {
+                  const slot = team[slotIndex];
                   const selectionRank = doublesAllySelection.indexOf(slotIndex);
                   const isSelected = selectionRank !== -1;
                   const pokemon = slot.pokemon;

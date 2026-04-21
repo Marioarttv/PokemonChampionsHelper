@@ -1,4 +1,5 @@
 import { getTypeFromLabel } from "../../data/typeChart";
+import { getMultiplier } from "../effectiveness";
 import type { MoveRecord } from "../battleData";
 import { calculateRoughDamage } from "../damage";
 import { getChampionsComputedStats } from "../championsStats";
@@ -787,6 +788,27 @@ function sumProjectedDamage(state: BattleState, actorId: string, move: BattleMov
   }, 0);
 }
 
+function isTargetImmuneByTyping(
+  state: BattleState,
+  _actorId: string,
+  targetId: string,
+  move: BattleMoveOption,
+) {
+  const target = state.combatants[targetId];
+  if (!target || !move.type || !move.category || !move.basePower) {
+    return false;
+  }
+
+  const [primaryTypeLabel, secondaryTypeLabel] = target.pokemon.types;
+  const primaryType = primaryTypeLabel ? getTypeFromLabel(primaryTypeLabel) : null;
+  if (!primaryType) {
+    return false;
+  }
+
+  const secondaryType = secondaryTypeLabel ? getTypeFromLabel(secondaryTypeLabel) : null;
+  return getMultiplier(move.type, primaryType, secondaryType) === 0;
+}
+
 function getIncomingThreatsAgainst(state: BattleState, targetIds: string[]) {
   return targetIds.flatMap((targetId) => {
     const target = state.combatants[targetId];
@@ -1347,6 +1369,9 @@ function generateActionsForActor(
     }
 
     for (const targetId of enemyIds) {
+      if ((move.effectKind === "damage" || move.effectKind === "fakeOut") && isTargetImmuneByTyping(state, actorId, targetId, move)) {
+        continue;
+      }
       actions.push(buildPlannedAction(state, actorId, { type: "move", actorId, moveId: move.id, targetId }));
     }
   }
@@ -2422,6 +2447,15 @@ function executeMove(
         actorId: actor.id,
         targetId,
         text: `${actor.pokemon.name}'s ${move.name} is not supported by the current simulator.`,
+      });
+      continue;
+    }
+
+    if (isTargetImmuneByTyping(state, actor.id, targetId, move)) {
+      events.push({
+        actorId: actor.id,
+        targetId,
+        text: `${target.pokemon.name} is unaffected by ${actor.pokemon.name}'s ${move.name}.`,
       });
       continue;
     }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getDamagePreview, getEffectiveSpeed, resolveTurn } from "..";
+import { generateJointActionPlans, getDamagePreview, getEffectiveSpeed, resolveTurn } from "..";
 import {
   buildMovePlan,
   buildPassPlan,
@@ -57,6 +57,80 @@ describe("engine regression coverage", () => {
 
     expect(result.events.some((event) => event.text.includes("flinches from Fake Out"))).toBe(true);
     expect(result.events.some((event) => event.text.includes("Enemy Lead uses Tackle"))).toBe(false);
+  });
+
+  it("does not generate Fake Out into Ghost-type targets", () => {
+    const fakeOutUser = makePokemon("Fake Out User", { baseStats: { atk: 110, spe: 120 } });
+    const partner = makePokemon("Partner");
+    const ghostTarget = makePokemon("Ghost Target", { types: ["Ghost"], baseStats: { hp: 120, def: 110 } });
+    const normalTarget = makePokemon("Normal Target", { types: ["Normal"], baseStats: { hp: 120, def: 110 } });
+    const fakeOut = makeMove("Fake Out", {
+      type: "Normal",
+      category: "Physical",
+      basePower: 40,
+      priority: 3,
+      target: "normal",
+    });
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: fakeOutUser, moveNames: ["Fake Out"] }),
+        makeMember({ side: "ally", slot: 1, pokemon: partner, moveNames: [] }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: ghostTarget, moveNames: [] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: normalTarget, moveNames: [] }),
+      ],
+      moves: [fakeOut],
+    });
+
+    const plans = generateJointActionPlans(state, "ally", {
+      maxIndividualActionsPerActor: 8,
+      maxJointPlans: 20,
+    });
+    const fakeOutActions = plans.flatMap((plan) =>
+      plan.actions.filter(
+        (entry) => entry.actorId === "ally-0" && entry.action.type === "move" && entry.summary.includes("Fake Out"),
+      ),
+    );
+
+    expect(
+      fakeOutActions.some(
+        (entry) => entry.action.type === "move" && entry.action.targetId === "enemy-0",
+      ),
+    ).toBe(false);
+    expect(
+      fakeOutActions.some(
+        (entry) => entry.action.type === "move" && entry.action.targetId === "enemy-1",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not let Fake Out flinch Ghost-type targets", () => {
+    const fakeOutUser = makePokemon("Fake Out User", { baseStats: { atk: 110, spe: 120 } });
+    const ghostTarget = makePokemon("Ghost Target", { types: ["Ghost"], baseStats: { hp: 120, def: 110, spe: 90 } });
+    const fakeOut = makeMove("Fake Out", {
+      type: "Normal",
+      category: "Physical",
+      basePower: 40,
+      priority: 3,
+      target: "normal",
+    });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 50, target: "normal" });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: fakeOutUser, moveNames: ["Fake Out"] })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: ghostTarget, moveNames: ["Tackle"] })],
+      moves: [fakeOut, tackle],
+    });
+
+    const result = resolveTurn(
+      state,
+      buildMovePlan(state, "ally", [{ actorId: "ally-0", moveName: "Fake Out", targetId: "enemy-0" }]),
+      buildMovePlan(state, "enemy", [{ actorId: "enemy-0", moveName: "Tackle", targetId: "ally-0" }]),
+    );
+
+    expect(result.events.some((event) => event.text.includes("is unaffected"))).toBe(true);
+    expect(result.events.some((event) => event.text.includes("flinches from Fake Out"))).toBe(false);
+    expect(result.events.some((event) => event.text.includes("Ghost Target uses Tackle"))).toBe(true);
   });
 
   it("wakes a sleeping active even when that actor only passes for the turn", () => {
