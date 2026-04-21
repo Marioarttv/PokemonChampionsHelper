@@ -119,6 +119,7 @@ export type BattleCombatantState = {
   itemId: DamageItemId;
   itemName: string | null;
   itemConsumed: boolean;
+  flashFireBoosted: boolean;
   stages: BattleStatStages;
   statusCondition: BattleStatusCondition;
   sleepTurns: number;

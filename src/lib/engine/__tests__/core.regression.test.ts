@@ -336,6 +336,123 @@ describe("engine regression coverage", () => {
     expect(firstAttackEvent?.actorId).toBe("ally-0");
   });
 
+  it("triggers Competitive when Intimidate switches in against Milotic", () => {
+    const milotic = makePokemon("Milotic", { baseStats: { spa: 100, spe: 81 } });
+    const allyPartner = makePokemon("Ally Partner");
+    const enemyLead = makePokemon("Enemy Lead");
+    const incin = makePokemon("Incineroar");
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: milotic, moveNames: [], abilityName: "Competitive" }),
+        makeMember({ side: "ally", slot: 1, pokemon: allyPartner, moveNames: [] }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: enemyLead, moveNames: [] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: allyPartner, moveNames: [] }),
+        makeMember({ side: "enemy", slot: 2, pokemon: incin, moveNames: [], abilityName: "Intimidate", isActive: false }),
+      ],
+      moves: [],
+    });
+
+    const result = resolveTurn(
+      state,
+      buildPassPlan(state, "ally", ["ally-0", "ally-1"]),
+      {
+        side: "enemy",
+        actions: [
+          ...buildSwitchPlan(state, "enemy", [{ actorId: "enemy-0", switchInId: "enemy-2" }]).actions,
+          ...buildPassPlan(state, "enemy", ["enemy-1"]).actions,
+        ],
+        summary: "enemy switch",
+        heuristicScore: 0,
+      },
+    );
+
+    expect(result.state.combatants["ally-0"].stages.attack).toBe(-1);
+    expect(result.state.combatants["ally-0"].stages.specialAttack).toBe(2);
+  });
+
+  it("redirects single-target Water moves into Storm Drain and grants the boost", () => {
+    const attacker = makePokemon("Water Attacker", { baseStats: { spa: 120, spe: 100 } });
+    const stormDrainUser = makePokemon("Storm Drain User", { baseStats: { spd: 110, spe: 70 } });
+    const originalTarget = makePokemon("Original Target", { baseStats: { hp: 100, spd: 80 } });
+    const waterPulse = makeMove("Water Pulse", { type: "Water", category: "Special", basePower: 60, target: "normal" });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: attacker, moveNames: ["Water Pulse"] })],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: stormDrainUser, moveNames: [], abilityName: "Storm Drain" }),
+        makeMember({ side: "enemy", slot: 1, pokemon: originalTarget, moveNames: [] }),
+      ],
+      moves: [waterPulse],
+    });
+
+    const originalTargetHp = state.combatants["enemy-1"].currentHp;
+    const result = resolveTurn(
+      state,
+      buildMovePlan(state, "ally", [{ actorId: "ally-0", moveName: "Water Pulse", targetId: "enemy-1" }]),
+      buildPassPlan(state, "enemy", ["enemy-0", "enemy-1"]),
+    );
+
+    expect(result.state.combatants["enemy-0"].stages.specialAttack).toBe(1);
+    expect(result.state.combatants["enemy-1"].currentHp).toBe(originalTargetHp);
+  });
+
+  it("restores HP with Regenerator on switch out", () => {
+    const regeneratorMon = makePokemon("Regenerator Mon", { baseStats: { hp: 120 } });
+    const benchMon = makePokemon("Bench Mon");
+    const enemy = makePokemon("Enemy");
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: regeneratorMon, moveNames: [], abilityName: "Regenerator", currentHpPercent: 50 }),
+        makeMember({ side: "ally", slot: 1, pokemon: benchMon, moveNames: [], isActive: false }),
+      ],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: enemy, moveNames: [] })],
+      moves: [],
+    });
+
+    const before = state.combatants["ally-0"].currentHp;
+    const result = resolveTurn(
+      state,
+      buildSwitchPlan(state, "ally", [{ actorId: "ally-0", switchInId: "ally-1" }]),
+      buildPassPlan(state, "enemy", ["enemy-0"]),
+    );
+
+    expect(result.state.combatants["ally-0"].currentHp).toBeGreaterThan(before);
+  });
+
+  it("blocks spread damage with Wide Guard", () => {
+    const attacker = makePokemon("Spread Attacker", { baseStats: { atk: 120 } });
+    const defenderOne = makePokemon("Defender One");
+    const defenderTwo = makePokemon("Defender Two");
+    const rockSlide = makeMove("Rock Slide", { type: "Rock", category: "Physical", basePower: 75, target: "allAdjacentFoes" });
+    const wideGuard = makeMove("Wide Guard", { type: "Rock", category: "Status", basePower: 0, target: "self", priority: 3 });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: attacker, moveNames: ["Rock Slide"] })],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: defenderOne, moveNames: ["Wide Guard"] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: defenderTwo, moveNames: [] }),
+      ],
+      moves: [rockSlide, wideGuard],
+    });
+
+    const result = resolveTurn(
+      state,
+      buildMovePlan(state, "ally", [{ actorId: "ally-0", moveName: "Rock Slide" }]),
+      {
+        side: "enemy",
+        actions: [
+          ...buildMovePlan(state, "enemy", [{ actorId: "enemy-0", moveName: "Wide Guard" }]).actions,
+          ...buildPassPlan(state, "enemy", ["enemy-1"]).actions,
+        ],
+        summary: "wide guard",
+        heuristicScore: 0,
+      },
+    );
+
+    expect(result.state.combatants["enemy-0"].currentHp).toBe(result.state.combatants["enemy-0"].maxHp);
+    expect(result.state.combatants["enemy-1"].currentHp).toBe(result.state.combatants["enemy-1"].maxHp);
+  });
+
   it("lets Focus Sash preserve a combatant at 1 HP only once", () => {
     const attacker = makePokemon("Big Hitter", { baseStats: { atk: 180, spe: 110 } });
     const sashHolder = makePokemon("Sash Holder", { baseStats: { hp: 90, def: 70, spe: 70 } });

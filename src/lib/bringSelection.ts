@@ -8,7 +8,7 @@ export type BringSelectionRequirements = {
 export type ResolveBringSelectionOptions = {
   filledSlotIndices: number[];
   recommendedFourSlotIndices?: number[] | null;
-  manualBenchSlotIndices?: number[] | null;
+  manualBringSlotIndices?: number[] | null;
   mode?: BringSelectionMode;
   maxBringCount?: number;
 };
@@ -16,8 +16,16 @@ export type ResolveBringSelectionOptions = {
 export type ResolvedBringSelection = BringSelectionRequirements & {
   bringSlotIndices: number[];
   benchSlotIndices: number[];
+  lockedBringSlotIndices: number[];
+  autoFilledBringSlotIndices: number[];
+  recommendedBringSlotIndices: number[];
   recommendedBenchSlotIndices: number[];
+  hasCompleteManualSelection: boolean;
 };
+
+function uniqueOrdered(values: number[]) {
+  return [...new Set(values)];
+}
 
 function uniqueSorted(values: number[]) {
   return [...new Set(values)].sort((left, right) => left - right);
@@ -53,58 +61,69 @@ export function resolveBringSelection(options: ResolveBringSelectionOptions): Re
   const {
     filledSlotIndices,
     recommendedFourSlotIndices = [],
-    manualBenchSlotIndices = [],
+    manualBringSlotIndices = [],
     mode = "auto",
     maxBringCount = 4,
   } = options;
   const normalizedFilledSlotIndices = uniqueSorted(filledSlotIndices);
   const { bringCount, benchCount } = getBringSelectionRequirements(normalizedFilledSlotIndices, maxBringCount);
   const filledSet = new Set(normalizedFilledSlotIndices);
-  const safeManualBenchSlotIndices = manualBenchSlotIndices ?? [];
-  const sanitizedManualBench = uniqueSorted(
-    safeManualBenchSlotIndices.filter((slotIndex) => filledSet.has(slotIndex)),
-  ).slice(0, benchCount);
-  const recommendedBenchSlotIndices = getRecommendedBenchSlotIndices(
-    normalizedFilledSlotIndices,
-    recommendedFourSlotIndices,
-    benchCount,
-  );
-  const fallbackBenchSlotIndices = normalizedFilledSlotIndices.slice(-benchCount);
-  const benchSlotIndices =
-    mode === "manual" && sanitizedManualBench.length === benchCount
-      ? sanitizedManualBench
-      : recommendedBenchSlotIndices.length === benchCount
-        ? recommendedBenchSlotIndices
-        : fallbackBenchSlotIndices;
+  const recommendedBringSlotIndices = uniqueOrdered(
+    (recommendedFourSlotIndices ?? []).filter((slotIndex) => filledSet.has(slotIndex)),
+  ).slice(0, bringCount);
+  const recommendedBenchSlotIndices = getRecommendedBenchSlotIndices(normalizedFilledSlotIndices, recommendedBringSlotIndices, benchCount);
+  const fallbackBringSlotIndices = normalizedFilledSlotIndices.slice(0, bringCount);
+  const baseBringSlotIndices =
+    recommendedBringSlotIndices.length === bringCount ? recommendedBringSlotIndices : fallbackBringSlotIndices;
+  const safeManualBringSlotIndices = manualBringSlotIndices ?? [];
+  const lockedBringSlotIndices = uniqueOrdered(
+    safeManualBringSlotIndices.filter((slotIndex) => filledSet.has(slotIndex)),
+  ).slice(0, bringCount);
+  const autoFillPool = [...baseBringSlotIndices, ...normalizedFilledSlotIndices];
+  const lockedBringSet = new Set(lockedBringSlotIndices);
+  const autoFilledBringSlotIndices =
+    mode === "manual" && lockedBringSlotIndices.length > 0
+      ? autoFillPool.filter((slotIndex) => !lockedBringSet.has(slotIndex)).slice(0, Math.max(0, bringCount - lockedBringSlotIndices.length))
+      : [];
+  const bringSlotIndices =
+    mode === "manual" && lockedBringSlotIndices.length > 0
+      ? [...lockedBringSlotIndices, ...autoFilledBringSlotIndices].slice(0, bringCount)
+      : baseBringSlotIndices;
+  const bringSlotSet = new Set(bringSlotIndices);
+  const benchSlotIndices = normalizedFilledSlotIndices.filter((slotIndex) => !bringSlotSet.has(slotIndex));
 
   return {
     bringCount,
     benchCount,
-    bringSlotIndices: normalizedFilledSlotIndices.filter((slotIndex) => !benchSlotIndices.includes(slotIndex)),
+    bringSlotIndices,
     benchSlotIndices,
+    lockedBringSlotIndices,
+    autoFilledBringSlotIndices,
+    recommendedBringSlotIndices,
     recommendedBenchSlotIndices,
+    hasCompleteManualSelection: mode === "manual" && lockedBringSlotIndices.length === bringCount,
   };
 }
 
-export function toggleBenchSelection(options: {
-  currentBenchSlotIndices: number[];
+export function toggleBringSelection(options: {
+  currentBringSlotIndices: number[];
   slotIndex: number;
   filledSlotIndices: number[];
-  benchCount: number;
+  bringCount: number;
 }) {
-  const { currentBenchSlotIndices, slotIndex, filledSlotIndices, benchCount } = options;
+  const { currentBringSlotIndices, slotIndex, filledSlotIndices, bringCount } = options;
   const filledSet = new Set(filledSlotIndices);
-  if (!filledSet.has(slotIndex) || benchCount <= 0) {
-    return uniqueSorted(currentBenchSlotIndices.filter((candidate) => filledSet.has(candidate))).slice(0, benchCount);
+  if (!filledSet.has(slotIndex) || bringCount <= 0) {
+    return uniqueOrdered(currentBringSlotIndices.filter((candidate) => filledSet.has(candidate))).slice(0, bringCount);
   }
 
-  const current = currentBenchSlotIndices.filter((candidate) => filledSet.has(candidate));
+  const current = uniqueOrdered(currentBringSlotIndices.filter((candidate) => filledSet.has(candidate))).slice(0, bringCount);
   if (current.includes(slotIndex)) {
     return current.filter((candidate) => candidate !== slotIndex);
   }
-  if (current.length < benchCount) {
-    return uniqueSorted([...current, slotIndex]);
+  if (current.length < bringCount) {
+    return [...current, slotIndex];
   }
 
-  return uniqueSorted([...current.slice(1), slotIndex]);
+  return current;
 }

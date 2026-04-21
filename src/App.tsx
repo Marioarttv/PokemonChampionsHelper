@@ -122,7 +122,7 @@ import {
 } from "./lib/teamPreview";
 import {
   resolveBringSelection,
-  toggleBenchSelection,
+  toggleBringSelection,
   type BringSelectionMode,
 } from "./lib/bringSelection";
 import {
@@ -179,7 +179,6 @@ type LoadedTeamSlot = TeamSlotState & {
 type TeamMatrixMode = "defense" | "offense";
 type DamageCalcMode = "attack" | "defend";
 type TeamBuilderFormat = "all" | "regulationMA";
-type BringSelectionCardState = "bring" | "bench";
 type LeadSummary = {
   slotIndex: number;
   pokemon: PokemonRecord;
@@ -5159,7 +5158,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const [analyzedOpponentEntries, setAnalyzedOpponentEntries] = useState<LoadedOpponentEntry[]>([]);
   const [teamPreviewSolverMode, setTeamPreviewSolverMode] = useState<TeamPreviewSolverMode>("sparse");
   const [bringSelectionMode, setBringSelectionMode] = useState<BringSelectionMode>("auto");
-  const [manualBenchSlotIndices, setManualBenchSlotIndices] = useState<number[]>([]);
+  const [manualBringSlotIndices, setManualBringSlotIndices] = useState<number[]>([]);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [database, setDatabase] = useState<PokemonRecord[] | null>(null);
   const [battleData, setBattleData] = useState<{
@@ -6631,6 +6630,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     return recommendTeamPreview({
       ally: battleEngineAllyMembers.map((member) => ({
         ...member,
+        isActive: false,
         currentHp: undefined,
         currentHpPercent: 100,
         stages: undefined,
@@ -6685,25 +6685,47 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     doublesEnemyTailwind,
     doublesTrickRoom,
     moveByKey,
-    teamPreviewSolverMode,
-  ]);
+      teamPreviewSolverMode,
+    ]);
+  const solverBringOrder = useMemo(() => {
+    if (!teamPreviewRecommendation) {
+      return [];
+    }
+
+    const leadOrder = teamPreviewRecommendation.primaryLead.filter(
+      (slotIndex, index, current) =>
+        filledTeamSlotIndices.includes(slotIndex) && current.indexOf(slotIndex) === index,
+    );
+    const remainingBring = teamPreviewRecommendation.bestFour.filter((slotIndex) => !leadOrder.includes(slotIndex));
+
+    return [...leadOrder, ...remainingBring].slice(0, Math.min(4, filledTeamSlotIndices.length));
+  }, [filledTeamSlotIndices, teamPreviewRecommendation]);
   const bringSelection = useMemo(
     () =>
       resolveBringSelection({
         filledSlotIndices: filledTeamSlotIndices,
-        recommendedFourSlotIndices: teamPreviewRecommendation?.bestFour ?? [],
-        manualBenchSlotIndices,
+        recommendedFourSlotIndices: solverBringOrder,
+        manualBringSlotIndices,
         mode: bringSelectionMode,
       }),
-    [bringSelectionMode, filledTeamSlotIndices, manualBenchSlotIndices, teamPreviewRecommendation?.bestFour],
-  );
-  const bringBenchSlotSet = useMemo(
-    () => new Set(bringSelection.benchSlotIndices),
-    [bringSelection.benchSlotIndices],
+    [bringSelectionMode, filledTeamSlotIndices, manualBringSlotIndices, solverBringOrder],
   );
   const bringSelectedSlotSet = useMemo(
     () => new Set(bringSelection.bringSlotIndices),
     [bringSelection.bringSlotIndices],
+  );
+  const lockedBringSlotSet = useMemo(
+    () => new Set(bringSelection.lockedBringSlotIndices),
+    [bringSelection.lockedBringSlotIndices],
+  );
+  const autoFilledBringSlotSet = useMemo(
+    () => new Set(bringSelection.autoFilledBringSlotIndices),
+    [bringSelection.autoFilledBringSlotIndices],
+  );
+  const bringPickOrderBySlot = useMemo(
+    () =>
+      new Map(bringSelection.lockedBringSlotIndices.map((slotIndex, index) => [slotIndex, index + 1] as const)),
+    [bringSelection.lockedBringSlotIndices],
   );
   const bringSelectedTeam = useMemo(
     () =>
@@ -6722,34 +6744,48 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     [bringSelectedTeam],
   );
   useEffect(() => {
-    setManualBenchSlotIndices((current) =>
+    setManualBringSlotIndices((current) =>
       current
         .filter((slotIndex) => filledTeamSlotIndices.includes(slotIndex))
-        .slice(0, bringSelection.benchCount),
+        .slice(0, bringSelection.bringCount),
     );
 
-    if (bringSelection.benchCount === 0 && bringSelectionMode !== "auto") {
+    if (bringSelection.bringCount === 0 && bringSelectionMode !== "auto") {
       setBringSelectionMode("auto");
     }
-  }, [bringSelection.benchCount, bringSelectionMode, filledTeamSlotIndices]);
-  const toggleBringBenchSlot = (slotIndex: number) => {
-    if (!filledTeamSlotIndices.includes(slotIndex) || bringSelection.benchCount === 0) {
+  }, [bringSelection.bringCount, bringSelectionMode, filledTeamSlotIndices]);
+  const seedThreatBoardLeadFromBringOrder = (bringSlotIndices: number[]) => {
+    setDoublesAllySelection(
+      normalizePairSelection([bringSlotIndices[0] ?? null, bringSlotIndices[1] ?? null], filledTeamSlotIndices, 0),
+    );
+  };
+  const toggleBringSlot = (slotIndex: number) => {
+    if (!filledTeamSlotIndices.includes(slotIndex) || bringSelection.bringCount === 0) {
       return;
     }
 
     setBringSelectionMode("manual");
-    setManualBenchSlotIndices((current) =>
-      toggleBenchSelection({
-        currentBenchSlotIndices: current,
+    setManualBringSlotIndices((current) => {
+      const nextManualBringSlotIndices = toggleBringSelection({
+        currentBringSlotIndices: current,
         slotIndex,
         filledSlotIndices: filledTeamSlotIndices,
-        benchCount: bringSelection.benchCount,
-      }),
-    );
+        bringCount: bringSelection.bringCount,
+      });
+      const nextBringSelection = resolveBringSelection({
+        filledSlotIndices: filledTeamSlotIndices,
+        recommendedFourSlotIndices: solverBringOrder,
+        manualBringSlotIndices: nextManualBringSlotIndices,
+        mode: "manual",
+      });
+      seedThreatBoardLeadFromBringOrder(nextBringSelection.bringSlotIndices);
+      return nextManualBringSlotIndices;
+    });
   };
-  const resetBringBenchSelection = () => {
+  const resetBringSelectionToSolver = () => {
     setBringSelectionMode("auto");
-    setManualBenchSlotIndices([]);
+    setManualBringSlotIndices([]);
+    seedThreatBoardLeadFromBringOrder(solverBringOrder);
   };
   const battleEngineAllyMemberBySlot = useMemo(
     () => new Map(battleEngineAllyMembers.map((member) => [member.teamIndex, member] as const)),
@@ -7951,120 +7987,6 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
 
             {selectedPokemon.length > 0 ? (
               <>
-                {bringSelection.bringCount > 0 ? (
-                  <article className="bring-selection-panel">
-                    <div className="bring-selection-panel__head">
-                      <div>
-                        <p className="eyebrow">Bring Filter</p>
-                        <h3>
-                          Leave out {bringSelection.benchCount} of {filledTeamSlotIndices.length}
-                        </h3>
-                      </div>
-
-                      <div className="bring-selection-panel__actions">
-                        <span className="mini-type-pill neutral-pill">
-                          {bringSelectionMode === "manual" ? "Manual override" : "Auto from solver"}
-                        </span>
-                        <button
-                          type="button"
-                          className="secondary-button"
-                          onClick={resetBringBenchSelection}
-                          disabled={
-                            bringSelectionMode === "auto" &&
-                            bringSelection.recommendedBenchSlotIndices.length === bringSelection.benchCount
-                          }
-                        >
-                          Use Solver Pick
-                        </button>
-                      </div>
-                    </div>
-
-                    <p className="selector-note team-elo-note">
-                      Enemy scoring still assumes any of their loaded six can appear in the back. On our side, the SE
-                      answers, OHKO scan, matchup Elo, and ally threat cards below only score the four you bring.
-                    </p>
-
-                    <div className="bring-selection-panel__summary">
-                      <div className="bring-selection-tray">
-                        <span className="bring-selection-tray__label">Scored Four</span>
-                        <div className="bring-selection-tray__chips">
-                          {bringSelection.bringSlotIndices.map((slotIndex) => {
-                            const pokemon = team[slotIndex]?.pokemon;
-                            return pokemon ? (
-                              <span key={`bring-chip-${slotIndex}`} className="bring-selection-chip">
-                                <PokemonSprite pokemon={pokemon} className="bring-selection-chip__sprite" />
-                                <span>{pokemon.name}</span>
-                              </span>
-                            ) : null;
-                          })}
-                        </div>
-                      </div>
-
-                      <div className="bring-selection-tray is-bench">
-                        <span className="bring-selection-tray__label">
-                          Left Out {bringSelection.benchCount > 0 ? `(${bringSelection.benchCount})` : ""}
-                        </span>
-                        <div className="bring-selection-tray__chips">
-                          {bringSelection.benchSlotIndices.length > 0 ? (
-                            bringSelection.benchSlotIndices.map((slotIndex) => {
-                              const pokemon = team[slotIndex]?.pokemon;
-                              return pokemon ? (
-                                <span key={`bench-chip-${slotIndex}`} className="bring-selection-chip is-bench">
-                                  <PokemonSprite pokemon={pokemon} className="bring-selection-chip__sprite" />
-                                  <span>{pokemon.name}</span>
-                                </span>
-                              ) : null;
-                            })
-                          ) : (
-                            <span className="bring-selection-empty">Everyone loaded is scored.</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {bringSelection.benchCount > 0 ? (
-                      <div className="bring-selection-grid">
-                        {filledTeamSlotIndices.map((slotIndex) => {
-                          const pokemon = team[slotIndex]?.pokemon;
-                          if (!pokemon) {
-                            return null;
-                          }
-
-                          const isBenched = bringBenchSlotSet.has(slotIndex);
-                          const isRecommendedBenched = bringSelection.recommendedBenchSlotIndices.includes(slotIndex);
-                          const cardState: BringSelectionCardState = isBenched ? "bench" : "bring";
-
-                          return (
-                            <button
-                              key={`bring-selection-${slotIndex}`}
-                              type="button"
-                              className={`bring-selection-card is-${cardState}${
-                                isRecommendedBenched ? " is-recommended-bench" : ""
-                              }`}
-                              onClick={() => toggleBringBenchSlot(slotIndex)}
-                              aria-pressed={isBenched}
-                            >
-                              <span className="bring-selection-card__slot">Slot {slotIndex + 1}</span>
-                              <PokemonSprite pokemon={pokemon} className="bring-selection-card__sprite" />
-                              <strong>{pokemon.name}</strong>
-                              <span className="bring-selection-card__state">
-                                {isBenched ? "Left out" : "Scored"}
-                              </span>
-                              <span className="bring-selection-card__hint">
-                                {isRecommendedBenched
-                                  ? "Solver says bench"
-                                  : bringSelection.recommendedBenchSlotIndices.length === bringSelection.benchCount
-                                    ? "Solver says bring"
-                                    : "Manual pick"}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : null}
-                  </article>
-                ) : null}
-
                 {analyzedOpponentEntries.length === 0 ? (
                   <p className="selector-note team-elo-note" style={{ marginBottom: "1rem" }}>
                     Run the bring-four analysis when you want. The bring-four preview appears once at least four enemy
@@ -8309,6 +8231,153 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                     Load at least four allies and four enemies to run the bring-four preview solver.
                   </p>
                 )}
+
+                {bringSelection.bringCount > 0 ? (
+                  <article className="bring-order-panel">
+                    <div className="bring-order-panel__head">
+                      <div className="bring-order-panel__copy">
+                        <p className="eyebrow">Bring Order</p>
+                        <h3>Pick your {bringSelection.bringCount}</h3>
+                        <p className="selector-note team-elo-note">
+                          Tap allies to assign Bring 1-4 like the in-game preview. Bring 1 and Bring 2 immediately seed
+                          Slot A and Slot B on the 2v2 Threat Board, while the matchup Elo, OHKO scan, and ally threat
+                          cards below only score the four you bring.
+                        </p>
+                      </div>
+
+                      <div className="bring-order-panel__actions">
+                        <span className="mini-type-pill neutral-pill">
+                          {bringSelectionMode === "manual"
+                            ? `${bringSelection.lockedBringSlotIndices.length}/${bringSelection.bringCount} locked`
+                            : "Solver order live"}
+                        </span>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={resetBringSelectionToSolver}
+                          disabled={bringSelectionMode === "auto" && bringSelection.lockedBringSlotIndices.length === 0}
+                        >
+                          Use Solver Order
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="bring-order-panel__summary">
+                      <div className="bring-order-tray">
+                        <span className="bring-order-tray__label">Current bring order</span>
+                        <div className="bring-order-tray__slots">
+                          {Array.from({ length: bringSelection.bringCount }, (_, orderIndex) => {
+                            const slotIndex = bringSelection.bringSlotIndices[orderIndex];
+                            const pokemon =
+                              slotIndex !== undefined && slotIndex !== null ? team[slotIndex]?.pokemon ?? null : null;
+                            const isLocked =
+                              slotIndex !== undefined && slotIndex !== null && lockedBringSlotSet.has(slotIndex);
+                            const isAutoFilled =
+                              slotIndex !== undefined && slotIndex !== null && autoFilledBringSlotSet.has(slotIndex);
+                            const roleLabel =
+                              orderIndex === 0 ? "Lead A" : orderIndex === 1 ? "Lead B" : `Back ${orderIndex - 1}`;
+
+                            return (
+                              <div
+                                key={`bring-order-slot-${orderIndex}-${slotIndex ?? "empty"}`}
+                                className={`bring-order-chip${isLocked ? " is-locked" : ""}${
+                                  isAutoFilled ? " is-autofill" : ""
+                                }`}
+                              >
+                                <span className="bring-order-chip__rank">{orderIndex + 1}</span>
+                                <div className="bring-order-chip__body">
+                                  <span className="bring-order-chip__role">{roleLabel}</span>
+                                  {pokemon ? (
+                                    <div className="bring-order-chip__pokemon">
+                                      <PokemonSprite pokemon={pokemon} className="bring-order-chip__sprite" />
+                                      <strong>{pokemon.name}</strong>
+                                    </div>
+                                  ) : (
+                                    <span className="bring-order-chip__empty">Open</span>
+                                  )}
+                                </div>
+                                <span className="bring-order-chip__source">
+                                  {isLocked ? "Picked" : isAutoFilled ? "Solver fill" : "Solver"}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="bring-order-tray is-bench">
+                        <span className="bring-order-tray__label">
+                          Left behind {bringSelection.benchCount > 0 ? `(${bringSelection.benchCount})` : ""}
+                        </span>
+                        <div className="bring-order-tray__chips">
+                          {bringSelection.benchSlotIndices.length > 0 ? (
+                            bringSelection.benchSlotIndices.map((slotIndex) => {
+                              const pokemon = team[slotIndex]?.pokemon;
+                              return pokemon ? (
+                                <span key={`bench-chip-${slotIndex}`} className="bring-order-mini-chip is-bench">
+                                  <PokemonSprite pokemon={pokemon} className="bring-order-mini-chip__sprite" />
+                                  <span>{pokemon.name}</span>
+                                </span>
+                              ) : null;
+                            })
+                          ) : (
+                            <span className="bring-order-empty">Everyone loaded is currently in the scored group.</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bring-order-grid">
+                      {filledTeamSlotIndices.map((slotIndex) => {
+                        const pokemon = team[slotIndex]?.pokemon;
+                        if (!pokemon) {
+                          return null;
+                        }
+
+                        const selectionRank = bringPickOrderBySlot.get(slotIndex);
+                        const isLocked = selectionRank !== undefined;
+                        const isAutoFilled = autoFilledBringSlotSet.has(slotIndex);
+                        const nextBringRank = Math.min(
+                          bringSelection.lockedBringSlotIndices.length + 1,
+                          bringSelection.bringCount,
+                        );
+                        const helperLabel = isLocked
+                          ? selectionRank <= 2
+                            ? "Click to remove and free that lead slot."
+                            : "Click to remove from the current bring order."
+                          : bringSelection.lockedBringSlotIndices.length < bringSelection.bringCount
+                            ? `Click to set Bring ${nextBringRank}.`
+                            : "Four picks are locked. Remove a numbered pick to swap.";
+
+                        return (
+                          <button
+                            key={`bring-order-${slotIndex}`}
+                            type="button"
+                            className={`bring-order-card${isLocked ? " is-selected" : ""}${
+                              isAutoFilled ? " is-autofill" : ""
+                            }`}
+                            onClick={() => toggleBringSlot(slotIndex)}
+                            aria-pressed={isLocked}
+                            aria-label={`${pokemon.name}${isLocked ? ` selected as Bring ${selectionRank}` : ` available for Bring ${nextBringRank}`}`}
+                          >
+                            <span className="bring-order-card__slot">Slot {slotIndex + 1}</span>
+                            {isLocked ? (
+                              <span className="bring-order-card__badge">{selectionRank}</span>
+                            ) : isAutoFilled ? (
+                              <span className="bring-order-card__badge is-autofill">Auto</span>
+                            ) : null}
+                            <PokemonSprite pokemon={pokemon} className="bring-order-card__sprite" />
+                            <strong>{pokemon.name}</strong>
+                            <span className="bring-order-card__state">
+                              {isLocked ? `Bring ${selectionRank}` : isAutoFilled ? "Solver fill" : "Available"}
+                            </span>
+                            <span className="bring-order-card__hint">{helperLabel}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </article>
+                ) : null}
 
                 <div className="damage-assumption-row">
                   <span className="damage-assumption-pill">{analyzedOpponentEntries.length} enemies scored</span>

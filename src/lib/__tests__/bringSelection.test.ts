@@ -4,7 +4,7 @@ import {
   getBringSelectionRequirements,
   getRecommendedBenchSlotIndices,
   resolveBringSelection,
-  toggleBenchSelection,
+  toggleBringSelection,
 } from "../bringSelection";
 
 describe("bringSelection", () => {
@@ -19,43 +19,69 @@ describe("bringSelection", () => {
     expect(getRecommendedBenchSlotIndices([0, 1, 2, 3, 4, 5], [0, 2, 3, 5], 2)).toEqual([1, 4]);
   });
 
-  it("prefers a complete manual bench override", () => {
+  it("uses a complete manual bring order", () => {
     expect(
       resolveBringSelection({
         filledSlotIndices: [0, 1, 2, 3, 4, 5],
         recommendedFourSlotIndices: [0, 1, 2, 3],
-        manualBenchSlotIndices: [2, 4],
+        manualBringSlotIndices: [5, 2, 4, 0],
         mode: "manual",
       }),
     ).toMatchObject({
-      bringSlotIndices: [0, 1, 3, 5],
-      benchSlotIndices: [2, 4],
+      bringSlotIndices: [5, 2, 4, 0],
+      benchSlotIndices: [1, 3],
+      lockedBringSlotIndices: [5, 2, 4, 0],
+      autoFilledBringSlotIndices: [],
       recommendedBenchSlotIndices: [4, 5],
     });
   });
 
-  it("falls back to the recommendation when manual benching is incomplete", () => {
+  it("fills the rest from the solver while manual bring picks are incomplete", () => {
     expect(
       resolveBringSelection({
         filledSlotIndices: [0, 1, 2, 3, 4, 5],
         recommendedFourSlotIndices: [0, 1, 2, 5],
-        manualBenchSlotIndices: [4],
+        manualBringSlotIndices: [4],
         mode: "manual",
       }),
     ).toMatchObject({
-      bringSlotIndices: [0, 1, 2, 5],
-      benchSlotIndices: [3, 4],
+      bringSlotIndices: [4, 0, 1, 2],
+      benchSlotIndices: [3, 5],
+      lockedBringSlotIndices: [4],
+      autoFilledBringSlotIndices: [0, 1, 2],
     });
   });
 
-  it("swaps the oldest benched mon when the bench is already full", () => {
+  it("appends manual picks until bring order is full", () => {
     expect(
-      toggleBenchSelection({
-        currentBenchSlotIndices: [1, 4],
+      toggleBringSelection({
+        currentBringSlotIndices: [1, 4],
         slotIndex: 5,
         filledSlotIndices: [0, 1, 2, 3, 4, 5],
-        benchCount: 2,
+        bringCount: 4,
       }),
-    ).toEqual([4, 5]);
+    ).toEqual([1, 4, 5]);
+  });
+
+  it("removes an already-picked mon from the manual order", () => {
+    expect(
+      toggleBringSelection({
+        currentBringSlotIndices: [1, 4, 5],
+        slotIndex: 4,
+        filledSlotIndices: [0, 1, 2, 3, 4, 5],
+        bringCount: 4,
+      }),
+    ).toEqual([1, 5]);
+  });
+
+  it("does not auto-replace a pick when the manual order is already full", () => {
+    expect(
+      toggleBringSelection({
+        currentBringSlotIndices: [1, 2, 3, 4],
+        slotIndex: 5,
+        filledSlotIndices: [0, 1, 2, 3, 4, 5],
+        bringCount: 4,
+      }),
+    ).toEqual([1, 2, 3, 4]);
   });
 });

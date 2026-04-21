@@ -360,6 +360,7 @@ function createCombatantState(
     itemId,
     itemName: member.itemName?.trim() || null,
     itemConsumed: false,
+    flashFireBoosted: false,
     stages: {
       attack: clampStage(member.stages?.attack ?? attackStage),
       defense: clampStage(member.stages?.defense ?? defenseStage),
@@ -727,6 +728,10 @@ export function getDamagePreview(
 
   if (attacker.statusCondition === "burn" && move.category === "physical") {
     externalMultiplier *= 0.5;
+  }
+
+  if (getAbilityKey(attacker) === "flashfire" && attacker.flashFireBoosted && move.type === "fire") {
+    externalMultiplier *= 1.5;
   }
 
   if (externalMultiplier !== 1) {
@@ -1450,6 +1455,7 @@ function executeSwitch(state: BattleState, action: BattleAction & { type: "switc
   sideState.activeIds[activeIndex] = switchIn.id;
   removeBenchId(sideState, switchIn.id);
   addBenchId(sideState, actor.id);
+  maybeApplyRegenerator(state, actor, events);
   switchIn.wasSwitchedInThisTurn = true;
   actor.wasSwitchedInThisTurn = false;
   events.push({
@@ -1523,6 +1529,32 @@ function getRestoringStageDelta(delta: BattleStageDelta | undefined): BattleStag
   }
 
   return restoring;
+}
+
+function getNegativeOnlyStageDelta(delta: BattleStageDelta | undefined): BattleStageDelta {
+  const negativeOnly: BattleStageDelta = {};
+
+  for (const stageKey of STAGE_KEYS) {
+    const change = delta?.[stageKey] ?? 0;
+    if (change < 0) {
+      negativeOnly[stageKey] = change;
+    }
+  }
+
+  return negativeOnly;
+}
+
+function stripNegativeStageDelta(delta: BattleStageDelta | undefined): BattleStageDelta {
+  const stripped: BattleStageDelta = {};
+
+  for (const stageKey of STAGE_KEYS) {
+    const change = delta?.[stageKey] ?? 0;
+    if (change > 0) {
+      stripped[stageKey] = change;
+    }
+  }
+
+  return stripped;
 }
 
 function canUseFocusSash(target: BattleCombatantState, damage: number) {
@@ -1671,10 +1703,52 @@ function applyReactiveStageDelta(
   events: TurnEvent[],
   options?: {
     source?: BattleCombatantState | null;
+    cause?: "intimidate" | "move" | "other";
+    allowReflection?: boolean;
   },
 ) {
   const source = options?.source ?? null;
-  const adjustedDelta = getAbilityKey(target) === "contrary" ? invertStageDelta(delta) : delta;
+  const cause = options?.cause ?? "other";
+  const allowReflection = options?.allowReflection ?? true;
+  const abilityKey = getAbilityKey(target);
+  let adjustedDelta = abilityKey === "contrary" ? invertStageDelta(delta) : delta;
+
+  if (source && source.side !== target.side && hasNegativeStageDelta(adjustedDelta)) {
+    const negativeDelta = getNegativeOnlyStageDelta(adjustedDelta);
+
+    if (
+      abilityKey === "clearbody" ||
+      abilityKey === "whitesmoke" ||
+      abilityKey === "fullmetalbody" ||
+      (cause === "intimidate" &&
+        (abilityKey === "innerfocus" ||
+          abilityKey === "owntempo" ||
+          abilityKey === "scrappy" ||
+          abilityKey === "oblivious"))
+    ) {
+      adjustedDelta = stripNegativeStageDelta(adjustedDelta);
+      if (hasAnyStageDelta(negativeDelta)) {
+        events.push({
+          targetId: target.id,
+          text: `${target.pokemon.name}'s ${target.abilityName ?? "ability"} prevents the stat drop.`,
+        });
+      }
+    } else if (abilityKey === "mirrorarmor" && allowReflection) {
+      adjustedDelta = stripNegativeStageDelta(adjustedDelta);
+      if (hasAnyStageDelta(negativeDelta)) {
+        events.push({
+          targetId: target.id,
+          text: `${target.pokemon.name}'s Mirror Armor reflects the stat drop.`,
+        });
+        applyReactiveStageDelta(source, negativeDelta, events, {
+          source: target,
+          cause,
+          allowReflection: false,
+        });
+      }
+    }
+  }
+
   const actualDelta = applyStageDeltaDetailed(target, adjustedDelta);
 
   if (!hasAnyStageDelta(actualDelta)) {
@@ -1693,7 +1767,7 @@ function applyIntimidate(state: BattleState, source: BattleCombatantState, event
       continue;
     }
 
-    const actualDelta = applyReactiveStageDelta(target, { attack: -1 }, events, { source });
+    const actualDelta = applyReactiveStageDelta(target, { attack: -1 }, events, { source, cause: "intimidate" });
     if (hasAnyStageDelta(actualDelta)) {
       events.push({
         actorId: source.id,
@@ -1722,6 +1796,181 @@ function applyInitialEntryEffects(state: BattleState) {
 
   for (const combatantId of initialActiveIds) {
     triggerEntryAbility(state, combatantId, []);
+  }
+}
+
+function getAbsorbRedirectTargetId(state: BattleState, side: BattleSide, move: BattleMoveOption) {
+  if (move.targetKind !== "singleOpponent" || !move.type) {
+    return null;
+  }
+
+  const redirectAbility =
+    move.type === "water" ? "stormdrain" : move.type === "electric" ? "lightningrod" : null;
+  if (!redirectAbility) {
+    return null;
+  }
+
+  return (
+    getActiveIds(state, side).find((combatantId) => {
+      const combatant = state.combatants[combatantId];
+      return combatant ? getAbilityKey(combatant) === redirectAbility : false;
+    }) ?? null
+  );
+}
+
+function maybeApplyRegenerator(state: BattleState, combatant: BattleCombatantState, events: TurnEvent[]) {
+  if (getAbilityKey(combatant) !== "regenerator" || combatant.currentHp <= 0) {
+    return;
+  }
+
+  const missingHp = combatant.maxHp - combatant.currentHp;
+  const restored = Math.min(missingHp, Math.max(1, Math.floor(combatant.maxHp / 3)));
+  if (restored <= 0) {
+    return;
+  }
+
+  combatant.currentHp += restored;
+  events.push({
+    targetId: combatant.id,
+    text: `${combatant.pokemon.name} restores ${restored} HP with Regenerator.`,
+  });
+}
+
+function maybeTriggerAbilityAbsorb(
+  state: BattleState,
+  actor: BattleCombatantState,
+  target: BattleCombatantState,
+  move: BattleMoveOption,
+  events: TurnEvent[],
+) {
+  if (!move.type) {
+    return false;
+  }
+
+  const abilityKey = getAbilityKey(target);
+  if (move.type === "water" && abilityKey === "waterabsorb") {
+    const healed = healCombatant(state, target.id, 0.25);
+    events.push({ actorId: actor.id, targetId: target.id, text: `${target.pokemon.name}'s Water Absorb nullifies ${move.name}.${healed > 0 ? ` It restores ${healed} HP.` : ""}` });
+    return true;
+  }
+
+  if (move.type === "electric" && abilityKey === "voltabsorb") {
+    const healed = healCombatant(state, target.id, 0.25);
+    events.push({ actorId: actor.id, targetId: target.id, text: `${target.pokemon.name}'s Volt Absorb nullifies ${move.name}.${healed > 0 ? ` It restores ${healed} HP.` : ""}` });
+    return true;
+  }
+
+  if (move.type === "ground" && abilityKey === "eartheater") {
+    const healed = healCombatant(state, target.id, 0.25);
+    events.push({ actorId: actor.id, targetId: target.id, text: `${target.pokemon.name}'s Earth Eater nullifies ${move.name}.${healed > 0 ? ` It restores ${healed} HP.` : ""}` });
+    return true;
+  }
+
+  if (move.type === "fire" && abilityKey === "flashfire") {
+    target.flashFireBoosted = true;
+    events.push({ actorId: actor.id, targetId: target.id, text: `${target.pokemon.name}'s Flash Fire nullifies ${move.name} and powers up its Fire moves.` });
+    return true;
+  }
+
+  if (move.type === "water" && abilityKey === "stormdrain") {
+    applyStageDelta(target, { specialAttack: 1 });
+    events.push({ actorId: actor.id, targetId: target.id, text: `${target.pokemon.name}'s Storm Drain nullifies ${move.name} and raises its Special Attack.` });
+    return true;
+  }
+
+  if (move.type === "electric" && abilityKey === "lightningrod") {
+    applyStageDelta(target, { specialAttack: 1 });
+    events.push({ actorId: actor.id, targetId: target.id, text: `${target.pokemon.name}'s Lightning Rod nullifies ${move.name} and raises its Special Attack.` });
+    return true;
+  }
+
+  if (move.type === "electric" && abilityKey === "motordrive") {
+    applyStageDelta(target, { speed: 1 });
+    events.push({ actorId: actor.id, targetId: target.id, text: `${target.pokemon.name}'s Motor Drive nullifies ${move.name} and raises its Speed.` });
+    return true;
+  }
+
+  if (move.type === "grass" && abilityKey === "sapsipper") {
+    applyStageDelta(target, { attack: 1 });
+    events.push({ actorId: actor.id, targetId: target.id, text: `${target.pokemon.name}'s Sap Sipper nullifies ${move.name} and raises its Attack.` });
+    return true;
+  }
+
+  return false;
+}
+
+function maybeTriggerOnHitAbility(
+  target: BattleCombatantState,
+  actor: BattleCombatantState,
+  move: BattleMoveOption,
+  appliedDamage: number,
+  previousHp: number,
+  events: TurnEvent[],
+) {
+  if (appliedDamage <= 0 || !move.type) {
+    return;
+  }
+
+  const abilityKey = getAbilityKey(target);
+  if (abilityKey === "stamina") {
+    applyStageDelta(target, { defense: 1 });
+    events.push({ targetId: target.id, text: `${target.pokemon.name}'s Stamina raises its Defense.` });
+  }
+
+  if (abilityKey === "weakarmor" && move.category === "physical") {
+    applyReactiveStageDelta(target, { defense: -1, speed: 2 }, events, { source: actor, cause: "move" });
+    events.push({ targetId: target.id, text: `${target.pokemon.name}'s Weak Armor trades Defense for Speed.` });
+  }
+
+  if (abilityKey === "berserk" && target.currentHp > 0 && previousHp > target.maxHp / 2 && target.currentHp <= target.maxHp / 2) {
+    applyStageDelta(target, { specialAttack: 1 });
+    events.push({ targetId: target.id, text: `${target.pokemon.name}'s Berserk raises its Special Attack.` });
+  }
+
+  if (abilityKey === "justified" && move.type === "dark") {
+    applyStageDelta(target, { attack: 1 });
+    events.push({ targetId: target.id, text: `${target.pokemon.name}'s Justified raises its Attack.` });
+  }
+
+  if (abilityKey === "rattled" && (move.type === "bug" || move.type === "ghost" || move.type === "dark")) {
+    applyStageDelta(target, { speed: 1 });
+    events.push({ targetId: target.id, text: `${target.pokemon.name}'s Rattled raises its Speed.` });
+  }
+}
+
+function maybeTriggerKoAbility(actor: BattleCombatantState, events: TurnEvent[]) {
+  const abilityKey = getAbilityKey(actor);
+  if (abilityKey === "moxie") {
+    applyStageDelta(actor, { attack: 1 });
+    events.push({ actorId: actor.id, text: `${actor.pokemon.name}'s Moxie raises its Attack.` });
+    return;
+  }
+
+  if (abilityKey === "grimneigh") {
+    applyStageDelta(actor, { specialAttack: 1 });
+    events.push({ actorId: actor.id, text: `${actor.pokemon.name}'s Grim Neigh raises its Special Attack.` });
+    return;
+  }
+
+  if (abilityKey !== "beastboost") {
+    return;
+  }
+
+  const stats = getChampionsComputedStats(actor.pokemon, {
+    spread: actor.statSpread,
+  });
+  const rankedStats: Array<[keyof BattleStatStages, number]> = [
+    ["attack", stats.atk],
+    ["defense", stats.def],
+    ["specialAttack", stats.spa],
+    ["specialDefense", stats.spd],
+    ["speed", stats.spe],
+  ];
+  const highestStat = rankedStats.sort((left, right) => right[1] - left[1])[0]?.[0];
+
+  if (highestStat) {
+    applyStageDelta(actor, { [highestStat]: 1 } as BattleStageDelta);
+    events.push({ actorId: actor.id, text: `${actor.pokemon.name}'s Beast Boost raises its ${highestStat}.` });
   }
 }
 
@@ -1765,7 +2014,8 @@ function resolveSingleTarget(state: BattleState, actor: BattleCombatantState, or
 
   const redirectedId = state.sides[originalTarget.side].redirectionTargetId;
   if (!redirectedId || !isCombatantAlive(state, redirectedId) || move.targetKind !== "singleOpponent") {
-    return originalTargetId;
+    const abilityRedirectId = getAbsorbRedirectTargetId(state, originalTarget.side, move);
+    return abilityRedirectId ?? originalTargetId;
   }
 
   return redirectedId;
@@ -1863,7 +2113,7 @@ function applyOnHitEffects(
 ) {
   const chanceGated = (move.effectData?.secondaryChance ?? move.effectData?.flinchChance ?? 100) < 100;
   if (move.effectData?.targetStages && (!chanceGated || shouldProcSecondary)) {
-    applyReactiveStageDelta(target, move.effectData.targetStages, events, { source: actor });
+    applyReactiveStageDelta(target, move.effectData.targetStages, events, { source: actor, cause: "move" });
     events.push({
       targetId: target.id,
       text: `${target.pokemon.name}'s stats shift after ${actor.pokemon.name}'s ${move.name}.`,
@@ -2054,7 +2304,7 @@ function executeMove(
   }
 
   if (move.effectKind === "boost") {
-    applyReactiveStageDelta(actor, move.effectData?.selfStages, events, { source: actor });
+    applyReactiveStageDelta(actor, move.effectData?.selfStages, events, { source: actor, cause: "move" });
     events.push({ actorId: actor.id, text: `${actor.pokemon.name} powers up with ${move.name}.` });
     return;
   }
@@ -2112,7 +2362,7 @@ function executeMove(
       let appliedAnything = false;
       if (move.effectData?.targetStages) {
         appliedAnything =
-          hasAnyStageDelta(applyReactiveStageDelta(target, move.effectData.targetStages, events, { source: actor })) ||
+          hasAnyStageDelta(applyReactiveStageDelta(target, move.effectData.targetStages, events, { source: actor, cause: "move" })) ||
           appliedAnything;
       }
       if (move.effectData?.statusCondition && applyStatusCondition(state, target, move.effectData.statusCondition, move)) {
@@ -2176,6 +2426,11 @@ function executeMove(
       continue;
     }
 
+    const previousHp = target.currentHp;
+    if (maybeTriggerAbilityAbsorb(state, actor, target, move, events)) {
+      continue;
+    }
+
     const damage = getDamageAmountForMode(damageMode, preview.estimate);
     const usedFocusSash = canUseFocusSash(target, damage);
     const appliedDamage = applyDamage(state, targetId, usedFocusSash ? target.currentHp - 1 : damage);
@@ -2217,6 +2472,7 @@ function executeMove(
         shouldSecondaryProc(move, secondaryMode),
         actedIds,
       );
+      maybeTriggerOnHitAbility(target, actor, move, appliedDamage, previousHp, events);
       maybeTriggerSitrusBerry(state, target, events);
     }
 
@@ -2226,6 +2482,7 @@ function executeMove(
         targetId,
         text: `${target.pokemon.name} faints.`,
       });
+      maybeTriggerKoAbility(actor, events);
     }
   }
 
