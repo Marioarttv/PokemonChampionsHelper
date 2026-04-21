@@ -1,4 +1,5 @@
 import type { PokemonType } from "../data/typeChart";
+import type { ChampionsStatSpread } from "./championsStats";
 
 export type PersistedAttackTypeDefaults = Partial<Record<PokemonType, number>>;
 export type PersistedAttackTypeSpreadDefaults = Partial<Record<PokemonType, boolean>>;
@@ -27,6 +28,8 @@ export type PersistedSavedAttack = {
 export type PersistedTeamSlot = {
   query: string;
   pokemonId: string | null;
+  itemName?: string | null;
+  statSpread?: ChampionsStatSpread | null;
   savedAttacks?: PersistedSavedAttack[];
   knownMoves?: PersistedKnownMove[];
   attackTypes?: PokemonType[];
@@ -40,7 +43,7 @@ export type PersistedTeam = {
   id: string;
   name: string;
   updatedAt: string;
-  version: 1 | 2 | 3 | 4 | 5;
+  version: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   slots: PersistedTeamSlot[];
   openerSelections?: PersistedOpenerSelection[];
 };
@@ -103,7 +106,7 @@ export async function saveTeam(team: Omit<PersistedTeam, "id" | "updatedAt" | "v
       : `team-${Date.now()}`),
     name: team.name,
     updatedAt: new Date().toISOString(),
-    version: 5,
+    version: 7,
     slots: team.slots,
     openerSelections: team.openerSelections,
   };

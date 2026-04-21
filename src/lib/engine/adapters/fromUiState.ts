@@ -1,6 +1,10 @@
 import { getTypeFromLabel } from "../../../data/typeChart";
 import type { MoveRecord } from "../../battleData";
-import { getLevel50HpValue } from "../../damage";
+import {
+  getChampionsComputedStats,
+  normalizeChampionsStatSpread,
+  type ChampionsStatSpread,
+} from "../../championsStats";
 import { getOpponentPreset, getOpponentPresetKnownMoves } from "../../opponentMovePresets";
 import type { PokemonRecord } from "../../pokemonDb";
 import type { PersistedKnownMove, PersistedSavedAttack } from "../../savedTeams";
@@ -17,6 +21,7 @@ export type ResolvedUiMoveset = {
   allMoveNames: string[];
   abilityName: string | null;
   itemName: string | null;
+  statSpread: ChampionsStatSpread | null;
   movesetSource: StoredMovesetSource;
 };
 
@@ -225,10 +230,13 @@ export function resolveStoredOrPresetMoveset(input: ResolveStoredOrPresetMoveset
   const directCustomAbilityName = directSpeciesMoveset?.abilityName?.trim() || null;
   const inheritedCustomAbilityName = inheritedSpeciesMoveset?.abilityName?.trim() || null;
   const customItemName = speciesMoveset?.itemName?.trim() || null;
+  const customStatSpread = speciesMoveset?.statSpread ? normalizeChampionsStatSpread(speciesMoveset.statSpread) : null;
   const presetAbilityName = getResolvedPresetAbilityName(pokemon, preset);
   const presetItemName = preset?.itemName?.trim() || null;
   const resolvedCustomAbilityName = directCustomAbilityName ?? (isChampionsMegaEntry(pokemon) ? null : inheritedCustomAbilityName);
-  const hasCustomOverride = Boolean(speciesMoveset && (knownMoves.length > 0 || resolvedCustomAbilityName || customItemName));
+  const hasCustomOverride = Boolean(
+    speciesMoveset && (knownMoves.length > 0 || resolvedCustomAbilityName || customItemName || customStatSpread),
+  );
 
   return {
     savedAttacks:
@@ -239,6 +247,7 @@ export function resolveStoredOrPresetMoveset(input: ResolveStoredOrPresetMoveset
     allMoveNames: knownMoves.length > 0 ? knownMoves.map((move) => getMoveName(move)) : preset?.moveNames ? [...preset.moveNames] : [],
     abilityName: resolvedCustomAbilityName ?? presetAbilityName,
     itemName: customItemName ?? presetItemName,
+    statSpread: customStatSpread,
     movesetSource: hasCustomOverride ? "custom" : preset ? "preset" : "none",
   };
 }
@@ -280,13 +289,16 @@ function buildStabProxyKnownMoves(pokemon: PokemonRecord) {
 }
 
 export function buildAllyBattleStateMember(input: AllyMemberInput & { moveByKey: ReadonlyMap<string, MoveRecord> }) {
-  const maxHp = getLevel50HpValue(input.pokemon.baseStats.hp);
+  const maxHp = getChampionsComputedStats(input.pokemon, {
+    spread: input.resolvedMoveset.statSpread,
+  }).hp;
   const explicitKnownMoves = buildExplicitKnownMoves(input.slotSavedAttacks, input.resolvedMoveset, input.moveByKey);
 
   return {
     id: `ally-${input.slotIndex}`,
     label: `Slot ${input.slotIndex + 1}`,
     pokemon: input.pokemon,
+    statSpread: input.resolvedMoveset.statSpread,
     teamIndex: input.slotIndex,
     currentHp: Math.max(0, Math.min(maxHp, Math.round((maxHp * input.runtime.hpPercent) / 100))),
     abilityName: input.resolvedMoveset.abilityName,
@@ -326,6 +338,7 @@ export function buildEnemyBattleStateMember(input: EnemyMemberInput) {
     id: `enemy-${input.slotIndex}`,
     label: `Enemy ${input.slotIndex + 1}`,
     pokemon: input.pokemon,
+    statSpread: input.resolvedMoveset.statSpread,
     teamIndex: input.slotIndex,
     currentHpPercent: input.runtime.hpPercent,
     abilityName: input.resolvedMoveset.abilityName,

@@ -5,6 +5,7 @@ import type { DamageCategory, DamageTerrain, DamageWeather } from "../damage";
 import type { DamageItemId } from "../damageItems";
 import type { PokemonRecord } from "../pokemonDb";
 import type { PersistedKnownMove, PersistedSavedAttack } from "../savedTeams";
+import type { ChampionsStatSpread } from "../championsStats";
 
 export type BattleSide = "ally" | "enemy";
 export type DamageRollMode = "min" | "average" | "max";
@@ -109,6 +110,7 @@ export type BattleCombatantState = {
   teamIndex: number;
   label: string;
   pokemon: PokemonRecord;
+  statSpread: ChampionsStatSpread | null;
   maxHp: number;
   currentHp: number;
   turnsActive: number;
@@ -116,6 +118,7 @@ export type BattleCombatantState = {
   abilityName: string | null;
   itemId: DamageItemId;
   itemName: string | null;
+  itemConsumed: boolean;
   stages: BattleStatStages;
   statusCondition: BattleStatusCondition;
   sleepTurns: number;
@@ -228,6 +231,7 @@ export type BattleStateMemberInput = {
   id: string;
   label: string;
   pokemon: PokemonRecord;
+  statSpread?: ChampionsStatSpread | null;
   teamIndex: number;
   currentHp?: number;
   currentHpPercent?: number;

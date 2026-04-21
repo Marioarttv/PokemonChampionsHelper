@@ -30,6 +30,7 @@ type FixtureMemberOptions = {
   pokemon: PokemonRecord;
   moveNames?: string[];
   currentHpPercent?: number;
+  itemName?: string | null;
   statusCondition?: BattleStateMemberInput["statusCondition"];
   sleepTurns?: number;
   turnsActive?: number;
@@ -106,6 +107,7 @@ export function makeMember(options: FixtureMemberOptions): BattleStateMemberInpu
     teamIndex: options.slot,
     moveNames: options.moveNames ?? [],
     currentHpPercent: options.currentHpPercent ?? 100,
+    itemName: options.itemName ?? null,
     statusCondition: options.statusCondition ?? "none",
     sleepTurns: options.sleepTurns ?? 0,
     turnsActive: options.turnsActive ?? 0,

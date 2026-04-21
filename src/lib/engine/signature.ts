@@ -24,6 +24,7 @@ export function buildBattleEngineInputSignature(options: BattleEngineInputSignat
     turnsActive: member.turnsActive ?? 0,
     abilityName: member.abilityName ?? null,
     itemName: member.itemName ?? null,
+    statSpread: member.statSpread ?? null,
     knowledge: isEnemy ? member.knowledge ?? "known" : undefined,
     savedAttacks:
       member.savedAttacks?.map((attack) => ({

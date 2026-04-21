@@ -7,9 +7,15 @@ export type DamageItemId =
   | "lifeorb"
   | "choiceband"
   | "choicespecs"
+  | "choicescarf"
   | "expertbelt"
   | "muscleband"
   | "wiseglasses"
+  | "focussash"
+  | "sitrusberry"
+  | "leftovers"
+  | "blacksludge"
+  | "whiteherb"
   | "charcoal"
   | "mysticwater"
   | "magnet"
@@ -54,9 +60,15 @@ const DAMAGE_ITEM_OPTIONS: DamageItemOption[] = [
   { id: "lifeorb", label: "Life Orb", roles: ["attacker"], description: "Boosts move damage by 1.3x." },
   { id: "choiceband", label: "Choice Band", roles: ["attacker"], description: "Boosts physical damage by 1.5x." },
   { id: "choicespecs", label: "Choice Specs", roles: ["attacker"], description: "Boosts special damage by 1.5x." },
+  { id: "choicescarf", label: "Choice Scarf", roles: ["attacker"], description: "Boosts Speed by 1.5x." },
   { id: "expertbelt", label: "Expert Belt", roles: ["attacker"], description: "Boosts super-effective damage by 1.2x." },
   { id: "muscleband", label: "Muscle Band", roles: ["attacker"], description: "Boosts physical damage by 1.1x." },
   { id: "wiseglasses", label: "Wise Glasses", roles: ["attacker"], description: "Boosts special damage by 1.1x." },
+  { id: "focussash", label: "Focus Sash", roles: ["defender"], description: "Survive one lethal hit from full HP with 1 HP." },
+  { id: "sitrusberry", label: "Sitrus Berry", roles: ["defender"], description: "Restores 25% HP when dropping to half HP or lower." },
+  { id: "leftovers", label: "Leftovers", roles: ["defender"], description: "Restores 1/16 max HP at the end of each turn." },
+  { id: "blacksludge", label: "Black Sludge", roles: ["defender"], description: "Restores Poison-types each turn and damages other holders." },
+  { id: "whiteherb", label: "White Herb", roles: ["attacker", "defender"], description: "Restores lowered stats once, then is consumed." },
   { id: "charcoal", label: "Charcoal", roles: ["attacker"], description: "Boosts Fire-type damage by 1.2x." },
   { id: "mysticwater", label: "Mystic Water", roles: ["attacker"], description: "Boosts Water-type damage by 1.2x." },
   { id: "magnet", label: "Magnet", roles: ["attacker"], description: "Boosts Electric-type damage by 1.2x." },
@@ -215,4 +227,16 @@ export function getDefenderItemModifier(options: {
   }
 
   return typeMultiplier > 1 && resistedType === attackType ? 0.5 : 1;
+}
+
+export function isResistBerryItem(itemId: DamageItemId) {
+  return Object.prototype.hasOwnProperty.call(RESIST_BERRY_ATTACK_TYPES, itemId);
+}
+
+export function doesDefenderItemReduceDamage(options: {
+  attackType: string;
+  defenderItem: DamageItemId;
+  typeMultiplier: number;
+}) {
+  return getDefenderItemModifier(options) < 1;
 }

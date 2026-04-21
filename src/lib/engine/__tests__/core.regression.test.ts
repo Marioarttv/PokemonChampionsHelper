@@ -238,4 +238,155 @@ describe("engine regression coverage", () => {
 
     expect(result.state.combatants["enemy-0"].statusCondition).toBe("none");
   });
+
+  it("applies Choice Scarf speed when ordering actions", () => {
+    const scarfUser = makePokemon("Scarf User", { baseStats: { atk: 120, spe: 100 } });
+    const fasterTarget = makePokemon("Faster Target", { baseStats: { atk: 110, spe: 110 } });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 60, target: "normal" });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: scarfUser, moveNames: ["Tackle"], itemName: "Choice Scarf" })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: fasterTarget, moveNames: ["Tackle"] })],
+      moves: [tackle],
+    });
+
+    const result = resolveTurn(
+      state,
+      buildMovePlan(state, "ally", [{ actorId: "ally-0", moveName: "Tackle", targetId: "enemy-0" }]),
+      buildMovePlan(state, "enemy", [{ actorId: "enemy-0", moveName: "Tackle", targetId: "ally-0" }]),
+    );
+
+    const firstAttackEvent = result.events.find((event) => event.text.includes("uses Tackle on"));
+    expect(firstAttackEvent?.actorId).toBe("ally-0");
+  });
+
+  it("lets Focus Sash preserve a combatant at 1 HP only once", () => {
+    const attacker = makePokemon("Big Hitter", { baseStats: { atk: 180, spe: 110 } });
+    const sashHolder = makePokemon("Sash Holder", { baseStats: { hp: 90, def: 70, spe: 70 } });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 150, target: "normal" });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: attacker, moveNames: ["Tackle"] })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: sashHolder, moveNames: [], itemName: "Focus Sash" })],
+      moves: [tackle],
+    });
+
+    const firstTurn = resolveTurn(
+      state,
+      buildMovePlan(state, "ally", [{ actorId: "ally-0", moveName: "Tackle", targetId: "enemy-0" }]),
+      buildPassPlan(state, "enemy", ["enemy-0"]),
+    );
+
+    expect(firstTurn.state.combatants["enemy-0"].currentHp).toBe(1);
+    expect(firstTurn.state.combatants["enemy-0"].itemConsumed).toBe(true);
+
+    const secondTurn = resolveTurn(
+      firstTurn.state,
+      buildMovePlan(firstTurn.state, "ally", [{ actorId: "ally-0", moveName: "Tackle", targetId: "enemy-0" }]),
+      buildPassPlan(firstTurn.state, "enemy", ["enemy-0"]),
+    );
+
+    expect(secondTurn.state.combatants["enemy-0"].currentHp).toBe(0);
+  });
+
+  it("consumes resist berries so later damage previews no longer get the reduction", () => {
+    const attacker = makePokemon("Fire Attacker", { types: ["Fire"], baseStats: { spa: 150, spe: 110 } });
+    const defender = makePokemon("Grass Defender", { types: ["Grass"], baseStats: { hp: 200, spd: 130, spe: 70 } });
+    const flamethrower = makeMove("Flamethrower", {
+      type: "Fire",
+      category: "Special",
+      basePower: 90,
+      target: "normal",
+    });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: attacker, moveNames: ["Flamethrower"] })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: defender, moveNames: [], itemName: "Occa Berry" })],
+      moves: [flamethrower],
+    });
+
+    const before = getDamagePreview(state, "ally-0", "enemy-0", state.combatants["ally-0"].knownMoves[0]!);
+    const result = resolveTurn(
+      state,
+      buildMovePlan(state, "ally", [{ actorId: "ally-0", moveName: "Flamethrower", targetId: "enemy-0" }]),
+      buildPassPlan(state, "enemy", ["enemy-0"]),
+    );
+    const after = getDamagePreview(result.state, "ally-0", "enemy-0", result.state.combatants["ally-0"].knownMoves[0]!);
+
+    expect(result.state.combatants["enemy-0"].itemConsumed).toBe(true);
+    expect(after?.estimate.averageDamage).toBeGreaterThan(before?.estimate.averageDamage ?? 0);
+  });
+
+  it("triggers Sitrus Berry after dropping to half HP or lower", () => {
+    const attacker = makePokemon("Berry Breaker", { baseStats: { atk: 170, spe: 110 } });
+    const defender = makePokemon("Berry Holder", { baseStats: { hp: 180, def: 75, spe: 70 } });
+    const crunch = makeMove("Crunch", { type: "Dark", category: "Physical", basePower: 120, target: "normal" });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: attacker, moveNames: ["Crunch"] })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: defender, moveNames: [], itemName: "Sitrus Berry", currentHpPercent: 60 })],
+      moves: [crunch],
+    });
+
+    const preview = getDamagePreview(state, "ally-0", "enemy-0", state.combatants["ally-0"].knownMoves[0]!);
+    const startingHp = state.combatants["enemy-0"].currentHp;
+    const expectedHeal = Math.max(1, Math.floor(state.combatants["enemy-0"].maxHp * 0.25));
+    expect((startingHp - (preview?.estimate.averageDamage ?? 0)) / state.combatants["enemy-0"].maxHp).toBeLessThanOrEqual(0.5);
+
+    const result = resolveTurn(
+      state,
+      buildMovePlan(state, "ally", [{ actorId: "ally-0", moveName: "Crunch", targetId: "enemy-0" }]),
+      buildPassPlan(state, "enemy", ["enemy-0"]),
+    );
+
+    expect(result.state.combatants["enemy-0"].itemConsumed).toBe(true);
+    expect(result.state.combatants["enemy-0"].currentHp).toBe(
+      startingHp - (preview?.estimate.averageDamage ?? 0) + expectedHeal,
+    );
+  });
+
+  it("heals at end of turn with Leftovers", () => {
+    const holder = makePokemon("Leftovers Holder");
+    const enemy = makePokemon("Enemy");
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: holder, moveNames: [], currentHpPercent: 75, itemName: "Leftovers" })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: enemy, moveNames: [] })],
+      moves: [],
+    });
+
+    const startingHp = state.combatants["ally-0"].currentHp;
+    const result = resolveTurn(
+      state,
+      buildPassPlan(state, "ally", ["ally-0"]),
+      buildPassPlan(state, "enemy", ["enemy-0"]),
+    );
+
+    expect(result.state.combatants["ally-0"].currentHp).toBeGreaterThan(startingHp);
+  });
+
+  it("heals Poison-types and damages non-Poison holders with Black Sludge", () => {
+    const poisonHolder = makePokemon("Poison Holder", { types: ["Poison"] });
+    const sludgeVictim = makePokemon("Sludge Victim", { types: ["Normal"] });
+    const state = createTestBattleState({
+      ally: [
+        makeMember({
+          side: "ally",
+          slot: 0,
+          pokemon: poisonHolder,
+          moveNames: [],
+          currentHpPercent: 75,
+          itemName: "Black Sludge",
+        }),
+      ],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: sludgeVictim, moveNames: [], itemName: "Black Sludge" })],
+      moves: [],
+    });
+
+    const allyStartingHp = state.combatants["ally-0"].currentHp;
+    const enemyStartingHp = state.combatants["enemy-0"].currentHp;
+    const result = resolveTurn(
+      state,
+      buildPassPlan(state, "ally", ["ally-0"]),
+      buildPassPlan(state, "enemy", ["enemy-0"]),
+    );
+
+    expect(result.state.combatants["ally-0"].currentHp).toBeGreaterThan(allyStartingHp);
+    expect(result.state.combatants["enemy-0"].currentHp).toBeLessThan(enemyStartingHp);
+  });
 });

@@ -44,7 +44,6 @@ import {
 import {
   getOpponentPreset,
   getOpponentPresetMoveNames,
-  getOpponentPresetSavedAttacks,
   OPPONENT_MOVE_PRESET_KEY_SET,
   type OpponentPresetRecord,
 } from "./lib/opponentMovePresets";
@@ -60,13 +59,27 @@ import {
   SPREAD_MOVE_MULTIPLIER,
   calculateRoughDamage,
   getEffectiveDamageBaseStats,
-  getLevel50HpValue,
-  getLevel50OtherStatValue,
   getStatStageMultiplier,
   type DamageCategory,
   type DamageTerrain,
   type DamageWeather,
 } from "./lib/damage";
+import {
+  CHAMPIONS_MAX_STAT_POINTS_PER_STAT,
+  CHAMPIONS_STAT_LABELS,
+  CHAMPIONS_STAT_ORDER,
+  CHAMPIONS_TOTAL_STAT_POINTS,
+  formatChampionsTemplateSummary,
+  getChampionsNatureLabel,
+  getChampionsNatureOptions,
+  getChampionsComputedStats,
+  getDefaultChampionsStatSpreadForPokemon,
+  getTotalChampionsStatPoints,
+  normalizeChampionsStatSpread,
+  type ChampionsNatureId,
+  type ChampionsStatId,
+  type ChampionsStatSpread,
+} from "./lib/championsStats";
 import {
   getDamageAbilityDescription,
   getDamageAbilityOptions,
@@ -108,6 +121,11 @@ import {
   type TeamPreviewSolverMode,
 } from "./lib/teamPreview";
 import {
+  resolveBringSelection,
+  toggleBenchSelection,
+  type BringSelectionMode,
+} from "./lib/bringSelection";
+import {
   deleteSavedTeam,
   listSavedTeams,
   saveTeam,
@@ -147,15 +165,21 @@ type MatchupGroupProps = {
 type TeamSlotState = {
   query: string;
   pokemonId: string | null;
+  itemName: string | null;
+  statSpread: ChampionsStatSpread | null;
+  knownMoves: PersistedKnownMove[];
   savedAttacks: PersistedSavedAttack[];
 };
 type LoadedTeamSlot = TeamSlotState & {
   pokemon: PokemonRecord | null;
+  defaultStatSpread: ChampionsStatSpread | null;
+  resolvedStatSpread: ChampionsStatSpread | null;
 };
 
 type TeamMatrixMode = "defense" | "offense";
 type DamageCalcMode = "attack" | "defend";
 type TeamBuilderFormat = "all" | "regulationMA";
+type BringSelectionCardState = "bring" | "bench";
 type LeadSummary = {
   slotIndex: number;
   pokemon: PokemonRecord;
@@ -182,6 +206,7 @@ type OpponentRosterEntry = {
   presetMoveNames: string[];
   abilityName: string | null;
   itemName: string | null;
+  statSpread: ChampionsStatSpread | null;
   movesetSource: "custom" | "preset" | "none";
 };
 type LoadedOpponentEntry = Omit<OpponentRosterEntry, "pokemon"> & {
@@ -194,6 +219,7 @@ type ResolvedSpeciesMoveset = {
   allMoveNames: string[];
   abilityName: string | null;
   itemName: string | null;
+  statSpread: ChampionsStatSpread | null;
   movesetSource: StoredMovesetSource;
 };
 type OhkoSpeedFilter = "any" | "outspeeds" | "notSlower" | "slowerOrTie";
@@ -296,6 +322,9 @@ function createEmptyTeamSlot(): TeamSlotState {
   return {
     query: "",
     pokemonId: null,
+    itemName: null,
+    statSpread: null,
+    knownMoves: [],
     savedAttacks: [],
   };
 }
@@ -365,6 +394,28 @@ function createSavedAttack(
   };
 }
 
+function createKnownMove(
+  overrides: Partial<PersistedKnownMove> = {},
+): PersistedKnownMove {
+  const category = overrides.category === "physical" || overrides.category === "special" || overrides.category === "status"
+    ? overrides.category
+    : undefined;
+  const type = typeof overrides.type === "string" ? coercePokemonType(overrides.type) : null;
+
+  return {
+    id: overrides.id ?? createSavedAttackId(),
+    name: overrides.name ?? overrides.label ?? "",
+    label: overrides.label ?? overrides.name ?? "",
+    type: type ?? undefined,
+    basePower:
+      typeof overrides.basePower === "number" && Number.isFinite(overrides.basePower) && overrides.basePower > 0
+        ? Math.floor(overrides.basePower)
+        : undefined,
+    category,
+    isSpreadMove: Boolean(overrides.isSpreadMove),
+  };
+}
+
 function getDamageConfigKey(slotIndex: number, pokemonId: string | null) {
   return `${slotIndex}:${pokemonId ?? "empty"}`;
 }
@@ -427,9 +478,97 @@ function getAttackLabel(attack: PersistedSavedAttack) {
   return attack.label?.trim() || TYPE_META[attack.type].label;
 }
 
+function getKnownMoveName(move: Pick<PersistedKnownMove, "label" | "name">) {
+  return move.name?.trim() || move.label.trim();
+}
+
+function getKnownMoveType(move: PersistedKnownMove) {
+  return move.type ? coercePokemonType(move.type) : null;
+}
+
+function getKnownMoveBasePower(move: PersistedKnownMove) {
+  return typeof move.basePower === "number" && Number.isFinite(move.basePower) && move.basePower > 0
+    ? Math.floor(move.basePower)
+    : null;
+}
+
+function getKnownMoveCategory(move: PersistedKnownMove, pokemon?: PokemonRecord | null) {
+  if (move.category === "physical" || move.category === "special" || move.category === "status") {
+    return move.category;
+  }
+
+  return getKnownMoveBasePower(move) !== null ? getPreferredDamageCategory(pokemon) : "status";
+}
+
+function sanitizeKnownMoves(
+  knownMoves: PersistedKnownMove[] | null | undefined,
+  moveByKey: ReadonlyMap<string, MoveRecord>,
+  limit = MAX_ATTACK_TYPES_PER_SLOT,
+) {
+  if (!Array.isArray(knownMoves)) {
+    return [];
+  }
+
+  const deduped = new Map<string, PersistedKnownMove>();
+
+  for (const move of knownMoves) {
+    const moveName = getKnownMoveName(move);
+    const normalizedName = moveName.trim();
+    const matchedMove = getMoveRecordByName(normalizedName, moveByKey);
+    const resolvedType = matchedMove ? getMovePokemonType(matchedMove) : getKnownMoveType(move);
+    const resolvedCategory = matchedMove
+      ? matchedMove.category.toLowerCase() as PersistedKnownMove["category"]
+      : getKnownMoveCategory(move);
+    const resolvedBasePower = matchedMove && matchedMove.basePower > 0
+      ? matchedMove.basePower
+      : getKnownMoveBasePower(move) ?? undefined;
+    const resolvedLabel = matchedMove?.name ?? normalizedName;
+    const normalizedKey = normalizeTextKey(resolvedLabel);
+
+    if (!normalizedKey || deduped.has(normalizedKey)) {
+      continue;
+    }
+
+    deduped.set(
+      normalizedKey,
+      createKnownMove({
+        id: typeof move.id === "string" && move.id.trim() ? move.id : undefined,
+        name: matchedMove?.name ?? normalizedName,
+        label: resolvedLabel,
+        type: resolvedType ?? undefined,
+        basePower: resolvedCategory === "status" ? undefined : resolvedBasePower,
+        category: resolvedCategory,
+        isSpreadMove: matchedMove ? isSpreadTarget(matchedMove.target) : Boolean(move.isSpreadMove),
+      }),
+    );
+  }
+
+  return [...deduped.values()].slice(0, limit);
+}
+
 function getResolvedFieldValue(value: string | null | undefined) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+function getStatSpreadSummary(spread: ChampionsStatSpread) {
+  const entries = CHAMPIONS_STAT_ORDER
+    .filter((statId) => spread.statPoints[statId] > 0)
+    .map((statId) => `${spread.statPoints[statId]} ${CHAMPIONS_STAT_LABELS[statId]}`);
+
+  return `${getChampionsNatureLabel(spread.nature)} · ${entries.join(" / ")}`;
+}
+
+function isStatSpreadEqual(left: ChampionsStatSpread | null | undefined, right: ChampionsStatSpread | null | undefined) {
+  if (!left || !right) {
+    return false;
+  }
+
+  if (left.nature !== right.nature) {
+    return false;
+  }
+
+  return CHAMPIONS_STAT_ORDER.every((statId) => left.statPoints[statId] === right.statPoints[statId]);
 }
 
 function normalizeTextKey(value: string) {
@@ -572,7 +711,7 @@ function sanitizeKnownMovesToSavedAttacks(
       .filter((move) => Boolean(move.type) && move.category !== "status")
       .map((move) => ({
         id: move.id,
-        label: move.label,
+        label: getKnownMoveName(move),
         type: move.type!,
         basePower: move.basePower,
         category: move.category === "status" ? undefined : move.category,
@@ -669,6 +808,18 @@ function buildLegacySavedAttacks(slot: PersistedTeamSlot): PersistedSavedAttack[
   });
 
   return savedAttacks;
+}
+
+function buildKnownMovesFromSavedAttacks(
+  savedAttacks: PersistedSavedAttack[] | null | undefined,
+  moveByKey: ReadonlyMap<string, MoveRecord>,
+  limit = MAX_ATTACK_TYPES_PER_SLOT,
+) {
+  return sanitizeKnownMoves(
+    buildPersistedKnownMovesFromDraftAttacks(savedAttacks, moveByKey, [], limit),
+    moveByKey,
+    limit,
+  );
 }
 
 function getCoverageTypesFromSavedAttacks(savedAttacks: PersistedSavedAttack[]) {
@@ -785,6 +936,8 @@ function getBestDamageEstimateAgainstPokemon(
     attackerItem?: DamageItemId;
     defenderItem?: DamageItemId;
     helpingHand?: boolean;
+    attackerStatSpread?: ChampionsStatSpread | null;
+    defenderStatSpread?: ChampionsStatSpread | null;
   },
 ) {
   let best:
@@ -820,6 +973,8 @@ function getBestDamageEstimateAgainstPokemon(
       attackerItem: options.attackerItem ?? "none",
       defenderItem: options.defenderItem ?? "none",
       helpingHand: options.helpingHand ?? false,
+      attackerStatSpread: options.attackerStatSpread ?? null,
+      defenderStatSpread: options.defenderStatSpread ?? null,
     });
 
     if (!best || estimate.maxPercent > best.estimate.maxPercent) {
@@ -900,6 +1055,7 @@ type DoublesSelectedMember = {
   slotIndex: number;
   pokemon: PokemonRecord;
   savedAttacks: PersistedSavedAttack[];
+  statSpread: ChampionsStatSpread | null;
   movesetSourceLabel: string;
   speedStat: number;
   hpPercent: number;
@@ -965,8 +1121,10 @@ type DoublesVisualPlan = {
 function buildMatchupEloTargetResult(options: {
   attackerPokemon: PokemonRecord;
   attackerSavedAttacks: PersistedSavedAttack[];
+  attackerStatSpread?: ChampionsStatSpread | null;
   targetPokemon: PokemonRecord;
   targetSavedAttacks: PersistedSavedAttack[];
+  targetStatSpread?: ChampionsStatSpread | null;
   weather: DamageWeather;
   terrain: DamageTerrain;
   attackerGrounded: boolean;
@@ -978,8 +1136,10 @@ function buildMatchupEloTargetResult(options: {
   const {
     attackerPokemon,
     attackerSavedAttacks,
+    attackerStatSpread,
     targetPokemon,
     targetSavedAttacks,
+    targetStatSpread,
     weather,
     terrain,
     attackerGrounded,
@@ -999,6 +1159,8 @@ function buildMatchupEloTargetResult(options: {
       defenderGrounded: targetGrounded,
       attackerStatStage,
       defenderStatStage,
+      attackerStatSpread,
+      defenderStatSpread: targetStatSpread,
     },
   );
   const bestIncomingHit =
@@ -1010,10 +1172,14 @@ function buildMatchupEloTargetResult(options: {
           defenderGrounded: attackerGrounded,
           attackerStatStage,
           defenderStatStage,
+          attackerStatSpread: targetStatSpread,
+          defenderStatSpread: attackerStatSpread,
         })
       : null;
   const survivesBestIncomingHit = bestIncomingHit ? bestIncomingHit.estimate.maxPercent < 100 : null;
-  const speedDelta = attackerPokemon.baseStats.spe - targetPokemon.baseStats.spe;
+  const speedDelta =
+    getChampionsComputedStats(attackerPokemon, { spread: attackerStatSpread }).spe -
+    getChampionsComputedStats(targetPokemon, { spread: targetStatSpread }).spe;
   const possibleOhko = Boolean(bestOutgoingHit && bestOutgoingHit.estimate.maxPercent >= 100);
   const guaranteedOhko = Boolean(bestOutgoingHit && bestOutgoingHit.estimate.minPercent >= 100);
   const offensivePressure = bestOutgoingHit ? bestOutgoingHit.estimate.averagePercent : 0;
@@ -1043,6 +1209,8 @@ function getAutomaticDamageRows(options: {
   attackerPokemon: PokemonRecord;
   defenderPokemon: PokemonRecord;
   savedAttacks: PersistedSavedAttack[];
+  attackerStatSpread?: ChampionsStatSpread | null;
+  defenderStatSpread?: ChampionsStatSpread | null;
   weather: DamageWeather;
   terrain: DamageTerrain;
   attackerGrounded: boolean;
@@ -1056,6 +1224,8 @@ function getAutomaticDamageRows(options: {
     attackerPokemon,
     defenderPokemon,
     savedAttacks,
+    attackerStatSpread,
+    defenderStatSpread,
     weather,
     terrain,
     attackerGrounded,
@@ -1098,6 +1268,8 @@ function getAutomaticDamageRows(options: {
           defenderStatStage,
           attackerAbility: attackerAbility ?? getDefaultDamageAbilityId(attackerPokemon),
           defenderAbility: defenderAbility ?? getDefaultDamageAbilityId(defenderPokemon),
+          attackerStatSpread: attackerStatSpread ?? null,
+          defenderStatSpread: defenderStatSpread ?? null,
         }),
       },
     ];
@@ -2288,37 +2460,18 @@ function getStoredOrPresetSavedAttacks(
   moveByKey: ReadonlyMap<string, MoveRecord>,
   limit = MAX_SPECIES_MOVESET_SIZE,
 ): ResolvedSpeciesMoveset {
-  const movesetKey = getPokemonMovesetKey(pokemon);
-  const inheritedMovesetKey = getInheritedMovesetKey(pokemon);
-  const directSpeciesMoveset = speciesMovesetByKey.get(movesetKey) ?? null;
-  const inheritedSpeciesMoveset = inheritedMovesetKey ? speciesMovesetByKey.get(inheritedMovesetKey) ?? null : null;
-  const speciesMoveset = directSpeciesMoveset ?? inheritedSpeciesMoveset;
-  const preset = getOpponentPreset(pokemon);
-  const customSavedAttacks = speciesMoveset?.knownMoves?.length
-    ? sanitizeKnownMovesToSavedAttacks(speciesMoveset.knownMoves, pokemon, limit)
-    : [];
-  const presetSavedAttacks = getOpponentPresetSavedAttacks(pokemon, moveByKey).slice(0, limit);
-  const directCustomAbilityName = getResolvedFieldValue(directSpeciesMoveset?.abilityName);
-  const inheritedCustomAbilityName = getResolvedFieldValue(inheritedSpeciesMoveset?.abilityName);
-  const customItemName = getResolvedFieldValue(speciesMoveset?.itemName);
-  const presetAbilityName = getResolvedPresetAbilityName(pokemon, preset);
-  const presetItemName = getResolvedFieldValue(preset?.itemName);
-  const resolvedCustomAbilityName = directCustomAbilityName ?? (isChampionsMegaEntry(pokemon) ? null : inheritedCustomAbilityName);
-  const hasCustomOverride = Boolean(speciesMoveset && (customSavedAttacks.length > 0 || resolvedCustomAbilityName || customItemName));
-
-  return {
-    savedAttacks: customSavedAttacks.length > 0 ? customSavedAttacks : presetSavedAttacks,
-    knownMoves: [],
-    allMoveNames:
-      customSavedAttacks.length > 0
-        ? customSavedAttacks.map((attack) => getAttackLabel(attack))
-        : preset?.moveNames
-          ? [...preset.moveNames]
-          : [],
-    abilityName: resolvedCustomAbilityName ?? presetAbilityName,
-    itemName: customItemName ?? presetItemName,
-    movesetSource: hasCustomOverride ? "custom" : preset ? "preset" : "none",
-  };
+  return resolveStoredOrPresetMoveset({
+    pokemon,
+    speciesMovesetByKey,
+    moveByKey,
+    limit,
+    normalizePokemonNameKey,
+    getResolvedPresetAbilityName,
+    isChampionsMegaEntry,
+    getInheritedMovesetKey,
+    sanitizeSavedAttacks,
+    sanitizeKnownMovesToSavedAttacks,
+  });
 }
 
 function getEditablePokemonEntries(
@@ -2609,7 +2762,8 @@ function BattleSimulatorCard({
   state,
   onChange,
 }: BattleSimulatorCardProps) {
-  const maxHp = getLevel50HpValue(pokemon.baseStats.hp);
+  const computedStats = getChampionsComputedStats(pokemon);
+  const maxHp = computedStats.hp;
   const actualHp = getLevel50CurrentHpFromPercent(maxHp, state.hpPercent);
   const boardLabel = side === "ally" ? `Slot ${slotIndex + 1}` : `Enemy ${slotIndex + 1}`;
 
@@ -2624,7 +2778,7 @@ function BattleSimulatorCard({
             <p>{boardLabel}</p>
           </div>
         </div>
-        <span className="mini-type-pill neutral-pill">Spe {getLevel50OtherStatValue(pokemon.baseStats.spe)}</span>
+        <span className="mini-type-pill neutral-pill">Spe {computedStats.spe}</span>
       </div>
 
       <div className="battle-simulator-card-grid">
@@ -2897,15 +3051,27 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
   const selectedDamageEnemySavedAttacks = defenderEntry?.savedAttacks ?? [];
   const selectedDamageAttackerPokemon = attackerSlot?.pokemon ?? null;
   const selectedDamageDefenderPokemon = defenderEntry?.pokemon ?? null;
+  const selectedDamageAttackerSpread = attackerSlot?.resolvedStatSpread ?? null;
+  const selectedDamageDefenderSpread = defenderEntry?.statSpread ?? null;
   const currentDamageAttackerPokemon =
     damageCalcMode === "attack" ? selectedDamageAttackerPokemon : selectedDamageDefenderPokemon;
   const currentDamageDefenderPokemon =
     damageCalcMode === "attack" ? selectedDamageDefenderPokemon : selectedDamageAttackerPokemon;
+  const currentDamageAttackerSpread =
+    damageCalcMode === "attack" ? selectedDamageAttackerSpread : selectedDamageDefenderSpread;
+  const currentDamageDefenderSpread =
+    damageCalcMode === "attack" ? selectedDamageDefenderSpread : selectedDamageAttackerSpread;
   const currentDamageAttackerStats = currentDamageAttackerPokemon
-    ? getEffectiveDamageBaseStats(currentDamageAttackerPokemon, "attacker")
+    ? getChampionsComputedStats(currentDamageAttackerPokemon, {
+        baseStats: getEffectiveDamageBaseStats(currentDamageAttackerPokemon, "attacker"),
+        spread: currentDamageAttackerSpread,
+      })
     : null;
   const currentDamageDefenderStats = currentDamageDefenderPokemon
-    ? getEffectiveDamageBaseStats(currentDamageDefenderPokemon, "defender")
+    ? getChampionsComputedStats(currentDamageDefenderPokemon, {
+        baseStats: getEffectiveDamageBaseStats(currentDamageDefenderPokemon, "defender"),
+        spread: currentDamageDefenderSpread,
+      })
     : null;
   const defenseMoveConfigKey = getDamageConfigKey(
     defenderSlotIndex ?? -1,
@@ -3018,6 +3184,8 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
                 attackerItem: damageAttackerItem,
                 defenderItem: damageDefenderItem,
                 helpingHand: damageHelpingHand,
+                attackerStatSpread: selectedDamageAttackerSpread,
+                defenderStatSpread: selectedDamageDefenderSpread,
               })
             : null,
       };
@@ -3037,7 +3205,9 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
     damageTerrain,
     damageWeather,
     selectedDamageAttackerPokemon,
+    selectedDamageAttackerSpread,
     selectedDamageDefenderPokemon,
+    selectedDamageDefenderSpread,
     selectedDamageSavedAttacks,
   ]);
 
@@ -3062,6 +3232,8 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
         attackerItem: damageDefenderItem,
         defenderItem: damageAttackerItem,
         helpingHand: false,
+        attackerStatSpread: selectedDamageDefenderSpread,
+        defenderStatSpread: selectedDamageAttackerSpread,
       },
     );
   }, [
@@ -3074,7 +3246,9 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
     damageTerrain,
     damageWeather,
     selectedDamageAttackerPokemon,
+    selectedDamageAttackerSpread,
     selectedDamageDefenderPokemon,
+    selectedDamageDefenderSpread,
     selectedDamageEnemySavedAttacks,
   ]);
 
@@ -3114,6 +3288,8 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
                 attackerItem: damageAttackerItem,
                 defenderItem: damageDefenderItem,
                 helpingHand: damageHelpingHand,
+                attackerStatSpread: selectedDamageDefenderSpread,
+                defenderStatSpread: selectedDamageAttackerSpread,
               })
             : null,
       };
@@ -3131,7 +3307,9 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
     damageTerrain,
     damageWeather,
     selectedDamageAttackerPokemon,
+    selectedDamageAttackerSpread,
     selectedDamageDefenderPokemon,
+    selectedDamageDefenderSpread,
     selectedDamageEnemySavedAttacks,
   ]);
 
@@ -3161,6 +3339,8 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
       attackerItem: damageAttackerItem,
       defenderItem: damageDefenderItem,
       helpingHand: damageHelpingHand,
+      attackerStatSpread: selectedDamageDefenderSpread,
+      defenderStatSpread: selectedDamageAttackerSpread,
     });
   }, [
     damageAttackStage,
@@ -3176,6 +3356,7 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
     damageWeather,
     defenseMoveConfig,
     selectedDamageAttackerPokemon,
+    selectedDamageAttackerSpread,
     selectedDamageDefenderPokemon,
   ]);
 
@@ -3225,15 +3406,15 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
 
     const statEntries = isAttacker
       ? [
-          ["Atk", getLevel50OtherStatValue(stats?.atk ?? pokemon.baseStats.atk)],
-          ["SpA", getLevel50OtherStatValue(stats?.spa ?? pokemon.baseStats.spa)],
-          ["Spe", getLevel50OtherStatValue(stats?.spe ?? pokemon.baseStats.spe)],
+          ["Atk", stats?.atk ?? 0],
+          ["SpA", stats?.spa ?? 0],
+          ["Spe", stats?.spe ?? 0],
         ]
       : [
-          ["HP", getLevel50HpValue(stats?.hp ?? pokemon.baseStats.hp)],
-          ["Def", getLevel50OtherStatValue(stats?.def ?? pokemon.baseStats.def)],
-          ["SpD", getLevel50OtherStatValue(stats?.spd ?? pokemon.baseStats.spd)],
-          ["Spe", getLevel50OtherStatValue(stats?.spe ?? pokemon.baseStats.spe)],
+          ["HP", stats?.hp ?? 0],
+          ["Def", stats?.def ?? 0],
+          ["SpD", stats?.spd ?? 0],
+          ["Spe", stats?.spe ?? 0],
         ];
 
     return (
@@ -3267,6 +3448,7 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
                 );
               })}
             </div>
+            <p className="damage-template-note">{stats ? formatChampionsTemplateSummary(stats.template) : ""}</p>
           </div>
         </div>
 
@@ -3857,7 +4039,10 @@ function togglePairSelection(selection: OpenerSelection, slotIndex: number): Ope
   return [current[0], slotIndex];
 }
 
-function normalizeTeamSlots(slots: PersistedTeamSlot[]): TeamSlotState[] {
+function normalizeTeamSlots(
+  slots: PersistedTeamSlot[],
+  moveByKey: ReadonlyMap<string, MoveRecord>,
+): TeamSlotState[] {
   return Array.from({ length: TEAM_SIZE }, (_, index) => {
     const slot = slots[index];
 
@@ -3865,12 +4050,23 @@ function normalizeTeamSlots(slots: PersistedTeamSlot[]): TeamSlotState[] {
       return createEmptyTeamSlot();
     }
 
+    const savedAttacks = Array.isArray(slot.savedAttacks)
+      ? sanitizeSavedAttacks(slot.savedAttacks)
+      : buildLegacySavedAttacks(slot);
+    const knownMoves = Array.isArray(slot.knownMoves) && slot.knownMoves.length > 0
+      ? sanitizeKnownMoves(slot.knownMoves, moveByKey, MAX_ATTACK_TYPES_PER_SLOT)
+      : buildKnownMovesFromSavedAttacks(savedAttacks, moveByKey, MAX_ATTACK_TYPES_PER_SLOT);
+
     return {
       query: slot.query ?? "",
       pokemonId: slot.pokemonId ?? null,
-      savedAttacks: Array.isArray(slot.savedAttacks)
-        ? sanitizeSavedAttacks(slot.savedAttacks)
-        : buildLegacySavedAttacks(slot),
+      itemName: getResolvedFieldValue(slot.itemName),
+      statSpread: slot.statSpread ? normalizeChampionsStatSpread(slot.statSpread) : null,
+      knownMoves,
+      savedAttacks:
+        knownMoves.length > 0
+          ? sanitizeKnownMovesToSavedAttacks(knownMoves, null, MAX_ATTACK_TYPES_PER_SLOT)
+          : savedAttacks,
     };
   });
 }
@@ -4035,14 +4231,17 @@ function MatchupGroup({ label, multiplier, tone, entries, compact = false }: Mat
 }
 
 type TeamSlotCardProps = {
-  slot: TeamSlotState & { pokemon: PokemonRecord | null };
+  slot: LoadedTeamSlot;
   slotIndex: number;
   databaseLoaded: boolean;
   loadError: string | null;
   moveByKey: Map<string, MoveRecord>;
+  itemOptions: ItemRecord[];
+  itemByKey: ReadonlyMap<string, ItemRecord>;
   onQueryChange: (slotIndex: number, query: string) => void;
   onClear: (slotIndex: number) => void;
-  onApplySavedAttacks: (slotIndex: number, savedAttacks: PersistedSavedAttack[]) => void;
+  onApplySlotMoveset: (slotIndex: number, config: { knownMoves: PersistedKnownMove[]; itemName: string | null }) => void;
+  onApplySlotStatSpread: (slotIndex: number, statSpread: ChampionsStatSpread | null) => void;
 };
 
 function TeamSlotCard({
@@ -4051,17 +4250,25 @@ function TeamSlotCard({
   databaseLoaded,
   loadError,
   moveByKey,
+  itemOptions,
+  itemByKey,
   onQueryChange,
   onClear,
-  onApplySavedAttacks,
+  onApplySlotMoveset,
+  onApplySlotStatSpread,
 }: TeamSlotCardProps) {
   const [isEditingAttacks, setIsEditingAttacks] = useState(false);
+  const [isEditingStatSpread, setIsEditingStatSpread] = useState(false);
   const [showStatsDetails, setShowStatsDetails] = useState(false);
-  const [draftSavedAttacks, setDraftSavedAttacks] = useState<PersistedSavedAttack[]>(slot.savedAttacks);
+  const [draftKnownMoves, setDraftKnownMoves] = useState<PersistedKnownMove[]>(slot.knownMoves);
+  const [draftItemName, setDraftItemName] = useState(slot.itemName ?? "");
+  const [draftStatSpread, setDraftStatSpread] = useState<ChampionsStatSpread | null>(slot.resolvedStatSpread);
 
   useEffect(() => {
-    setDraftSavedAttacks(slot.savedAttacks);
-  }, [slot.savedAttacks, slot.pokemonId]);
+    setDraftKnownMoves(slot.knownMoves);
+    setDraftItemName(slot.itemName ?? "");
+    setDraftStatSpread(slot.resolvedStatSpread);
+  }, [slot.itemName, slot.knownMoves, slot.pokemonId, slot.resolvedStatSpread]);
 
   useEffect(() => {
     setShowStatsDetails(false);
@@ -4081,57 +4288,130 @@ function TeamSlotCard({
       (attackType) => (getPokemonDefensiveMultiplier(pokemon, attackType) ?? 1) > 1,
     );
   }, [pokemon]);
+  const resolvedItemName = getResolvedFieldValue(draftItemName);
+  const resolvedItem = resolvedItemName ? itemByKey.get(resolvedItemName.toLowerCase()) ?? null : null;
+  const natureOptions = useMemo(() => getChampionsNatureOptions(), []);
+  const activeStatSpread = slot.resolvedStatSpread;
+  const defaultStatSpread = slot.defaultStatSpread;
+  const draftSpreadComputedStats = useMemo(
+    () => (pokemon && draftStatSpread ? getChampionsComputedStats(pokemon, { spread: draftStatSpread }) : null),
+    [draftStatSpread, pokemon],
+  );
+  const draftSpreadTotalPoints = draftStatSpread ? getTotalChampionsStatPoints(draftStatSpread.statPoints) : 0;
+  const draftSpreadRemainingPoints = CHAMPIONS_TOTAL_STAT_POINTS - draftSpreadTotalPoints;
+  const usingCustomSpread =
+    Boolean(slot.statSpread) &&
+    Boolean(defaultStatSpread) &&
+    Boolean(activeStatSpread) &&
+    !isStatSpreadEqual(activeStatSpread, defaultStatSpread);
 
-  const updateDraftAttack = (attackId: string, patch: Partial<PersistedSavedAttack>) => {
-    setDraftSavedAttacks((current) =>
-      current.map((attack) => (attack.id === attackId ? { ...attack, ...patch } : attack)),
+  const updateDraftMove = (moveId: string, patch: Partial<PersistedKnownMove>) => {
+    setDraftKnownMoves((current) =>
+      current.map((move) => (move.id === moveId ? { ...move, ...patch } : move)),
     );
   };
 
-  const addDraftAttack = () => {
-    setDraftSavedAttacks((current) => {
+  const addDraftMove = () => {
+    setDraftKnownMoves((current) => {
       if (current.length >= MAX_ATTACK_TYPES_PER_SLOT) {
         return current;
       }
 
-      return [...current, createSavedAttack(pokemon)];
+      return [...current, createKnownMove()];
     });
   };
 
-  const removeDraftAttack = (attackId: string) => {
-    setDraftSavedAttacks((current) => current.filter((attack) => attack.id !== attackId));
+  const removeDraftMove = (moveId: string) => {
+    setDraftKnownMoves((current) => current.filter((move) => move.id !== moveId));
   };
 
-  const updateDraftAttackLabel = (attackId: string, nextLabel: string) => {
+  const updateDraftMoveLabel = (moveId: string, nextLabel: string) => {
     const trimmed = nextLabel.trim();
-    const matchedMove = moveByKey.get(trimmed.toLowerCase()) ?? moveByKey.get(trimmed) ?? null;
+    const matchedMove = getMoveRecordByName(trimmed, moveByKey);
 
-    if (matchedMove && matchedMove.category !== "Status" && matchedMove.basePower > 0) {
-      const moveType = getMovePokemonType(matchedMove);
-
-      if (moveType) {
-        updateDraftAttack(attackId, {
-          label: matchedMove.name,
-          type: moveType,
-          basePower: matchedMove.basePower,
-          category: matchedMove.category.toLowerCase() as DamageCategory,
-          isSpreadMove: isSpreadTarget(matchedMove.target),
-        });
-        return;
-      }
+    if (matchedMove) {
+      updateDraftMove(moveId, {
+        name: matchedMove.name,
+        label: matchedMove.name,
+        type: getMovePokemonType(matchedMove) ?? undefined,
+        basePower: matchedMove.basePower > 0 ? matchedMove.basePower : undefined,
+        category: matchedMove.category.toLowerCase() as PersistedKnownMove["category"],
+        isSpreadMove: isSpreadTarget(matchedMove.target),
+      });
+      return;
     }
 
-    updateDraftAttack(attackId, { label: nextLabel });
+    updateDraftMove(moveId, { name: nextLabel, label: nextLabel });
   };
 
-  const applySavedAttacks = () => {
-    onApplySavedAttacks(slotIndex, sanitizeSavedAttacks(draftSavedAttacks, pokemon));
+  const applyKnownMoves = () => {
+    onApplySlotMoveset(slotIndex, {
+      knownMoves: sanitizeKnownMoves(draftKnownMoves, moveByKey, MAX_ATTACK_TYPES_PER_SLOT),
+      itemName: resolvedItemName,
+    });
     setIsEditingAttacks(false);
   };
 
   const cancelAttackEdit = () => {
-    setDraftSavedAttacks(slot.savedAttacks);
+    setDraftKnownMoves(slot.knownMoves);
+    setDraftItemName(slot.itemName ?? "");
     setIsEditingAttacks(false);
+  };
+
+  const updateDraftNature = (nature: ChampionsNatureId) => {
+    if (!defaultStatSpread) {
+      return;
+    }
+
+    setDraftStatSpread((current) =>
+      normalizeChampionsStatSpread(
+        {
+          ...(current ?? defaultStatSpread),
+          nature,
+        },
+        current ?? defaultStatSpread,
+      ),
+    );
+  };
+
+  const updateDraftStatPoints = (statId: ChampionsStatId, nextValue: number) => {
+    if (!defaultStatSpread) {
+      return;
+    }
+
+    const baseSpread = draftStatSpread ?? defaultStatSpread;
+    const currentValue = baseSpread.statPoints[statId];
+    const sanitized = Math.max(0, Math.min(CHAMPIONS_MAX_STAT_POINTS_PER_STAT, Math.floor(nextValue)));
+    const totalWithoutCurrent = getTotalChampionsStatPoints(baseSpread.statPoints) - currentValue;
+    const clampedValue = Math.min(sanitized, CHAMPIONS_TOTAL_STAT_POINTS - totalWithoutCurrent);
+
+    setDraftStatSpread(
+      normalizeChampionsStatSpread({
+        nature: baseSpread.nature,
+        statPoints: {
+          ...baseSpread.statPoints,
+          [statId]: clampedValue,
+        },
+      }, defaultStatSpread),
+    );
+  };
+
+  const applyStatSpread = () => {
+    if (!defaultStatSpread || !draftStatSpread) {
+      return;
+    }
+
+    const normalizedDraft = normalizeChampionsStatSpread(draftStatSpread, defaultStatSpread);
+    onApplySlotStatSpread(
+      slotIndex,
+      isStatSpreadEqual(normalizedDraft, defaultStatSpread) ? null : normalizedDraft,
+    );
+    setIsEditingStatSpread(false);
+  };
+
+  const cancelStatSpreadEdit = () => {
+    setDraftStatSpread(activeStatSpread);
+    setIsEditingStatSpread(false);
   };
 
   return (
@@ -4267,11 +4547,119 @@ function TeamSlotCard({
             </div>
           </div>
 
+          {activeStatSpread && defaultStatSpread ? (
+            <section className="moveset-stat-panel">
+              <div className="moveset-stat-panel-header">
+                <div>
+                  <p className="eyebrow">Stat Spread</p>
+                  <h3>{usingCustomSpread ? "Team Override" : "Default Spread"}</h3>
+                </div>
+                <div className="attack-type-actions">
+                  <span className="mini-type-pill neutral-pill">
+                    {draftSpreadTotalPoints} / {CHAMPIONS_TOTAL_STAT_POINTS} SP
+                  </span>
+                  <button
+                    type="button"
+                    className="edit-attacks-button"
+                    onClick={() => setIsEditingStatSpread((current) => !current)}
+                  >
+                    {isEditingStatSpread ? "Close" : "Edit"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="moveset-stat-panel-toolbar">
+                {isEditingStatSpread && draftStatSpread ? (
+                  <label className="saved-attack-field">
+                    <span>Nature</span>
+                    <select
+                      value={draftStatSpread.nature}
+                      onChange={(event) => updateDraftNature(event.target.value as ChampionsNatureId)}
+                    >
+                      {natureOptions.map((option) => (
+                        <option key={`${slotIndex}-${option.id}`} value={option.id}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  <div className="moveset-stat-panel-summary">
+                    <span>{getStatSpreadSummary(activeStatSpread)}</span>
+                    <span>{usingCustomSpread ? "Custom to this team" : "Using database default"}</span>
+                  </div>
+                )}
+
+                {isEditingStatSpread && draftStatSpread ? (
+                  <div className="moveset-stat-panel-summary">
+                    <span>{getStatSpreadSummary(draftStatSpread)}</span>
+                    <span>{draftSpreadRemainingPoints} SP left</span>
+                  </div>
+                ) : null}
+              </div>
+
+              <p className="selector-note">
+                <strong>Default:</strong> {getStatSpreadSummary(defaultStatSpread)}
+              </p>
+
+              {isEditingStatSpread && draftStatSpread && draftSpreadComputedStats ? (
+                <>
+                  <div className="moveset-stat-slider-list">
+                    {CHAMPIONS_STAT_ORDER.map((statId) => {
+                      const points = draftStatSpread.statPoints[statId];
+                      const finalValue = draftSpreadComputedStats[statId];
+
+                      return (
+                        <label key={`${pokemon.id}-team-spread-${slotIndex}-${statId}`} className="moveset-stat-slider-card">
+                          <div className="moveset-stat-slider-top">
+                            <strong>{CHAMPIONS_STAT_LABELS[statId]}</strong>
+                            <span>{points} SP</span>
+                            <em>{finalValue}</em>
+                          </div>
+                          <input
+                            type="range"
+                            min={0}
+                            max={CHAMPIONS_MAX_STAT_POINTS_PER_STAT}
+                            step={1}
+                            value={points}
+                            onChange={(event) => updateDraftStatPoints(statId, Number(event.target.value))}
+                            className="moveset-stat-slider"
+                            style={{ "--slider-fill": `${(points / CHAMPIONS_MAX_STAT_POINTS_PER_STAT) * 100}%` } as CSSProperties}
+                          />
+                          <div className="moveset-stat-slider-scale">
+                            <span>0</span>
+                            <span>{CHAMPIONS_MAX_STAT_POINTS_PER_STAT}</span>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+
+                  <div className="attack-editor-actions">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => setDraftStatSpread(defaultStatSpread)}
+                    >
+                      Use Default
+                    </button>
+                    <button type="button" className="secondary-button" onClick={cancelStatSpreadEdit}>
+                      Cancel
+                    </button>
+                    <button type="button" className="primary-button" onClick={applyStatSpread}>
+                      Apply
+                    </button>
+                  </div>
+                </>
+              ) : null}
+            </section>
+          ) : null}
+
           <div className="attack-type-section">
             <div className="attack-type-header">
-              <p className="eyebrow">Saved Attacks</p>
+              <p className="eyebrow">Moveset</p>
               <div className="attack-type-actions">
-                <span>{slot.savedAttacks.length} / 4</span>
+                <span>{slot.knownMoves.length} / 4</span>
                 <button
                   type="button"
                   className="edit-attacks-button"
@@ -4282,40 +4670,69 @@ function TeamSlotCard({
               </div>
             </div>
 
+            <div className="coverage-preview">
+              <div className="coverage-preview-header">
+                <p className="eyebrow">Item</p>
+                <span>{slot.itemName ? "Set" : "Optional"}</span>
+              </div>
+              <div className="coverage-chip-list">
+                {slot.itemName ? (
+                  <span className="mini-type-pill neutral-pill">{slot.itemName}</span>
+                ) : (
+                  <span className="subtle-empty">No item chosen.</span>
+                )}
+              </div>
+              {resolvedItem?.shortDesc || resolvedItem?.desc ? (
+                <p className="selector-note" style={{ marginTop: "0.45rem" }}>
+                  {resolvedItem.shortDesc || resolvedItem.desc}
+                </p>
+              ) : null}
+            </div>
+
             <div className="saved-attack-list">
-              {slot.savedAttacks.length > 0 ? (
-                slot.savedAttacks.map((attack) => {
-                  const category = getResolvedAttackCategory(attack, pokemon);
-                  const basePower = getResolvedAttackBasePower(attack);
+              {slot.knownMoves.length > 0 ? (
+                slot.knownMoves.map((move) => {
+                  const category = getKnownMoveCategory(move, pokemon);
+                  const basePower = getKnownMoveBasePower(move);
+                  const moveType = getKnownMoveType(move);
 
                   return (
                     <article
-                      key={attack.id}
+                      key={move.id}
                       className="saved-attack-chip"
-                      style={
-                        {
-                          "--type-color": TYPE_META[attack.type].color,
-                          "--type-accent": TYPE_META[attack.type].accent,
-                        } as CSSProperties
-                      }
+                      style={moveType
+                        ? (
+                            {
+                              "--type-color": TYPE_META[moveType].color,
+                              "--type-accent": TYPE_META[moveType].accent,
+                            } as CSSProperties
+                          )
+                        : undefined}
                     >
                       <div className="saved-attack-chip-top">
-                        <span className="inline-type-pill saved-attack-type-pill">
-                          <img src={getTypeIconUrl(attack.type)} alt="" aria-hidden="true" />
-                          {TYPE_META[attack.type].label}
-                        </span>
-                        <strong>{getAttackLabel(attack)}</strong>
+                        {moveType ? (
+                          <span className="inline-type-pill saved-attack-type-pill">
+                            <img src={getTypeIconUrl(moveType)} alt="" aria-hidden="true" />
+                            {TYPE_META[moveType].label}
+                          </span>
+                        ) : (
+                          <span className="inline-type-pill neutral-pill">Unknown Type</span>
+                        )}
+                        <strong>{getKnownMoveName(move)}</strong>
                       </div>
                       <p>
-                        {basePower ? `${basePower} BP` : "Base power not set"} •{" "}
-                        {category === "physical" ? "Physical" : "Special"}
-                        {getResolvedAttackSpread(attack) ? " • Spread" : ""}
+                        {category === "status"
+                          ? "Status"
+                          : `${basePower ? `${basePower} BP` : "Base power not set"} • ${
+                            category === "physical" ? "Physical" : "Special"
+                          }`}
+                        {category !== "status" && move.isSpreadMove ? " • Spread" : ""}
                       </p>
                     </article>
                   );
                 })
               ) : (
-                <span className="subtle-empty">No saved attacks yet.</span>
+                <span className="subtle-empty">No moves saved yet.</span>
               )}
             </div>
 
@@ -4323,52 +4740,96 @@ function TeamSlotCard({
               <div className="attack-editor">
                 <div className="attack-editor-topbar">
                   <p className="selector-note">
-                    Save up to four damaging attacks here. Exact move-name matches auto-fill type, power, category,
-                    and spread defaults.
+                    Save up to four full moves here. Exact move-name matches auto-fill type, category, power, and
+                    spread defaults. Coverage and calculator panels will still only use the damaging subset.
                   </p>
                   <button
                     type="button"
                     className="secondary-button"
-                    onClick={addDraftAttack}
-                    disabled={draftSavedAttacks.length >= MAX_ATTACK_TYPES_PER_SLOT}
+                    onClick={addDraftMove}
+                    disabled={draftKnownMoves.length >= MAX_ATTACK_TYPES_PER_SLOT}
                   >
-                    Add Attack
+                    Add Move
                   </button>
                 </div>
 
-                {draftSavedAttacks.length > 0 ? (
+                <label className="saved-attack-field wide">
+                  <span>Held Item</span>
+                  <input
+                    list="item-options"
+                    className="team-pokemon-input"
+                    placeholder="Assault Vest"
+                    value={draftItemName}
+                    onChange={(event) => setDraftItemName(event.target.value)}
+                  />
+                </label>
+
+                {resolvedItem ? (
+                  <p className="selector-note">{resolvedItem.shortDesc || resolvedItem.desc}</p>
+                ) : draftItemName.trim() ? (
+                  <p className="selector-note">
+                    Item not found in the local battle data yet. It will still be saved as typed.
+                  </p>
+                ) : (
+                  <p className="selector-note">
+                    Leave this empty if the slot should have no held item.
+                  </p>
+                )}
+
+                {draftKnownMoves.length > 0 ? (
                   <div className="saved-attack-editor-list">
-                    {draftSavedAttacks.map((attack, attackIndex) => (
-                      <article key={attack.id} className="saved-attack-editor-card">
+                    {draftKnownMoves.map((move, moveIndex) => {
+                      const matchedMove = getMoveRecordByName(getKnownMoveName(move), moveByKey);
+                      const moveType = getKnownMoveType(move);
+                      const category = getKnownMoveCategory(move, pokemon);
+                      const basePower = getKnownMoveBasePower(move);
+
+                      return (
+                      <article key={move.id} className="saved-attack-editor-card">
                         <div className="saved-attack-editor-header">
-                          <span
-                            className="mini-type-pill"
-                            style={
-                              {
-                                "--type-color": TYPE_META[attack.type].color,
-                                "--type-accent": TYPE_META[attack.type].accent,
-                              } as CSSProperties
-                            }
-                          >
-                            Attack {attackIndex + 1}
+                          {moveType ? (
+                            <span
+                              className="mini-type-pill"
+                              style={
+                                {
+                                  "--type-color": TYPE_META[moveType].color,
+                                  "--type-accent": TYPE_META[moveType].accent,
+                                } as CSSProperties
+                              }
+                            >
+                              Move {moveIndex + 1}
+                            </span>
+                          ) : (
+                            <span className="mini-type-pill neutral-pill">Move {moveIndex + 1}</span>
+                          )}
+                          <span className="mini-type-pill neutral-pill">
+                            {category === "status"
+                              ? "Status"
+                              : category === "physical"
+                                ? "Physical"
+                                : "Special"}
                           </span>
                           <button
                             type="button"
                             className="secondary-button"
-                            onClick={() => removeDraftAttack(attack.id)}
+                            onClick={() => removeDraftMove(move.id)}
                           >
                             Remove
                           </button>
                         </div>
+
+                        {matchedMove?.desc || matchedMove?.shortDesc ? (
+                          <p className="selector-note">{matchedMove?.desc || matchedMove?.shortDesc}</p>
+                        ) : null}
 
                         <label className="saved-attack-field wide">
                           <span>Move Name</span>
                           <input
                             list="move-options"
                             className="team-pokemon-input"
-                            placeholder="Moonblast"
-                            value={attack.label ?? ""}
-                            onChange={(event) => updateDraftAttackLabel(attack.id, event.target.value)}
+                            placeholder="Protect"
+                            value={getKnownMoveName(move)}
+                            onChange={(event) => updateDraftMoveLabel(move.id, event.target.value)}
                           />
                         </label>
 
@@ -4376,13 +4837,16 @@ function TeamSlotCard({
                           <label className="saved-attack-field">
                             <span>Type</span>
                             <select
-                              value={attack.type}
+                              value={moveType ?? ""}
                               onChange={(event) =>
-                                updateDraftAttack(attack.id, { type: event.target.value as PokemonType })
+                                updateDraftMove(move.id, {
+                                  type: event.target.value ? event.target.value as PokemonType : undefined,
+                                })
                               }
                             >
+                              <option value="">Unknown</option>
                               {TYPE_ORDER.map((type) => (
-                                <option key={`${attack.id}-${type}`} value={type}>
+                                <option key={`${move.id}-${type}`} value={type}>
                                   {TYPE_META[type].label}
                                 </option>
                               ))}
@@ -4393,14 +4857,15 @@ function TeamSlotCard({
                             <span>Base Power</span>
                             <input
                               type="number"
-                              min="1"
+                              min="0"
                               step="1"
                               inputMode="numeric"
-                              placeholder="80"
-                              value={getAttackBasePowerDisplay(attack.basePower)}
+                              placeholder={category === "status" ? "Status" : "80"}
+                              value={getAttackBasePowerDisplay(basePower ?? undefined)}
+                              disabled={category === "status"}
                               onChange={(event) => {
                                 const parsed = Number(event.target.value);
-                                updateDraftAttack(attack.id, {
+                                updateDraftMove(move.id, {
                                   basePower:
                                     event.target.value.trim() && Number.isFinite(parsed) && parsed > 0
                                       ? Math.floor(parsed)
@@ -4413,42 +4878,51 @@ function TeamSlotCard({
 
                         <div className="saved-attack-editor-controls">
                           <div className="damage-category-toggle" role="group" aria-label="Saved move category">
-                            {(["physical", "special"] as const).map((category) => (
+                            {(["physical", "special", "status"] as const).map((nextCategory) => (
                               <button
-                                key={`${attack.id}-${category}`}
+                                key={`${move.id}-${nextCategory}`}
                                 type="button"
-                                className={`damage-category-button ${
-                                  getResolvedAttackCategory(attack, pokemon) === category ? "active" : ""
-                                }`}
-                                onClick={() => updateDraftAttack(attack.id, { category })}
+                                className={`damage-category-button ${category === nextCategory ? "active" : ""}`}
+                                onClick={() =>
+                                  updateDraftMove(move.id, {
+                                    category: nextCategory,
+                                    basePower: nextCategory === "status" ? undefined : basePower ?? 80,
+                                  })}
                               >
-                                {category === "physical" ? "Physical" : "Special"}
+                                {nextCategory === "physical"
+                                  ? "Physical"
+                                  : nextCategory === "special"
+                                    ? "Special"
+                                    : "Status"}
                               </button>
                             ))}
                           </div>
 
                           <button
                             type="button"
-                            className={`attack-default-toggle ${getResolvedAttackSpread(attack) ? "active" : ""}`}
-                            onClick={() =>
-                              updateDraftAttack(attack.id, { isSpreadMove: !getResolvedAttackSpread(attack) })
-                            }
+                            className={`attack-default-toggle ${Boolean(move.isSpreadMove) ? "active" : ""}`}
+                            disabled={category === "status"}
+                            onClick={() => updateDraftMove(move.id, { isSpreadMove: !Boolean(move.isSpreadMove) })}
                           >
-                            {getResolvedAttackSpread(attack) ? "Spread Move" : "Single Target"}
+                            {category === "status"
+                              ? "Status Move"
+                              : Boolean(move.isSpreadMove)
+                                ? "Spread Move"
+                                : "Single Target"}
                           </button>
                         </div>
                       </article>
-                    ))}
+                    )})}
                   </div>
                 ) : (
-                  <div className="team-slot-empty">Add attacks here to unlock duplicate types and OHKO checks.</div>
+                  <div className="team-slot-empty">Add moves here to mirror the full set from the moveset database.</div>
                 )}
 
                 <div className="attack-editor-actions">
                   <button type="button" className="secondary-button" onClick={cancelAttackEdit}>
                     Cancel
                   </button>
-                  <button type="button" className="primary-button" onClick={applySavedAttacks}>
+                  <button type="button" className="primary-button" onClick={applyKnownMoves}>
                     Apply
                   </button>
                 </div>
@@ -4684,9 +5158,15 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const [opponentQueries, setOpponentQueries] = useState<string[]>(createEmptyOpponentSlots);
   const [analyzedOpponentEntries, setAnalyzedOpponentEntries] = useState<LoadedOpponentEntry[]>([]);
   const [teamPreviewSolverMode, setTeamPreviewSolverMode] = useState<TeamPreviewSolverMode>("sparse");
+  const [bringSelectionMode, setBringSelectionMode] = useState<BringSelectionMode>("auto");
+  const [manualBenchSlotIndices, setManualBenchSlotIndices] = useState<number[]>([]);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [database, setDatabase] = useState<PokemonRecord[] | null>(null);
-  const [battleData, setBattleData] = useState<{ abilities: AbilityRecord[]; moves: MoveRecord[] } | null>(null);
+  const [battleData, setBattleData] = useState<{
+    abilities: AbilityRecord[];
+    items: ItemRecord[];
+    moves: MoveRecord[];
+  } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [battleDataError, setBattleDataError] = useState<string | null>(null);
   const [teamName, setTeamName] = useState("My Team");
@@ -4816,6 +5296,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         if (active) {
           setBattleData({
             abilities: data.abilities,
+            items: data.items,
             moves: data.moves,
           });
         }
@@ -4878,6 +5359,17 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     return map;
   }, [battleData]);
 
+  const itemByKey = useMemo(() => {
+    const map = new Map<string, ItemRecord>();
+
+    for (const item of battleData?.items ?? []) {
+      map.set(item.id, item);
+      map.set(item.name.toLowerCase(), item);
+    }
+
+    return map;
+  }, [battleData]);
+
   const moveByKey = useMemo(() => {
     const map = new Map<string, MoveRecord>();
 
@@ -4920,18 +5412,34 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     () =>
       teamSlots.map((slot) => {
         const pokemon = slot.pokemonId ? pokemonByKey.get(slot.pokemonId) ?? null : null;
+        const defaultStatSpread = pokemon
+          ? getStoredOrPresetSavedAttacks(pokemon, speciesMovesetByKey, moveByKey, MAX_SPECIES_MOVESET_SIZE).statSpread ??
+            getDefaultChampionsStatSpreadForPokemon(pokemon)
+          : null;
+        const resolvedStatSpread = defaultStatSpread
+          ? normalizeChampionsStatSpread(slot.statSpread ?? undefined, defaultStatSpread)
+          : null;
 
         return {
           ...slot,
           pokemon,
+          defaultStatSpread,
+          resolvedStatSpread,
         };
       }),
-    [pokemonByKey, teamSlots],
+    [moveByKey, pokemonByKey, speciesMovesetByKey, teamSlots],
   );
 
   const selectedPokemon = team
     .map((slot) => slot.pokemon)
     .filter((pokemon): pokemon is PokemonRecord => Boolean(pokemon));
+  const filledTeamSlotIndices = useMemo(
+    () =>
+      team
+        .map((slot, slotIndex) => (slot.pokemon ? slotIndex : null))
+        .filter((slotIndex): slotIndex is number => slotIndex !== null),
+    [team],
+  );
 
   const selectedSavedAttackCount = useMemo(
     () => team.reduce((total, slot) => total + slot.savedAttacks.length, 0),
@@ -4958,6 +5466,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             presetMoveNames: [],
             abilityName: null,
             itemName: null,
+            statSpread: null,
             movesetSource: "none",
           };
         }
@@ -4983,6 +5492,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
               allMoveNames: [],
               abilityName: null,
               itemName: null,
+              statSpread: null,
               movesetSource: "none" as const,
             };
 
@@ -4995,6 +5505,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           presetMoveNames: storedMoves.allMoveNames,
           abilityName: storedMoves.abilityName,
           itemName: storedMoves.itemName,
+          statSpread: storedMoves.statSpread,
           movesetSource: storedMoves.movesetSource,
         };
       }),
@@ -5087,6 +5598,14 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       teamBuilderPokemonByKey.get(nextQuery.trim().toLowerCase()) ??
       teamBuilderPokemonByKey.get(nextQuery.trim()) ??
       null;
+    const resolvedMoveset = match
+      ? getStoredOrPresetSavedAttacks(
+          match,
+          speciesMovesetByKey,
+          moveByKey,
+          MAX_ATTACK_TYPES_PER_SLOT,
+        )
+      : null;
 
     setTeamSlots((current) =>
       current.map((slot, index) =>
@@ -5095,16 +5614,26 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
               ...slot,
               query: nextQuery,
               pokemonId: match?.id ?? null,
+              statSpread: !match
+                ? null
+                : slot.pokemonId === match.id
+                  ? slot.statSpread
+                  : null,
+              itemName: !match
+                ? null
+                : slot.pokemonId === match.id
+                  ? slot.itemName
+                  : resolvedMoveset?.itemName ?? null,
+              knownMoves: !match
+                ? []
+                : slot.pokemonId === match.id
+                  ? slot.knownMoves
+                  : resolvedMoveset?.knownMoves ?? [],
               savedAttacks: !match
                 ? []
                 : slot.pokemonId === match.id
                   ? slot.savedAttacks
-                  : getStoredOrPresetSavedAttacks(
-                      match,
-                      speciesMovesetByKey,
-                      moveByKey,
-                      MAX_ATTACK_TYPES_PER_SLOT,
-                    ).savedAttacks,
+                  : resolvedMoveset?.savedAttacks ?? [],
             }
           : slot,
       ),
@@ -5117,9 +5646,9 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     );
   };
 
-  const applySlotSavedAttacks = (
+  const applySlotConfig = (
     slotIndex: number,
-    savedAttacks: PersistedSavedAttack[],
+    config: { knownMoves: PersistedKnownMove[]; itemName: string | null },
   ) => {
     setTeamSlots((current) =>
       current.map((slot, index) => {
@@ -5127,11 +5656,28 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           return slot;
         }
 
+        const pokemon = slot.pokemonId ? pokemonByKey.get(slot.pokemonId) ?? null : null;
+
         return {
           ...slot,
-          savedAttacks,
+          itemName: config.itemName,
+          knownMoves: config.knownMoves,
+          savedAttacks: sanitizeKnownMovesToSavedAttacks(config.knownMoves, pokemon, MAX_ATTACK_TYPES_PER_SLOT),
         };
       }),
+    );
+  };
+
+  const applySlotStatSpread = (slotIndex: number, statSpread: ChampionsStatSpread | null) => {
+    setTeamSlots((current) =>
+      current.map((slot, index) =>
+        index === slotIndex
+          ? {
+              ...slot,
+              statSpread,
+            }
+          : slot,
+      ),
     );
   };
 
@@ -5150,7 +5696,11 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     }
 
     return teamSlots.some(
-      (slot) => Boolean(slot.pokemonId) || slot.query.trim().length > 0 || slot.savedAttacks.length > 0,
+      (slot) =>
+        Boolean(slot.pokemonId) ||
+        slot.query.trim().length > 0 ||
+        slot.savedAttacks.length > 0 ||
+        Boolean(slot.statSpread),
     );
   }, [activeSavedTeamId, teamName, teamSlots]);
 
@@ -5198,7 +5748,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const loadSavedTeamIntoBuilder = (savedTeam: PersistedTeam) => {
     setTeamName(savedTeam.name);
     setActiveSavedTeamId(savedTeam.id);
-    setTeamSlots(normalizeTeamSlots(savedTeam.slots));
+    setTeamSlots(normalizeTeamSlots(savedTeam.slots, moveByKey));
     setOpenerSelections(normalizePersistedOpenerSelections(savedTeam.openerSelections));
     setStorageMessage(`Loaded "${savedTeam.name}".`);
     setStorageError(null);
@@ -5225,7 +5775,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       id: activeSavedTeamId ?? "exported-team",
       name: teamName.trim() || "My Team",
       updatedAt: new Date().toISOString(),
-      version: 5,
+      version: 7,
       slots: teamSlots,
       openerSelections,
     };
@@ -5270,7 +5820,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
 
       setTeamName(parsed.name?.trim() || "Imported Team");
       setActiveSavedTeamId(null);
-      setTeamSlots(normalizeTeamSlots(parsed.slots));
+      setTeamSlots(normalizeTeamSlots(parsed.slots, moveByKey));
       setOpenerSelections(normalizePersistedOpenerSelections(parsed.openerSelections));
       setStorageMessage(`Imported "${parsed.name?.trim() || "Imported Team"}". Save it to keep it locally.`);
       setStorageError(null);
@@ -5318,12 +5868,6 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         );
       }
 
-      if (imported.skippedStatusMoves.length > 0) {
-        warningParts.push(
-          `skipped ${imported.skippedStatusMoves.length} status move${imported.skippedStatusMoves.length === 1 ? "" : "s"} because the team builder only tracks attacking moves`,
-        );
-      }
-
       if (imported.unknownMoves.length > 0) {
         warningParts.push(`couldn't match moves: ${formatImportIssueList(imported.unknownMoves)}`);
       }
@@ -5334,7 +5878,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
 
       setTeamName("Imported Team");
       setActiveSavedTeamId(null);
-      setTeamSlots(normalizeTeamSlots(imported.slots));
+      setTeamSlots(normalizeTeamSlots(imported.slots, moveByKey));
       setOpenerSelections(normalizePersistedOpenerSelections(undefined));
       setShowdownImportText("");
       setStorageMessage(
@@ -5441,87 +5985,6 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     [openerSelections, team],
   );
 
-  const opponentCoverageMap = useMemo(
-    () =>
-      new Map(
-        scoutingOpponentEntries.map((entry) => [
-          entry.slotIndex,
-          team
-            .map((slot, index) => {
-              if (!slot.pokemon) {
-                return null;
-              }
-
-              const coverage = getBestSavedAttacksAgainstPokemon(slot.savedAttacks, entry.pokemon);
-
-              return {
-                slotIndex: index,
-                pokemon: slot.pokemon,
-                multiplier: coverage.multiplier,
-                attacks: coverage.attacks,
-                speedDelta: slot.pokemon.baseStats.spe - entry.pokemon.baseStats.spe,
-              };
-            })
-            .filter(
-              (
-                coverageEntry,
-              ): coverageEntry is {
-                slotIndex: number;
-                pokemon: PokemonRecord;
-                multiplier: number | null;
-                attacks: PersistedSavedAttack[];
-                speedDelta: number;
-              } => Boolean(coverageEntry),
-            )
-            .sort((left, right) => (right.multiplier ?? 0) - (left.multiplier ?? 0)),
-        ]),
-      ),
-    [scoutingOpponentEntries, team],
-  );
-
-  const enemyThreatMap = useMemo(
-    () =>
-      new Map(
-        team
-          .map((slot, slotIndex) => {
-            if (!slot.pokemon) {
-              return null;
-            }
-
-            const pokemon = slot.pokemon;
-
-            return [
-              slotIndex,
-              scoutingOpponentEntries
-                .map((entry) => {
-                  const scoutingAttacks =
-                    entry.savedAttacks.length > 0 ? entry.savedAttacks : createStabProxySavedAttacks(entry.pokemon);
-                  const coverage = getBestSavedAttacksAgainstPokemon(scoutingAttacks, pokemon);
-
-                  return {
-                    slotIndex: entry.slotIndex,
-                    pokemon: entry.pokemon,
-                    multiplier: coverage.multiplier,
-                    attacks: coverage.attacks,
-                    movesetSource: entry.movesetSource,
-                    speedDelta: entry.pokemon.baseStats.spe - pokemon.baseStats.spe,
-                  };
-                })
-                .sort((left, right) => (right.multiplier ?? 0) - (left.multiplier ?? 0)),
-            ] as const;
-          })
-          .filter((entry): entry is readonly [number, Array<{
-            slotIndex: number;
-            pokemon: PokemonRecord;
-            multiplier: number | null;
-            attacks: PersistedSavedAttack[];
-            movesetSource: "custom" | "preset" | "none";
-            speedDelta: number;
-          }>] => Boolean(entry)),
-      ),
-    [scoutingOpponentEntries, team],
-  );
-
   const selectedDamageAttacker =
     damageAttackerSlotIndex !== null && team[damageAttackerSlotIndex]?.pokemon
       ? team[damageAttackerSlotIndex]
@@ -5555,8 +6018,9 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             slotIndex,
             pokemon: slot.pokemon,
             savedAttacks: slot.savedAttacks,
+            statSpread: slot.resolvedStatSpread,
             movesetSourceLabel: "Saved",
-            speedStat: getLevel50OtherStatValue(slot.pokemon.baseStats.spe),
+            speedStat: getChampionsComputedStats(slot.pokemon, { spread: slot.resolvedStatSpread }).spe,
             hpPercent: runtime.hpPercent,
             protect: runtime.protect,
             priority: runtime.priority,
@@ -5588,13 +6052,14 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             slotIndex,
             pokemon: entry.pokemon,
             savedAttacks,
+            statSpread: entry.statSpread,
             movesetSourceLabel:
               entry.savedAttacks.length > 0
                 ? entry.movesetSource === "custom"
                   ? "Custom"
                   : "Preset"
                 : "STAB proxy",
-            speedStat: getLevel50OtherStatValue(entry.pokemon.baseStats.spe),
+            speedStat: getChampionsComputedStats(entry.pokemon, { spread: entry.statSpread }).spe,
             hpPercent: runtime.hpPercent,
             protect: runtime.protect,
             priority: runtime.priority,
@@ -5620,6 +6085,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             presetMoveNames: string[];
             abilityName: string | null;
             itemName: string | null;
+            statSpread: ChampionsStatSpread | null;
             movesetSource: "custom" | "preset" | "none";
           } => Boolean(entry),
         ),
@@ -5711,6 +6177,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             attackerPokemon: member.pokemon,
             defenderPokemon: defender.pokemon,
             savedAttacks: member.savedAttacks,
+            attackerStatSpread: member.statSpread,
+            defenderStatSpread: defender.statSpread,
             weather: damageWeather,
             terrain: damageTerrain,
             attackerGrounded: isLikelyGrounded(member.pokemon),
@@ -5744,6 +6212,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             attackerPokemon: member.pokemon,
             defenderPokemon: defender.pokemon,
             savedAttacks: member.savedAttacks,
+            attackerStatSpread: member.statSpread,
+            defenderStatSpread: defender.statSpread,
             weather: damageWeather,
             terrain: damageTerrain,
             attackerGrounded: isLikelyGrounded(member.pokemon),
@@ -5979,6 +6449,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                 attackerSavedAttacks: slot.savedAttacks,
                 targetPokemon: enemy.pokemon,
                 targetSavedAttacks: enemy.savedAttacks,
+                targetStatSpread: enemy.statSpread ?? null,
                 weather: damageWeather,
                 terrain: damageTerrain,
                 attackerGrounded: isLikelyGrounded(pokemon),
@@ -6063,7 +6534,11 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             slotIndex,
             pokemon: slot.pokemon,
             slotSavedAttacks: slot.savedAttacks,
-            resolvedMoveset,
+            resolvedMoveset: {
+              ...resolvedMoveset,
+              itemName: slot.itemName,
+              statSpread: slot.resolvedStatSpread,
+            },
             moveByKey,
             runtime,
             isActive: doublesAllySelection.includes(slotIndex),
@@ -6085,6 +6560,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             allMoveNames: entry.presetMoveNames,
             abilityName: entry.abilityName,
             itemName: entry.itemName,
+            statSpread: entry.statSpread,
             movesetSource: entry.movesetSource,
           },
           moveByKey,
@@ -6181,6 +6657,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             allMoveNames: entry.presetMoveNames,
             abilityName: entry.abilityName,
             itemName: entry.itemName,
+            statSpread: entry.statSpread,
             movesetSource: entry.movesetSource,
           },
           moveByKey,
@@ -6210,9 +6687,126 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     moveByKey,
     teamPreviewSolverMode,
   ]);
+  const bringSelection = useMemo(
+    () =>
+      resolveBringSelection({
+        filledSlotIndices: filledTeamSlotIndices,
+        recommendedFourSlotIndices: teamPreviewRecommendation?.bestFour ?? [],
+        manualBenchSlotIndices,
+        mode: bringSelectionMode,
+      }),
+    [bringSelectionMode, filledTeamSlotIndices, manualBenchSlotIndices, teamPreviewRecommendation?.bestFour],
+  );
+  const bringBenchSlotSet = useMemo(
+    () => new Set(bringSelection.benchSlotIndices),
+    [bringSelection.benchSlotIndices],
+  );
+  const bringSelectedSlotSet = useMemo(
+    () => new Set(bringSelection.bringSlotIndices),
+    [bringSelection.bringSlotIndices],
+  );
+  const bringSelectedTeam = useMemo(
+    () =>
+      bringSelection.bringSlotIndices
+        .map((slotIndex) => {
+          const slot = team[slotIndex];
+          return slot?.pokemon ? { slotIndex, slot, pokemon: slot.pokemon } : null;
+        })
+        .filter(
+          (entry): entry is { slotIndex: number; slot: LoadedTeamSlot; pokemon: PokemonRecord } => Boolean(entry),
+        ),
+    [bringSelection.bringSlotIndices, team],
+  );
+  const bringSelectedPokemon = useMemo(
+    () => bringSelectedTeam.map(({ pokemon }) => pokemon),
+    [bringSelectedTeam],
+  );
+  useEffect(() => {
+    setManualBenchSlotIndices((current) =>
+      current
+        .filter((slotIndex) => filledTeamSlotIndices.includes(slotIndex))
+        .slice(0, bringSelection.benchCount),
+    );
+
+    if (bringSelection.benchCount === 0 && bringSelectionMode !== "auto") {
+      setBringSelectionMode("auto");
+    }
+  }, [bringSelection.benchCount, bringSelectionMode, filledTeamSlotIndices]);
+  const toggleBringBenchSlot = (slotIndex: number) => {
+    if (!filledTeamSlotIndices.includes(slotIndex) || bringSelection.benchCount === 0) {
+      return;
+    }
+
+    setBringSelectionMode("manual");
+    setManualBenchSlotIndices((current) =>
+      toggleBenchSelection({
+        currentBenchSlotIndices: current,
+        slotIndex,
+        filledSlotIndices: filledTeamSlotIndices,
+        benchCount: bringSelection.benchCount,
+      }),
+    );
+  };
+  const resetBringBenchSelection = () => {
+    setBringSelectionMode("auto");
+    setManualBenchSlotIndices([]);
+  };
   const battleEngineAllyMemberBySlot = useMemo(
     () => new Map(battleEngineAllyMembers.map((member) => [member.teamIndex, member] as const)),
     [battleEngineAllyMembers],
+  );
+  const opponentCoverageMap = useMemo(
+    () =>
+      new Map(
+        scoutingOpponentEntries.map((entry) => [
+          entry.slotIndex,
+          bringSelectedTeam
+            .map(({ pokemon, slot, slotIndex }) => {
+              const coverage = getBestSavedAttacksAgainstPokemon(slot.savedAttacks, entry.pokemon);
+
+              return {
+                slotIndex,
+                pokemon,
+                multiplier: coverage.multiplier,
+                attacks: coverage.attacks,
+                speedDelta:
+                  getChampionsComputedStats(pokemon, { spread: slot.resolvedStatSpread }).spe -
+                  getChampionsComputedStats(entry.pokemon, { spread: entry.statSpread }).spe,
+              };
+            })
+            .sort((left, right) => (right.multiplier ?? 0) - (left.multiplier ?? 0)),
+        ]),
+      ),
+    [bringSelectedTeam, scoutingOpponentEntries],
+  );
+  const enemyThreatMap = useMemo(
+    () =>
+      new Map(
+        bringSelectedTeam.map(({ pokemon, slot, slotIndex }) => {
+          return [
+            slotIndex,
+            scoutingOpponentEntries
+              .map((entry) => {
+                const scoutingAttacks =
+                  entry.savedAttacks.length > 0 ? entry.savedAttacks : createStabProxySavedAttacks(entry.pokemon);
+                const coverage = getBestSavedAttacksAgainstPokemon(scoutingAttacks, pokemon);
+
+                return {
+                  slotIndex: entry.slotIndex,
+                  pokemon: entry.pokemon,
+                  multiplier: coverage.multiplier,
+                  attacks: coverage.attacks,
+                  movesetSource: entry.movesetSource,
+                  speedDelta:
+                    getChampionsComputedStats(entry.pokemon, { spread: entry.statSpread }).spe -
+                    getChampionsComputedStats(pokemon, { spread: slot.resolvedStatSpread }).spe,
+                };
+              })
+              .sort((left, right) => (right.multiplier ?? 0) - (left.multiplier ?? 0)),
+          ] as const;
+        }),
+      ),
+    [bringSelectedTeam, scoutingOpponentEntries],
   );
   const incomingThreatCards = useMemo(() => {
     if (!doublesThreatReady) {
@@ -6227,6 +6821,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           attackerPokemon: member.pokemon,
           defenderPokemon: defender.pokemon,
           savedAttacks: member.savedAttacks,
+          attackerStatSpread: member.statSpread,
+          defenderStatSpread: defender.statSpread,
           weather: damageWeather,
           terrain: damageTerrain,
           attackerGrounded: isLikelyGrounded(member.pokemon),
@@ -6259,6 +6855,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           attackerPokemon: member.pokemon,
           defenderPokemon: defender.pokemon,
           savedAttacks: member.savedAttacks,
+          attackerStatSpread: member.statSpread,
+          defenderStatSpread: defender.statSpread,
           weather: damageWeather,
           terrain: damageTerrain,
           attackerGrounded: isLikelyGrounded(member.pokemon),
@@ -6299,13 +6897,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       new Map(
         scoutingOpponentEntries.map((entry) => [
           entry.slotIndex,
-          team
-            .flatMap((slot, slotIndex) => {
-              if (!slot.pokemon) {
-                return [];
-              }
-
-              const attackerPokemon = slot.pokemon;
+          bringSelectedTeam
+            .flatMap(({ pokemon: attackerPokemon, slot, slotIndex }) => {
 
               return slot.savedAttacks
                 .map((attack) => {
@@ -6331,6 +6924,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                     defenderStatStage: damageDefenseStage,
                     attackerAbility: getDefaultDamageAbilityId(attackerPokemon),
                     defenderAbility: getDefaultDamageAbilityId(entry.pokemon),
+                    attackerStatSpread: slot.resolvedStatSpread,
+                    defenderStatSpread: entry.statSpread ?? null,
                   });
 
                   if (estimate.maxPercent < 100) {
@@ -6342,7 +6937,9 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                     pokemon: attackerPokemon,
                     attack,
                     estimate,
-                    speedDelta: attackerPokemon.baseStats.spe - entry.pokemon.baseStats.spe,
+                    speedDelta:
+                      getChampionsComputedStats(attackerPokemon, { spread: slot.resolvedStatSpread }).spe -
+                      getChampionsComputedStats(entry.pokemon, { spread: entry.statSpread }).spe,
                     guaranteed: estimate.minPercent >= 100,
                   };
                 })
@@ -6368,7 +6965,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             }),
         ]),
       ),
-    [damageAttackStage, damageDefenseStage, damageTerrain, damageWeather, scoutingOpponentEntries, team],
+    [bringSelectedTeam, damageAttackStage, damageDefenseStage, damageTerrain, damageWeather, scoutingOpponentEntries],
   );
 
   const teamMatchupEloRows = useMemo(
@@ -6379,7 +6976,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
 
       return team
         .map((slot, slotIndex) => {
-          if (!slot.pokemon) {
+          if (!bringSelectedSlotSet.has(slotIndex) || !slot.pokemon) {
             return null;
           }
 
@@ -6389,9 +6986,11 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             buildMatchupEloTargetResult({
               attackerPokemon,
               attackerSavedAttacks: slot.savedAttacks,
+              attackerStatSpread: slot.resolvedStatSpread,
               targetPokemon: entry.pokemon,
               targetSavedAttacks:
                 entry.savedAttacks.length > 0 ? entry.savedAttacks : createStabProxySavedAttacks(entry.pokemon),
+              targetStatSpread: entry.statSpread ?? null,
               weather: damageWeather,
               terrain: damageTerrain,
               attackerGrounded,
@@ -6428,7 +7027,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         )
         .sort((left, right) => compareMatchupEloSummaries(left, right));
     },
-    [analyzedOpponentEntries, damageAttackStage, damageDefenseStage, damageTerrain, damageWeather, team],
+    [analyzedOpponentEntries, bringSelectedSlotSet, damageAttackStage, damageDefenseStage, damageTerrain, damageWeather, team],
   );
   const teamMatchupEloCoversAll = teamMatchupEloRows.filter((row) => row.coverageCount === analyzedOpponentEntries.length);
   const teamMatchupEloGuaranteesAll = teamMatchupEloRows.filter(
@@ -6497,6 +7096,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       defenderStatStage: damageDefenseStage,
       attackerAbility: damageCalcMode === "attack" ? damageAttackerAbility : damageDefenderAbility,
       defenderAbility: damageCalcMode === "attack" ? damageDefenderAbility : damageAttackerAbility,
+      attackerStatSpread: damageCalcMode === "attack" ? null : selectedDamageDefender?.statSpread ?? null,
+      defenderStatSpread: damageCalcMode === "attack" ? selectedDamageDefender?.statSpread ?? null : null,
     });
   }, [
     damageAttackStage,
@@ -6511,6 +7112,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     damageTerrain,
     damageWeather,
     quickMove,
+    selectedDamageDefender?.statSpread,
   ]);
 
   const updateOpenerSelection = (openerIndex: number, memberIndex: 0 | 1, slotIndex: number) => {
@@ -6885,9 +7487,12 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             databaseLoaded={Boolean(database)}
             loadError={loadError}
             moveByKey={moveByKey}
+            itemOptions={battleData?.items ?? []}
+            itemByKey={itemByKey}
             onQueryChange={updateSlotQuery}
             onClear={clearSlot}
-            onApplySavedAttacks={applySlotSavedAttacks}
+            onApplySlotMoveset={applySlotConfig}
+            onApplySlotStatSpread={applySlotStatSpread}
           />
         ))}
       </section>
@@ -7341,11 +7946,125 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           <section className="team-elo-panel">
             <div className="scout-section-header">
               <p className="eyebrow">Bring Four Preview</p>
-              <span>{teamMatchupEloRows.length} allies ranked</span>
+              <span>{bringSelection.bringSlotIndices.length} allies scored</span>
             </div>
 
             {selectedPokemon.length > 0 ? (
               <>
+                {bringSelection.bringCount > 0 ? (
+                  <article className="bring-selection-panel">
+                    <div className="bring-selection-panel__head">
+                      <div>
+                        <p className="eyebrow">Bring Filter</p>
+                        <h3>
+                          Leave out {bringSelection.benchCount} of {filledTeamSlotIndices.length}
+                        </h3>
+                      </div>
+
+                      <div className="bring-selection-panel__actions">
+                        <span className="mini-type-pill neutral-pill">
+                          {bringSelectionMode === "manual" ? "Manual override" : "Auto from solver"}
+                        </span>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={resetBringBenchSelection}
+                          disabled={
+                            bringSelectionMode === "auto" &&
+                            bringSelection.recommendedBenchSlotIndices.length === bringSelection.benchCount
+                          }
+                        >
+                          Use Solver Pick
+                        </button>
+                      </div>
+                    </div>
+
+                    <p className="selector-note team-elo-note">
+                      Enemy scoring still assumes any of their loaded six can appear in the back. On our side, the SE
+                      answers, OHKO scan, matchup Elo, and ally threat cards below only score the four you bring.
+                    </p>
+
+                    <div className="bring-selection-panel__summary">
+                      <div className="bring-selection-tray">
+                        <span className="bring-selection-tray__label">Scored Four</span>
+                        <div className="bring-selection-tray__chips">
+                          {bringSelection.bringSlotIndices.map((slotIndex) => {
+                            const pokemon = team[slotIndex]?.pokemon;
+                            return pokemon ? (
+                              <span key={`bring-chip-${slotIndex}`} className="bring-selection-chip">
+                                <PokemonSprite pokemon={pokemon} className="bring-selection-chip__sprite" />
+                                <span>{pokemon.name}</span>
+                              </span>
+                            ) : null;
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="bring-selection-tray is-bench">
+                        <span className="bring-selection-tray__label">
+                          Left Out {bringSelection.benchCount > 0 ? `(${bringSelection.benchCount})` : ""}
+                        </span>
+                        <div className="bring-selection-tray__chips">
+                          {bringSelection.benchSlotIndices.length > 0 ? (
+                            bringSelection.benchSlotIndices.map((slotIndex) => {
+                              const pokemon = team[slotIndex]?.pokemon;
+                              return pokemon ? (
+                                <span key={`bench-chip-${slotIndex}`} className="bring-selection-chip is-bench">
+                                  <PokemonSprite pokemon={pokemon} className="bring-selection-chip__sprite" />
+                                  <span>{pokemon.name}</span>
+                                </span>
+                              ) : null;
+                            })
+                          ) : (
+                            <span className="bring-selection-empty">Everyone loaded is scored.</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {bringSelection.benchCount > 0 ? (
+                      <div className="bring-selection-grid">
+                        {filledTeamSlotIndices.map((slotIndex) => {
+                          const pokemon = team[slotIndex]?.pokemon;
+                          if (!pokemon) {
+                            return null;
+                          }
+
+                          const isBenched = bringBenchSlotSet.has(slotIndex);
+                          const isRecommendedBenched = bringSelection.recommendedBenchSlotIndices.includes(slotIndex);
+                          const cardState: BringSelectionCardState = isBenched ? "bench" : "bring";
+
+                          return (
+                            <button
+                              key={`bring-selection-${slotIndex}`}
+                              type="button"
+                              className={`bring-selection-card is-${cardState}${
+                                isRecommendedBenched ? " is-recommended-bench" : ""
+                              }`}
+                              onClick={() => toggleBringBenchSlot(slotIndex)}
+                              aria-pressed={isBenched}
+                            >
+                              <span className="bring-selection-card__slot">Slot {slotIndex + 1}</span>
+                              <PokemonSprite pokemon={pokemon} className="bring-selection-card__sprite" />
+                              <strong>{pokemon.name}</strong>
+                              <span className="bring-selection-card__state">
+                                {isBenched ? "Left out" : "Scored"}
+                              </span>
+                              <span className="bring-selection-card__hint">
+                                {isRecommendedBenched
+                                  ? "Solver says bench"
+                                  : bringSelection.recommendedBenchSlotIndices.length === bringSelection.benchCount
+                                    ? "Solver says bring"
+                                    : "Manual pick"}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </article>
+                ) : null}
+
                 {analyzedOpponentEntries.length === 0 ? (
                   <p className="selector-note team-elo-note" style={{ marginBottom: "1rem" }}>
                     Run the bring-four analysis when you want. The bring-four preview appears once at least four enemy
@@ -7612,7 +8331,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                 >
                   <div className="collapsible-section-title">
                     <p className="eyebrow">Per-Slot Matchup Elo</p>
-                    <span>{teamMatchupEloRows.length} allies ranked</span>
+                    <span>{teamMatchupEloRows.length} bring slots ranked</span>
                   </div>
                   <button
                     type="button"
@@ -7630,9 +8349,9 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                 {perSlotMatchupEloOpen ? (
                   <>
                     <p className="selector-note team-elo-note">
-                      Reuses the OHKO Scanner matchup Elo across the full enemy six: OHKO coverage first, then
-                      guaranteed KOs, survival into the enemy&apos;s best loaded hit, speed control, and worst-case
-                      pressure under the current damage assumptions.
+                      Reuses the OHKO Scanner matchup Elo across the full enemy six while only scoring the selected
+                      bring four on our side: OHKO coverage first, then guaranteed KOs, survival into the enemy&apos;s
+                      best loaded hit, speed control, and worst-case pressure under the current damage assumptions.
                     </p>
 
                     <div className="ohko-result-list">
@@ -7772,14 +8491,16 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                 ) : null}
               </>
             ) : (
-              <div className="team-slot-empty">Add Pokemon to your team to rank the full 6v6 matchup board.</div>
+              <div className="team-slot-empty">
+                Add Pokemon to your team to rank your selected bring four into the full enemy six.
+              </div>
             )}
           </section>
         ) : null}
 
         {scoutingOpponentEntries.length === 0 ? (
           <div className="matchup-empty-board">
-            Add up to six opposing Pokemon to see their stats and your team’s super-effective answers.
+            Add up to six opposing Pokemon to see their stats and your selected bring four’s super-effective answers.
           </div>
         ) : (
           <>
@@ -7974,7 +8695,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                       <div className="coverage-preview-header">
                         <p className="eyebrow">{seEntries.length > 0 ? "SE Hitters" : "Best Available Hits"}</p>
                         <span>
-                          {seEntries.length > 0 ? `${seEntries.length} team members` : `${fallbackEntries.length} shown`}
+                          {seEntries.length > 0 ? `${seEntries.length} bring members` : `${fallbackEntries.length} shown`}
                         </span>
                       </div>
 
@@ -8117,20 +8838,16 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             </div>
 
             <div className="scout-section-header allied">
-              <p className="eyebrow">Our Team</p>
-              <span>{selectedPokemon.length} cards</span>
+              <p className="eyebrow">Scored Bring</p>
+              <span>{bringSelectedPokemon.length} cards</span>
             </div>
-            {selectedPokemon.length === 0 ? (
-              <div className="matchup-empty-board">Add Pokemon to your team to see enemy STAB pressure into them.</div>
+            {bringSelectedPokemon.length === 0 ? (
+              <div className="matchup-empty-board">
+                Add Pokemon to your team to see enemy STAB pressure into the selected bring four.
+              </div>
             ) : (
               <div className="enemy-grid allied-grid">
-                {team.map((slot, slotIndex) => {
-                  if (!slot.pokemon) {
-                    return null;
-                  }
-
-                  const pokemon = slot.pokemon;
-
+                {bringSelectedTeam.map(({ pokemon, slotIndex }) => {
                   const threats = enemyThreatMap.get(slotIndex) ?? [];
                   const seThreats = threats.filter((entry) => (entry.multiplier ?? 0) > 1);
                   const fallbackThreats = threats.filter((entry) => (entry.multiplier ?? 0) <= 1).slice(0, 3);
@@ -9238,6 +9955,12 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           <option key={move.id} value={move.name} />
         ))}
       </datalist>
+
+      <datalist id="item-options">
+        {(battleData?.items ?? []).map((item) => (
+          <option key={item.id} value={item.name} />
+        ))}
+      </datalist>
     </>
   );
 }
@@ -9256,9 +9979,10 @@ function MovesetDatabaseView() {
   const [storageMessage, setStorageMessage] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSpeciesKey, setSelectedSpeciesKey] = useState<string | null>(null);
-  const [draftSavedAttacks, setDraftSavedAttacks] = useState<PersistedSavedAttack[]>([]);
+  const [draftKnownMoves, setDraftKnownMoves] = useState<PersistedKnownMove[]>([]);
   const [draftAbilityName, setDraftAbilityName] = useState("");
   const [draftItemName, setDraftItemName] = useState("");
+  const [draftStatSpread, setDraftStatSpread] = useState<ChampionsStatSpread | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -9389,7 +10113,12 @@ function MovesetDatabaseView() {
     selectedSpeciesKey !== null ? speciesMovesetByKey.get(selectedSpeciesKey) ?? null : null;
   const selectedHasCustomOverride = Boolean(
     selectedCustomMoveset &&
-      ((selectedCustomMoveset.knownMoves?.length ?? 0) > 0 || selectedCustomMoveset.abilityName || selectedCustomMoveset.itemName),
+      (
+        (selectedCustomMoveset.knownMoves?.length ?? 0) > 0 ||
+        selectedCustomMoveset.abilityName ||
+        selectedCustomMoveset.itemName ||
+        selectedCustomMoveset.statSpread
+      ),
   );
   const selectedPreset = useMemo(() => (selectedPokemon ? getOpponentPreset(selectedPokemon) : null), [selectedPokemon]);
   const selectedPresetResolvedAbilityName = useMemo(
@@ -9425,7 +10154,15 @@ function MovesetDatabaseView() {
             sanitizeSavedAttacks,
             sanitizeKnownMovesToSavedAttacks,
           })
-        : { savedAttacks: [], knownMoves: [], allMoveNames: [], abilityName: null, itemName: null, movesetSource: "none" as const },
+        : {
+            savedAttacks: [],
+            knownMoves: [],
+            allMoveNames: [],
+            abilityName: null,
+            itemName: null,
+            statSpread: null,
+            movesetSource: "none" as const,
+          },
     [moveByKey, selectedPokemon, speciesMovesetByKey],
   );
   const selectedPresetMoveNames = useMemo(
@@ -9442,15 +10179,14 @@ function MovesetDatabaseView() {
   );
   const selectedCustomMoveEntries = useMemo(
     () =>
-      draftSavedAttacks.map((attack) => {
-        const moveName = getAttackLabel(attack);
+      draftKnownMoves.map((move) => {
+        const moveName = getKnownMoveName(move);
         return {
           name: moveName,
           move: getMoveRecordByName(moveName, moveByKey),
-          attack,
         };
       }),
-    [draftSavedAttacks, moveByKey],
+    [draftKnownMoves, moveByKey],
   );
   const draftAbilityRecord = useMemo(() => {
     const trimmed = draftAbilityName.trim().toLowerCase();
@@ -9460,80 +10196,138 @@ function MovesetDatabaseView() {
     const trimmed = draftItemName.trim().toLowerCase();
     return trimmed ? itemByKey.get(trimmed) ?? null : null;
   }, [draftItemName, itemByKey]);
+  const draftSpread = useMemo(
+    () =>
+      selectedPokemon
+        ? normalizeChampionsStatSpread(
+            draftStatSpread ?? undefined,
+            selectedResolvedMoveset.statSpread ?? getDefaultChampionsStatSpreadForPokemon(selectedPokemon),
+          )
+        : null,
+    [draftStatSpread, selectedPokemon, selectedResolvedMoveset.statSpread],
+  );
+  const draftSpreadComputedStats = useMemo(
+    () => (selectedPokemon && draftSpread ? getChampionsComputedStats(selectedPokemon, { spread: draftSpread }) : null),
+    [draftSpread, selectedPokemon],
+  );
+  const draftSpreadTotalPoints = draftSpread ? getTotalChampionsStatPoints(draftSpread.statPoints) : 0;
+  const draftSpreadRemainingPoints = CHAMPIONS_TOTAL_STAT_POINTS - draftSpreadTotalPoints;
+  const presetSpread = useMemo(
+    () => (selectedPokemon ? getDefaultChampionsStatSpreadForPokemon(selectedPokemon) : null),
+    [selectedPokemon],
+  );
+  const natureOptions = useMemo(() => getChampionsNatureOptions(), []);
 
   useEffect(() => {
     if (!selectedPokemon) {
-      setDraftSavedAttacks([]);
+      setDraftKnownMoves([]);
       setDraftAbilityName("");
       setDraftItemName("");
+      setDraftStatSpread(null);
       return;
     }
 
-    const nextDraft =
-      selectedCustomMoveset?.knownMoves?.length
-        ? sanitizeKnownMovesToSavedAttacks(selectedCustomMoveset.knownMoves, selectedPokemon, MAX_SPECIES_MOVESET_SIZE)
-        : selectedResolvedMoveset.savedAttacks;
+    const nextDraft = selectedCustomMoveset?.knownMoves?.length
+      ? sanitizeKnownMoves(selectedCustomMoveset.knownMoves, moveByKey, MAX_SPECIES_MOVESET_SIZE)
+      : selectedResolvedMoveset.knownMoves;
 
-    setDraftSavedAttacks(nextDraft);
+    setDraftKnownMoves(nextDraft);
     setDraftAbilityName(selectedResolvedMoveset.abilityName ?? "");
     setDraftItemName(selectedResolvedMoveset.itemName ?? "");
-  }, [selectedCustomMoveset, selectedPokemon, selectedResolvedMoveset]);
+    setDraftStatSpread(
+      selectedCustomMoveset?.statSpread
+        ? normalizeChampionsStatSpread(selectedCustomMoveset.statSpread)
+        : selectedResolvedMoveset.statSpread
+          ? normalizeChampionsStatSpread(selectedResolvedMoveset.statSpread)
+          : getDefaultChampionsStatSpreadForPokemon(selectedPokemon),
+    );
+  }, [moveByKey, selectedCustomMoveset, selectedPokemon, selectedResolvedMoveset]);
 
-  const updateDraftAttack = (attackId: string, patch: Partial<PersistedSavedAttack>) => {
-    setDraftSavedAttacks((current) =>
-      current.map((attack) => (attack.id === attackId ? { ...attack, ...patch } : attack)),
+  const updateDraftKnownMove = (moveId: string, patch: Partial<PersistedKnownMove>) => {
+    setDraftKnownMoves((current) =>
+      current.map((move) => (move.id === moveId ? { ...move, ...patch } : move)),
     );
   };
 
-  const addDraftAttack = () => {
-    setDraftSavedAttacks((current) => {
+  const addDraftKnownMove = () => {
+    setDraftKnownMoves((current) => {
       if (!selectedPokemon || current.length >= MAX_SPECIES_MOVESET_SIZE) {
         return current;
       }
 
-      return [...current, createSavedAttack(selectedPokemon)];
+      return [...current, createKnownMove()];
     });
   };
 
-  const removeDraftAttack = (attackId: string) => {
-    setDraftSavedAttacks((current) => current.filter((attack) => attack.id !== attackId));
+  const removeDraftKnownMove = (moveId: string) => {
+    setDraftKnownMoves((current) => current.filter((move) => move.id !== moveId));
   };
 
-  const updateDraftAttackLabel = (attackId: string, nextLabel: string) => {
+  const updateDraftKnownMoveLabel = (moveId: string, nextLabel: string) => {
     const trimmed = nextLabel.trim();
-    const matchedMove = moveByKey.get(trimmed.toLowerCase()) ?? moveByKey.get(trimmed) ?? null;
+    const matchedMove = getMoveRecordByName(trimmed, moveByKey);
 
-    if (matchedMove && matchedMove.category !== "Status" && matchedMove.basePower > 0) {
-      const moveType = getMovePokemonType(matchedMove);
-
-      if (moveType) {
-        updateDraftAttack(attackId, {
-          label: matchedMove.name,
-          type: moveType,
-          basePower: matchedMove.basePower,
-          category: matchedMove.category.toLowerCase() as DamageCategory,
-          isSpreadMove: isSpreadTarget(matchedMove.target),
-        });
-        return;
-      }
+    if (matchedMove) {
+      updateDraftKnownMove(moveId, {
+        name: matchedMove.name,
+        label: matchedMove.name,
+        type: getMovePokemonType(matchedMove) ?? undefined,
+        basePower: matchedMove.basePower > 0 ? matchedMove.basePower : undefined,
+        category: matchedMove.category.toLowerCase() as PersistedKnownMove["category"],
+        isSpreadMove: isSpreadTarget(matchedMove.target),
+      });
+      return;
     }
 
-    updateDraftAttack(attackId, { label: nextLabel });
+    updateDraftKnownMove(moveId, { name: nextLabel, label: nextLabel });
   };
 
-  const persistSpeciesMovesets = async (nextAttacks: PersistedSavedAttack[]) => {
+  const updateDraftNature = (nature: ChampionsNatureId) => {
+    if (!selectedPokemon) {
+      return;
+    }
+
+    setDraftStatSpread((current) =>
+      normalizeChampionsStatSpread(
+        {
+          ...(current ?? getDefaultChampionsStatSpreadForPokemon(selectedPokemon)),
+          nature,
+        },
+        current ?? getDefaultChampionsStatSpreadForPokemon(selectedPokemon),
+      ),
+    );
+  };
+
+  const updateDraftStatPoints = (statId: ChampionsStatId, nextValue: number) => {
+    if (!selectedPokemon) {
+      return;
+    }
+
+    const baseSpread = draftSpread ?? getDefaultChampionsStatSpreadForPokemon(selectedPokemon);
+    const currentValue = baseSpread.statPoints[statId];
+    const sanitized = Math.max(0, Math.min(CHAMPIONS_MAX_STAT_POINTS_PER_STAT, Math.floor(nextValue)));
+    const totalWithoutCurrent = getTotalChampionsStatPoints(baseSpread.statPoints) - currentValue;
+    const clampedValue = Math.min(sanitized, CHAMPIONS_TOTAL_STAT_POINTS - totalWithoutCurrent);
+
+    setDraftStatSpread(
+      normalizeChampionsStatSpread({
+        nature: baseSpread.nature,
+        statPoints: {
+          ...baseSpread.statPoints,
+          [statId]: clampedValue,
+        },
+      }),
+    );
+  };
+
+  const persistSpeciesMovesets = async (nextMoves: PersistedKnownMove[]) => {
     if (!selectedPokemon) {
       return;
     }
 
     try {
       setStorageError(null);
-      const knownMoves = buildPersistedKnownMovesFromDraftAttacks(
-        nextAttacks,
-        moveByKey,
-        selectedResolvedMoveset.knownMoves,
-        MAX_SPECIES_MOVESET_SIZE,
-      );
+      const knownMoves = sanitizeKnownMoves(nextMoves, moveByKey, MAX_SPECIES_MOVESET_SIZE);
       const saved = await saveSpeciesMoveset(
         getPokemonMovesetKey(selectedPokemon),
         selectedPokemon.name,
@@ -9541,6 +10335,7 @@ function MovesetDatabaseView() {
         {
           abilityName: draftAbilityName.trim() || undefined,
           itemName: draftItemName.trim() || undefined,
+          statSpread: draftSpread ?? undefined,
         },
       );
       const entries = await listSpeciesMovesets();
@@ -9568,9 +10363,16 @@ function MovesetDatabaseView() {
   };
 
   const resetDraftToPreset = () => {
-    setDraftSavedAttacks(selectedResolvedMoveset.savedAttacks);
+    setDraftKnownMoves(selectedResolvedMoveset.knownMoves);
     setDraftAbilityName(selectedResolvedMoveset.abilityName ?? "");
     setDraftItemName(selectedResolvedMoveset.itemName ?? "");
+    setDraftStatSpread(
+      selectedResolvedMoveset.statSpread
+        ? normalizeChampionsStatSpread(selectedResolvedMoveset.statSpread)
+        : selectedPokemon
+          ? getDefaultChampionsStatSpreadForPokemon(selectedPokemon)
+          : null,
+    );
   };
 
   return (
@@ -9643,6 +10445,8 @@ function MovesetDatabaseView() {
                             {hasCustomOverride
                               ? (customMoveset?.knownMoves?.length ?? 0) > 0
                                 ? `${customMoveset?.knownMoves?.length ?? 0} custom move${(customMoveset?.knownMoves?.length ?? 0) === 1 ? "" : "s"}`
+                                : customMoveset?.statSpread
+                                  ? "Custom spread / overrides"
                                 : "Custom ability/item override"
                               : presetMoves.length > 0
                                 ? `${presetMoves.length} preset move${presetMoves.length === 1 ? "" : "s"}`
@@ -9745,20 +10549,92 @@ function MovesetDatabaseView() {
                   <span>Spe {selectedPokemon.baseStats.spe}</span>
                 </div>
 
+                {draftSpread && draftSpreadComputedStats ? (
+                  <section className="moveset-stat-panel">
+                    <div className="moveset-stat-panel-header">
+                      <div>
+                        <p className="eyebrow">Stat Spread</p>
+                        <h3>Champions-style training</h3>
+                      </div>
+                      <span className="mini-type-pill neutral-pill">
+                        {draftSpreadTotalPoints} / {CHAMPIONS_TOTAL_STAT_POINTS} SP
+                      </span>
+                    </div>
+
+                    <div className="moveset-stat-panel-toolbar">
+                      <label className="saved-attack-field">
+                        <span>Nature</span>
+                        <select
+                          value={draftSpread.nature}
+                          onChange={(event) => updateDraftNature(event.target.value as ChampionsNatureId)}
+                        >
+                          {natureOptions.map((option) => (
+                            <option key={option.id} value={option.id}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <div className="moveset-stat-panel-summary">
+                        <span>{getStatSpreadSummary(draftSpread)}</span>
+                        <span>{draftSpreadRemainingPoints} SP left</span>
+                      </div>
+                    </div>
+
+                    {presetSpread ? (
+                      <p className="selector-note">
+                        <strong>Suggested default:</strong> {getStatSpreadSummary(presetSpread)}
+                      </p>
+                    ) : null}
+
+                    <div className="moveset-stat-slider-list">
+                      {CHAMPIONS_STAT_ORDER.map((statId) => {
+                        const points = draftSpread.statPoints[statId];
+                        const finalValue = draftSpreadComputedStats[statId];
+
+                        return (
+                          <label key={`${selectedPokemon.id}-spread-${statId}`} className="moveset-stat-slider-card">
+                            <div className="moveset-stat-slider-top">
+                              <strong>{CHAMPIONS_STAT_LABELS[statId]}</strong>
+                              <span>{points} SP</span>
+                              <em>{finalValue}</em>
+                            </div>
+                            <input
+                              type="range"
+                              min={0}
+                              max={CHAMPIONS_MAX_STAT_POINTS_PER_STAT}
+                              step={1}
+                              value={points}
+                              onChange={(event) => updateDraftStatPoints(statId, Number(event.target.value))}
+                              className="moveset-stat-slider"
+                              style={{ "--slider-fill": `${(points / CHAMPIONS_MAX_STAT_POINTS_PER_STAT) * 100}%` } as CSSProperties}
+                            />
+                            <div className="moveset-stat-slider-scale">
+                              <span>0</span>
+                              <span>{CHAMPIONS_MAX_STAT_POINTS_PER_STAT}</span>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </section>
+                ) : null}
+
                 <div className="attack-editor always-open">
                   <div className="attack-editor-topbar">
                     <p className="selector-note">
-                      The imported movepool below includes status and support moves with descriptions. Custom overrides
-                      here can override damaging moves for Team Builder / rough damage tools, while typed support move
-                      names such as Protect or Tailwind are still preserved in the stored enemy moveset.
+                      The custom moveset below now stores the full four-move set, including status and support moves.
+                      Team Builder mirrors these full movesets, while the damage calculator still filters down to
+                      damaging moves only.
                     </p>
                     <button
                       type="button"
                       className="secondary-button"
-                      onClick={addDraftAttack}
-                      disabled={draftSavedAttacks.length >= MAX_SPECIES_MOVESET_SIZE || !selectedPokemon}
+                      onClick={addDraftKnownMove}
+                      disabled={draftKnownMoves.length >= MAX_SPECIES_MOVESET_SIZE || !selectedPokemon}
                     >
-                      Add Attack
+                      Add Move
                     </button>
                   </div>
 
@@ -9875,121 +10751,145 @@ function MovesetDatabaseView() {
                     </section>
                   ) : null}
 
-                  {draftSavedAttacks.length > 0 ? (
+                  {draftKnownMoves.length > 0 ? (
                     <div className="saved-attack-editor-list">
-                      {draftSavedAttacks.map((attack, attackIndex) => (
-                        <article key={attack.id} className="saved-attack-editor-card">
-                          <div className="saved-attack-editor-header">
-                            <span
-                              className="mini-type-pill"
-                              style={
-                                {
-                                  "--type-color": TYPE_META[attack.type].color,
-                                  "--type-accent": TYPE_META[attack.type].accent,
-                                } as CSSProperties
-                              }
-                            >
-                              Attack {attackIndex + 1}
-                            </span>
-                            {selectedCustomMoveEntries[attackIndex]?.move ? (
-                              <span className="mini-type-pill neutral-pill">
-                                {selectedCustomMoveEntries[attackIndex]!.move!.category}
-                              </span>
-                            ) : null}
-                            <button
-                              type="button"
-                              className="secondary-button"
-                              onClick={() => removeDraftAttack(attack.id)}
-                            >
-                              Remove
-                            </button>
-                          </div>
+                      {draftKnownMoves.map((move, moveIndex) => {
+                        const matchedMove = selectedCustomMoveEntries[moveIndex]?.move ?? null;
+                        const moveType = getKnownMoveType(move);
+                        const category = getKnownMoveCategory(move, selectedPokemon);
+                        const basePower = getKnownMoveBasePower(move);
 
-                          {selectedCustomMoveEntries[attackIndex]?.move?.desc || selectedCustomMoveEntries[attackIndex]?.move?.shortDesc ? (
-                            <p className="selector-note">
-                              {selectedCustomMoveEntries[attackIndex]!.move!.desc ||
-                                selectedCustomMoveEntries[attackIndex]!.move!.shortDesc}
-                            </p>
-                          ) : null}
-
-                          <label className="saved-attack-field wide">
-                            <span>Move Name</span>
-                            <input
-                              list="moveset-database-options"
-                              className="team-pokemon-input"
-                              placeholder="Moonblast"
-                              value={attack.label ?? ""}
-                              onChange={(event) => updateDraftAttackLabel(attack.id, event.target.value)}
-                            />
-                          </label>
-
-                          <div className="saved-attack-editor-grid">
-                            <label className="saved-attack-field">
-                              <span>Type</span>
-                              <select
-                                value={attack.type}
-                                onChange={(event) =>
-                                  updateDraftAttack(attack.id, { type: event.target.value as PokemonType })
-                                }
-                              >
-                                {TYPE_ORDER.map((type) => (
-                                  <option key={`${attack.id}-${type}`} value={type}>
-                                    {TYPE_META[type].label}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-
-                            <label className="saved-attack-field">
-                              <span>Base Power</span>
-                              <input
-                                type="number"
-                                min="1"
-                                step="1"
-                                inputMode="numeric"
-                                placeholder="80"
-                                value={getAttackBasePowerDisplay(attack.basePower)}
-                                onChange={(event) => {
-                                  const parsed = Number(event.target.value);
-                                  updateDraftAttack(attack.id, {
-                                    basePower:
-                                      event.target.value.trim() && Number.isFinite(parsed) && parsed > 0
-                                        ? Math.floor(parsed)
-                                        : undefined,
-                                  });
-                                }}
-                              />
-                            </label>
-                          </div>
-
-                          <div className="saved-attack-editor-controls">
-                            <div className="damage-category-toggle" role="group" aria-label="Saved move category">
-                              {(["physical", "special"] as const).map((category) => (
-                                <button
-                                  key={`${attack.id}-${category}`}
-                                  type="button"
-                                  className={`damage-category-button ${
-                                    getResolvedAttackCategory(attack, selectedPokemon) === category ? "active" : ""
-                                  }`}
-                                  onClick={() => updateDraftAttack(attack.id, { category })}
+                        return (
+                          <article key={move.id} className="saved-attack-editor-card">
+                            <div className="saved-attack-editor-header">
+                              {moveType ? (
+                                <span
+                                  className="mini-type-pill"
+                                  style={
+                                    {
+                                      "--type-color": TYPE_META[moveType].color,
+                                      "--type-accent": TYPE_META[moveType].accent,
+                                    } as CSSProperties
+                                  }
                                 >
-                                  {category === "physical" ? "Physical" : "Special"}
-                                </button>
-                              ))}
+                                  Move {moveIndex + 1}
+                                </span>
+                              ) : (
+                                <span className="mini-type-pill neutral-pill">Move {moveIndex + 1}</span>
+                              )}
+                              <span className="mini-type-pill neutral-pill">
+                                {category === "status"
+                                  ? "Status"
+                                  : category === "physical"
+                                    ? "Physical"
+                                    : "Special"}
+                              </span>
+                              <button
+                                type="button"
+                                className="secondary-button"
+                                onClick={() => removeDraftKnownMove(move.id)}
+                              >
+                                Remove
+                              </button>
                             </div>
 
-                            <button
-                              type="button"
-                              className={`attack-default-toggle ${getResolvedAttackSpread(attack) ? "active" : ""}`}
-                              onClick={() =>
-                                updateDraftAttack(attack.id, { isSpreadMove: !getResolvedAttackSpread(attack) })
-                              }
-                            >
-                              {getResolvedAttackSpread(attack) ? "Spread Move" : "Single Target"}
-                            </button>
-                          </div>
-                        </article>
-                      ))}
+                            {matchedMove?.desc || matchedMove?.shortDesc ? (
+                              <p className="selector-note">{matchedMove?.desc || matchedMove?.shortDesc}</p>
+                            ) : null}
+
+                            <label className="saved-attack-field wide">
+                              <span>Move Name</span>
+                              <input
+                                list="moveset-database-options"
+                                className="team-pokemon-input"
+                                placeholder="Protect"
+                                value={getKnownMoveName(move)}
+                                onChange={(event) => updateDraftKnownMoveLabel(move.id, event.target.value)}
+                              />
+                            </label>
+
+                            <div className="saved-attack-editor-grid">
+                              <label className="saved-attack-field">
+                                <span>Type</span>
+                                <select
+                                  value={moveType ?? ""}
+                                  onChange={(event) =>
+                                    updateDraftKnownMove(move.id, {
+                                      type: event.target.value ? event.target.value as PokemonType : undefined,
+                                    })
+                                  }
+                                >
+                                  <option value="">Unknown</option>
+                                  {TYPE_ORDER.map((type) => (
+                                    <option key={`${move.id}-${type}`} value={type}>
+                                      {TYPE_META[type].label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+
+                              <label className="saved-attack-field">
+                                <span>Base Power</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  inputMode="numeric"
+                                  placeholder={category === "status" ? "Status" : "80"}
+                                  value={getAttackBasePowerDisplay(basePower ?? undefined)}
+                                  disabled={category === "status"}
+                                  onChange={(event) => {
+                                    const parsed = Number(event.target.value);
+                                    updateDraftKnownMove(move.id, {
+                                      basePower:
+                                        event.target.value.trim() && Number.isFinite(parsed) && parsed > 0
+                                          ? Math.floor(parsed)
+                                          : undefined,
+                                    });
+                                  }}
+                                />
+                              </label>
+                            </div>
+
+                            <div className="saved-attack-editor-controls">
+                              <div className="damage-category-toggle" role="group" aria-label="Saved move category">
+                                {(["physical", "special", "status"] as const).map((nextCategory) => (
+                                  <button
+                                    key={`${move.id}-${nextCategory}`}
+                                    type="button"
+                                    className={`damage-category-button ${category === nextCategory ? "active" : ""}`}
+                                    onClick={() =>
+                                      updateDraftKnownMove(move.id, {
+                                        category: nextCategory,
+                                        basePower: nextCategory === "status" ? undefined : basePower ?? 80,
+                                      })}
+                                  >
+                                    {nextCategory === "physical"
+                                      ? "Physical"
+                                      : nextCategory === "special"
+                                        ? "Special"
+                                        : "Status"}
+                                  </button>
+                                ))}
+                              </div>
+
+                              <button
+                                type="button"
+                                className={`attack-default-toggle ${Boolean(move.isSpreadMove) ? "active" : ""}`}
+                                disabled={category === "status"}
+                                onClick={() =>
+                                  updateDraftKnownMove(move.id, { isSpreadMove: !Boolean(move.isSpreadMove) })}
+                              >
+                                {category === "status"
+                                  ? "Status Move"
+                                  : Boolean(move.isSpreadMove)
+                                    ? "Spread Move"
+                                    : "Single Target"}
+                              </button>
+                            </div>
+                          </article>
+                        );
+                      })}
                     </div>
                   ) : (
                     <div className="team-slot-empty">No moves saved yet for this species.</div>
@@ -10000,9 +10900,9 @@ function MovesetDatabaseView() {
                       type="button"
                       className="secondary-button"
                       onClick={resetDraftToPreset}
-                      disabled={selectedResolvedMoveset.savedAttacks.length === 0}
+                      disabled={!selectedPokemon}
                     >
-                      Reset To Default
+                      Reset To Defaults
                     </button>
                     <button
                       type="button"
@@ -10012,7 +10912,7 @@ function MovesetDatabaseView() {
                     >
                       Clear Custom
                     </button>
-                    <button type="button" className="primary-button" onClick={() => void persistSpeciesMovesets(draftSavedAttacks)}>
+                    <button type="button" className="primary-button" onClick={() => void persistSpeciesMovesets(draftKnownMoves)}>
                       Save Species Moveset
                     </button>
                   </div>
@@ -10213,14 +11113,17 @@ function OhkoFinderView() {
         const targetResults = selectedTargets.map((targetPokemon) => {
           const targetStoredMoves = targetStoredMovesById.get(targetPokemon.id) ?? {
             savedAttacks: [],
+            statSpread: null,
             movesetSource: "none" as const,
           };
 
           return buildMatchupEloTargetResult({
             attackerPokemon,
             attackerSavedAttacks: storedMoves.savedAttacks,
+            attackerStatSpread: storedMoves.statSpread,
             targetPokemon,
             targetSavedAttacks: targetStoredMoves.savedAttacks,
+            targetStatSpread: targetStoredMoves.statSpread,
             weather: damageWeather,
             terrain: damageTerrain,
             attackerGrounded,
@@ -10375,6 +11278,8 @@ function OhkoFinderView() {
                 </div>
                 <div className="ohko-selected-target-list">
                   {selectedTargets.map((targetPokemon) => {
+                    const targetSpread = targetStoredMovesById.get(targetPokemon.id)?.statSpread ?? null;
+                    const targetStats = getChampionsComputedStats(targetPokemon, { spread: targetSpread });
                     const weakTypes = TYPE_ORDER.filter(
                       (attackType) => (getPokemonDefensiveMultiplier(targetPokemon, attackType) ?? 1) > 1,
                     );
@@ -10386,7 +11291,7 @@ function OhkoFinderView() {
                           <PokemonSprite pokemon={targetPokemon} className="damage-side-sprite" />
                           <div>
                             <strong>{targetPokemon.name}</strong>
-                            <p>Spe {getLevel50OtherStatValue(targetPokemon.baseStats.spe)}</p>
+                            <p>Spe {targetStats.spe}</p>
                           </div>
                         </div>
                         <div className="team-type-list">
@@ -10414,9 +11319,9 @@ function OhkoFinderView() {
                           })}
                         </div>
                         <div className="damage-stat-strip">
-                          <span>HP {getLevel50HpValue(targetPokemon.baseStats.hp)}</span>
-                          <span>Def {getLevel50OtherStatValue(targetPokemon.baseStats.def)}</span>
-                          <span>SpD {getLevel50OtherStatValue(targetPokemon.baseStats.spd)}</span>
+                          <span>HP {targetStats.hp}</span>
+                          <span>Def {targetStats.def}</span>
+                          <span>SpD {targetStats.spd}</span>
                         </div>
 
                         <div className="enemy-weakness-block">

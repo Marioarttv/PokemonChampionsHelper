@@ -1,12 +1,13 @@
 import { getTypeFromLabel } from "../../data/typeChart";
 import type { MoveRecord } from "../battleData";
-import { calculateRoughDamage, getLevel50HpValue } from "../damage";
+import { calculateRoughDamage } from "../damage";
+import { getChampionsComputedStats } from "../championsStats";
 import {
   getDefaultDamageAbilityId,
   getDefaultDamageAbilityIdFromNames,
   normalizeDamageAbilityId,
 } from "../damageAbilities";
-import { normalizeDamageItemId } from "../damageItems";
+import { doesDefenderItemReduceDamage, isResistBerryItem, normalizeDamageItemId } from "../damageItems";
 import { getEffectiveSpeedForBattleState } from "./rules/speed";
 import { canApplyStatusCondition } from "./rules/status";
 import { getSpecialMoveDefinition, hasProtectFamilyMove, normalizeMoveKey } from "./moveRegistry";
@@ -15,6 +16,7 @@ import type {
   BattleCombatantState,
   BattleMoveEffectData,
   BattleMoveOption,
+  BattleStatStages,
   BattleScreenKind,
   BattleSide,
   BattleStageDelta,
@@ -40,9 +42,17 @@ const DEFAULT_SCREEN_TURNS = 5;
 const EXTENDED_SCREEN_TURNS = 8;
 const DEFAULT_SLEEP_TURNS = 2;
 const DOUBLES_SCREEN_MULTIPLIER = 2 / 3;
+const SITRUS_BERRY_HEAL_FRACTION = 0.25;
+const LEFTOVERS_HEAL_FRACTION = 1 / 16;
+const BLACK_SLUDGE_DAMAGE_FRACTION = 1 / 8;
+const STAGE_KEYS: Array<keyof BattleStatStages> = ["attack", "defense", "specialAttack", "specialDefense", "speed"];
 
 function clampStage(value: number) {
   return Math.max(-6, Math.min(6, value));
+}
+
+function getAbilityKey(combatant: BattleCombatantState) {
+  return normalizeMoveKey(combatant.abilityName ?? combatant.abilityId);
 }
 
 function getMoveFromLookup(moveName: string, moveByKey: ReadonlyMap<string, MoveRecord>) {
@@ -305,7 +315,9 @@ function createCombatantState(
   speedStage: number,
   universalProtect: boolean,
 ): BattleCombatantState {
-  const maxHp = getLevel50HpValue(member.pokemon.baseStats.hp);
+  const maxHp = getChampionsComputedStats(member.pokemon, {
+    spread: member.statSpread,
+  }).hp;
   const currentHpPercent = member.currentHpPercent ?? 100;
   const currentHp =
     typeof member.currentHp === "number" && Number.isFinite(member.currentHp)
@@ -339,6 +351,7 @@ function createCombatantState(
     teamIndex: member.teamIndex,
     label: member.label,
     pokemon: member.pokemon,
+    statSpread: member.statSpread ?? null,
     maxHp,
     currentHp,
     turnsActive: Math.max(0, Math.round(member.turnsActive ?? 0)),
@@ -346,6 +359,7 @@ function createCombatantState(
     abilityName: member.abilityName?.trim() || null,
     itemId,
     itemName: member.itemName?.trim() || null,
+    itemConsumed: false,
     stages: {
       attack: clampStage(member.stages?.attack ?? attackStage),
       defense: clampStage(member.stages?.defense ?? defenseStage),
@@ -462,7 +476,7 @@ export function createBattleState(input: CreateBattleStateInput): BattleState {
   const enemyTailwindTurns = input.enemySide?.tailwindTurns ?? (input.enemyTailwind ? DEFAULT_TAILWIND_TURNS : 0);
   const trickRoomTurns = input.fieldState?.trickRoomTurns ?? (input.trickRoom ? DEFAULT_TRICK_ROOM_TURNS : 0);
 
-  return {
+  const state: BattleState = {
     combatants: {
       ...ally.combatants,
       ...enemy.combatants,
@@ -493,6 +507,9 @@ export function createBattleState(input: CreateBattleStateInput): BattleState {
       replacement: input.replacementPolicy ?? "firstAvailable",
     },
   };
+
+  applyInitialEntryEffects(state);
+  return state;
 }
 
 export function cloneBattleState(state: BattleState): BattleState {
@@ -640,6 +657,14 @@ function scaleDamageEstimate(
   };
 }
 
+function getPreviewDefenderItemId(defender: BattleCombatantState) {
+  if (defender.itemConsumed && isResistBerryItem(defender.itemId)) {
+    return "none";
+  }
+
+  return defender.itemId;
+}
+
 export function getDamageAmountForMode(
   mode: DamageRollMode,
   estimate: ReturnType<typeof calculateRoughDamage>,
@@ -693,7 +718,7 @@ export function getDamagePreview(
     attackerAbility: attacker.abilityId,
     defenderAbility: defender.abilityId,
     attackerItem: attacker.itemId,
-    defenderItem: defender.itemId,
+    defenderItem: getPreviewDefenderItemId(defender),
     helpingHand: attacker.helpingHandTurns > 0,
   });
 
@@ -1445,6 +1470,113 @@ function applyDamage(state: BattleState, targetId: string, damage: number) {
   return appliedDamage;
 }
 
+function consumeItem(combatant: BattleCombatantState) {
+  combatant.itemConsumed = true;
+}
+
+function cloneStages(stages: BattleStatStages): BattleStatStages {
+  return { ...stages };
+}
+
+function getStageDeltaDifference(before: BattleStatStages, after: BattleStatStages): BattleStageDelta {
+  const delta: BattleStageDelta = {};
+
+  for (const stageKey of STAGE_KEYS) {
+    const change = after[stageKey] - before[stageKey];
+    if (change !== 0) {
+      delta[stageKey] = change;
+    }
+  }
+
+  return delta;
+}
+
+function hasAnyStageDelta(delta: BattleStageDelta | undefined) {
+  return STAGE_KEYS.some((stageKey) => typeof delta?.[stageKey] === "number" && delta[stageKey] !== 0);
+}
+
+function hasNegativeStageDelta(delta: BattleStageDelta | undefined) {
+  return STAGE_KEYS.some((stageKey) => typeof delta?.[stageKey] === "number" && (delta[stageKey] ?? 0) < 0);
+}
+
+function invertStageDelta(delta: BattleStageDelta | undefined): BattleStageDelta {
+  const inverted: BattleStageDelta = {};
+
+  for (const stageKey of STAGE_KEYS) {
+    if (typeof delta?.[stageKey] === "number") {
+      inverted[stageKey] = -(delta[stageKey] ?? 0);
+    }
+  }
+
+  return inverted;
+}
+
+function getRestoringStageDelta(delta: BattleStageDelta | undefined): BattleStageDelta {
+  const restoring: BattleStageDelta = {};
+
+  for (const stageKey of STAGE_KEYS) {
+    const change = delta?.[stageKey] ?? 0;
+    if (change < 0) {
+      restoring[stageKey] = -change;
+    }
+  }
+
+  return restoring;
+}
+
+function canUseFocusSash(target: BattleCombatantState, damage: number) {
+  return (
+    target.itemId === "focussash" &&
+    !target.itemConsumed &&
+    target.currentHp === target.maxHp &&
+    damage >= target.currentHp
+  );
+}
+
+function maybeConsumeResistBerry(
+  target: BattleCombatantState,
+  move: BattleMoveOption,
+  preview: NonNullable<ReturnType<typeof getDamagePreview>>,
+  appliedDamage: number,
+  events: TurnEvent[],
+) {
+  if (
+    appliedDamage <= 0 ||
+    target.itemConsumed ||
+    !move.type ||
+    !doesDefenderItemReduceDamage({
+      attackType: move.type,
+      defenderItem: target.itemId,
+      typeMultiplier: preview.estimate.typeMultiplier,
+    })
+  ) {
+    return;
+  }
+
+  consumeItem(target);
+  events.push({
+    targetId: target.id,
+    text: `${target.pokemon.name}'s ${target.itemName ?? "Berry"} is consumed.`,
+  });
+}
+
+function maybeTriggerSitrusBerry(state: BattleState, target: BattleCombatantState, events: TurnEvent[]) {
+  if (target.currentHp <= 0 || target.itemId !== "sitrusberry" || target.itemConsumed || target.currentHp > target.maxHp / 2) {
+    return;
+  }
+
+  const healed = healCombatant(state, target.id, SITRUS_BERRY_HEAL_FRACTION);
+  if (healed <= 0) {
+    return;
+  }
+
+  consumeItem(target);
+  events.push({
+    targetId: target.id,
+    text: `${target.pokemon.name} restores ${healed} HP with Sitrus Berry.`,
+  });
+}
+
 function healCombatant(state: BattleState, targetId: string, fraction: number) {
   const target = state.combatants[targetId];
   if (!target || target.currentHp <= 0) {
@@ -1477,6 +1609,80 @@ function applyStageDelta(combatant: BattleCombatantState, delta: BattleStageDelt
   if (typeof delta.speed === "number") {
     combatant.stages.speed = clampStage(combatant.stages.speed + delta.speed);
   }
+}
+
+function applyStageDeltaDetailed(combatant: BattleCombatantState, delta: BattleStageDelta | undefined) {
+  const before = cloneStages(combatant.stages);
+  applyStageDelta(combatant, delta);
+  return getStageDeltaDifference(before, combatant.stages);
+}
+
+function maybeTriggerWhiteHerb(target: BattleCombatantState, actualDelta: BattleStageDelta, events: TurnEvent[]) {
+  if (target.itemId !== "whiteherb" || target.itemConsumed || !hasNegativeStageDelta(actualDelta)) {
+    return;
+  }
+
+  const restoringDelta = getRestoringStageDelta(actualDelta);
+  if (!hasAnyStageDelta(restoringDelta)) {
+    return;
+  }
+
+  applyStageDelta(target, restoringDelta);
+  consumeItem(target);
+  events.push({
+    targetId: target.id,
+    text: `${target.pokemon.name} restores its lowered stats with White Herb.`,
+  });
+}
+
+function maybeTriggerStatDropAbility(
+  target: BattleCombatantState,
+  source: BattleCombatantState | null,
+  actualDelta: BattleStageDelta,
+  events: TurnEvent[],
+) {
+  if (!source || source.side === target.side || !hasNegativeStageDelta(actualDelta)) {
+    return;
+  }
+
+  const abilityKey = getAbilityKey(target);
+  if (abilityKey === "defiant") {
+    applyStageDelta(target, { attack: 2 });
+    events.push({
+      targetId: target.id,
+      text: `${target.pokemon.name}'s Defiant sharply raises its Attack.`,
+    });
+    return;
+  }
+
+  if (abilityKey === "competitive") {
+    applyStageDelta(target, { specialAttack: 2 });
+    events.push({
+      targetId: target.id,
+      text: `${target.pokemon.name}'s Competitive sharply raises its Special Attack.`,
+    });
+  }
+}
+
+function applyReactiveStageDelta(
+  target: BattleCombatantState,
+  delta: BattleStageDelta | undefined,
+  events: TurnEvent[],
+  options?: {
+    source?: BattleCombatantState | null;
+  },
+) {
+  const source = options?.source ?? null;
+  const adjustedDelta = getAbilityKey(target) === "contrary" ? invertStageDelta(delta) : delta;
+  const actualDelta = applyStageDeltaDetailed(target, adjustedDelta);
+
+  if (!hasAnyStageDelta(actualDelta)) {
+    return actualDelta;
+  }
+
+  maybeTriggerWhiteHerb(target, actualDelta, events);
+  maybeTriggerStatDropAbility(target, source, actualDelta, events);
+  return actualDelta;
 }
 
 function applyStatusCondition(
@@ -1930,7 +2136,8 @@ function executeMove(
     }
 
     const damage = getDamageAmountForMode(damageMode, preview.estimate);
-    const appliedDamage = applyDamage(state, targetId, damage);
+    const usedFocusSash = canUseFocusSash(target, damage);
+    const appliedDamage = applyDamage(state, targetId, usedFocusSash ? target.currentHp - 1 : damage);
     hitAnything = hitAnything || appliedDamage > 0;
     events.push({
       actorId: actor.id,
@@ -1939,6 +2146,16 @@ function executeMove(
         preview.estimate.averagePercent,
       )}% avg).`,
     });
+
+    maybeConsumeResistBerry(target, move, preview, appliedDamage, events);
+
+    if (usedFocusSash) {
+      consumeItem(target);
+      events.push({
+        targetId,
+        text: `${target.pokemon.name} hangs on with Focus Sash.`,
+      });
+    }
 
     if (move.effectKind === "fakeOut" && target.currentHp > 0 && !actedIds.has(targetId)) {
       target.isFlinched = true;
@@ -1959,6 +2176,7 @@ function executeMove(
         shouldSecondaryProc(move, secondaryMode),
         actedIds,
       );
+      maybeTriggerSitrusBerry(state, target, events);
     }
 
     if (target.currentHp <= 0) {
@@ -2027,8 +2245,64 @@ function decaySideConditions(sideState: BattleState["sides"][BattleSide]) {
   sideState.allySwitchPair = null;
 }
 
-function finalizeTurn(state: BattleState, startingActiveIds: Set<string>) {
+function applyEndOfTurnItemEffects(state: BattleState, combatant: BattleCombatantState, events: TurnEvent[]) {
+  if (combatant.itemId === "leftovers") {
+    const healed = healCombatant(state, combatant.id, LEFTOVERS_HEAL_FRACTION);
+    if (healed > 0) {
+      events.push({
+        targetId: combatant.id,
+        text: `${combatant.pokemon.name} restores ${healed} HP with Leftovers.`,
+      });
+    }
+    return;
+  }
+
+  if (combatant.itemId !== "blacksludge") {
+    return;
+  }
+
+  if (combatant.pokemon.types.includes("Poison")) {
+    const healed = healCombatant(state, combatant.id, LEFTOVERS_HEAL_FRACTION);
+    if (healed > 0) {
+      events.push({
+        targetId: combatant.id,
+        text: `${combatant.pokemon.name} restores ${healed} HP with Black Sludge.`,
+      });
+    }
+    return;
+  }
+
+  const damage = Math.max(1, Math.floor(combatant.maxHp * BLACK_SLUDGE_DAMAGE_FRACTION));
+  const appliedDamage = applyDamage(state, combatant.id, damage);
+  if (appliedDamage <= 0) {
+    return;
+  }
+
+  events.push({
+    targetId: combatant.id,
+    text: `${combatant.pokemon.name} is hurt by Black Sludge for ${appliedDamage} HP.`,
+  });
+
+  if (combatant.currentHp <= 0) {
+    events.push({
+      targetId: combatant.id,
+      text: `${combatant.pokemon.name} faints.`,
+    });
+  }
+}
+
+function finalizeTurn(state: BattleState, startingActiveIds: Set<string>, events: TurnEvent[]) {
   for (const combatant of Object.values(state.combatants)) {
+    if (combatant.currentHp <= 0) {
+      combatant.isProtected = false;
+      combatant.isFlinched = false;
+      combatant.wasSwitchedInThisTurn = false;
+      combatant.helpingHandTurns = 0;
+      continue;
+    }
+
+    applyEndOfTurnItemEffects(state, combatant, events);
+
     if (combatant.currentHp <= 0) {
       combatant.isProtected = false;
       combatant.isFlinched = false;
@@ -2102,7 +2376,9 @@ export function resolveTurn(
 
   replaceFaintedActives(state, "ally", events);
   replaceFaintedActives(state, "enemy", events);
-  finalizeTurn(state, startingActiveIds);
+  finalizeTurn(state, startingActiveIds, events);
+  replaceFaintedActives(state, "ally", events);
+  replaceFaintedActives(state, "enemy", events);
 
   return { state, events };
 }

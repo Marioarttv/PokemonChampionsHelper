@@ -1,4 +1,8 @@
 import type { PersistedKnownMove } from "./savedTeams";
+import {
+  normalizeChampionsStatSpread,
+  type ChampionsStatSpread,
+} from "./championsStats";
 
 export type PersistedSpeciesMoveset = {
   speciesKey: string;
@@ -7,6 +11,7 @@ export type PersistedSpeciesMoveset = {
   savedAttacks?: PersistedKnownMove[];
   abilityName?: string;
   itemName?: string;
+  statSpread?: ChampionsStatSpread;
   updatedAt: string;
 };
 
@@ -47,6 +52,7 @@ function readAllMovesets() {
         savedAttacks: Array.isArray(value?.savedAttacks) ? value.savedAttacks : undefined,
         abilityName: typeof value?.abilityName === "string" ? value.abilityName : undefined,
         itemName: typeof value?.itemName === "string" ? value.itemName : undefined,
+        statSpread: value?.statSpread ? normalizeChampionsStatSpread(value.statSpread) : undefined,
         updatedAt: typeof value?.updatedAt === "string" ? value.updatedAt : new Date(0).toISOString(),
       } satisfies PersistedSpeciesMoveset,
     ]),
@@ -70,6 +76,7 @@ export async function saveSpeciesMoveset(
   options?: {
     abilityName?: string;
     itemName?: string;
+    statSpread?: ChampionsStatSpread;
   },
 ) {
   const entries = readAllMovesets();
@@ -80,6 +87,7 @@ export async function saveSpeciesMoveset(
     savedAttacks: knownMoves,
     abilityName: options?.abilityName,
     itemName: options?.itemName,
+    statSpread: options?.statSpread ? normalizeChampionsStatSpread(options.statSpread) : undefined,
     updatedAt: new Date().toISOString(),
   };
 

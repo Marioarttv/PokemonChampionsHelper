@@ -2,7 +2,12 @@ import { normalizePokemonNameKey } from "../data/championsLegalPokemon";
 import { getTypeFromLabel } from "../data/typeChart";
 import { isSpreadTarget, type MoveRecord } from "./battleData";
 import type { PokemonRecord } from "./pokemonDb";
-import type { PersistedAttackCategory, PersistedSavedAttack, PersistedTeamSlot } from "./savedTeams";
+import type {
+  PersistedAttackCategory,
+  PersistedKnownMove,
+  PersistedSavedAttack,
+  PersistedTeamSlot,
+} from "./savedTeams";
 
 type ParsedShowdownSet = {
   speciesName: string;
@@ -199,6 +204,20 @@ function buildImportedSavedAttack(move: MoveRecord): PersistedSavedAttack | null
   };
 }
 
+function buildImportedKnownMove(move: MoveRecord): PersistedKnownMove | null {
+  const type = getTypeFromLabel(move.type);
+
+  return {
+    id: createSavedAttackId(),
+    name: move.name,
+    label: move.name,
+    type: type ?? undefined,
+    basePower: move.basePower > 0 ? move.basePower : undefined,
+    category: move.category.toLowerCase() as PersistedKnownMove["category"],
+    isSpreadMove: isSpreadTarget(move.target),
+  };
+}
+
 function getResolvedMove(moveName: string, moveByKey: ReadonlyMap<string, MoveRecord>) {
   const trimmed = moveName.trim();
 
@@ -232,15 +251,18 @@ export function importShowdownTeamText(
       slots.push({
         query: parsedSet.speciesName,
         pokemonId: null,
+        itemName: parsedSet.itemName,
+        knownMoves: [],
         savedAttacks: [],
       });
       continue;
     }
 
+    const knownMoves: PersistedKnownMove[] = [];
     const savedAttacks: PersistedSavedAttack[] = [];
 
     for (const moveName of parsedSet.moveNames) {
-      if (savedAttacks.length >= options.maxMovesPerSlot) {
+      if (knownMoves.length >= options.maxMovesPerSlot) {
         break;
       }
 
@@ -251,19 +273,25 @@ export function importShowdownTeamText(
         continue;
       }
 
-      const savedAttack = buildImportedSavedAttack(move);
+      const knownMove = buildImportedKnownMove(move);
 
-      if (!savedAttack) {
-        skippedStatusMoves.push(move.name);
+      if (!knownMove) {
         continue;
       }
 
-      savedAttacks.push(savedAttack);
+      knownMoves.push(knownMove);
+
+      const savedAttack = buildImportedSavedAttack(move);
+      if (savedAttack) {
+        savedAttacks.push(savedAttack);
+      }
     }
 
     slots.push({
       query: pokemon.name,
       pokemonId: pokemon.id,
+      itemName: parsedSet.itemName,
+      knownMoves,
       savedAttacks,
     });
   }
