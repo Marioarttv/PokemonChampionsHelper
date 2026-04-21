@@ -1,0 +1,284 @@
+export const TYPE_ORDER = [
+  "normal",
+  "fire",
+  "water",
+  "electric",
+  "grass",
+  "ice",
+  "fighting",
+  "poison",
+  "ground",
+  "flying",
+  "psychic",
+  "bug",
+  "rock",
+  "ghost",
+  "dragon",
+  "dark",
+  "steel",
+  "fairy",
+] as const;
+
+export type PokemonType = (typeof TYPE_ORDER)[number];
+
+type TypeMeta = {
+  label: string;
+  color: string;
+  accent: string;
+  iconFile: string;
+};
+
+type MatchupChart = Record<PokemonType, Partial<Record<PokemonType, number>>>;
+
+export const TYPE_META: Record<PokemonType, TypeMeta> = {
+  normal: {
+    label: "Normal",
+    color: "#b8b39c",
+    accent: "#6f6a56",
+    iconFile: "Normal icon SV.png",
+  },
+  fire: { label: "Fire", color: "#ef7d57", accent: "#8b2f1f", iconFile: "Fire icon SV.png" },
+  water: {
+    label: "Water",
+    color: "#5d8df7",
+    accent: "#20418d",
+    iconFile: "Water icon SV.png",
+  },
+  electric: {
+    label: "Electric",
+    color: "#f6cf4d",
+    accent: "#8b6e07",
+    iconFile: "Electric icon SV.png",
+  },
+  grass: {
+    label: "Grass",
+    color: "#68be6b",
+    accent: "#205f2a",
+    iconFile: "Grass icon SV.png",
+  },
+  ice: { label: "Ice", color: "#7fd4d1", accent: "#125b6a", iconFile: "Ice icon SV.png" },
+  fighting: {
+    label: "Fighting",
+    color: "#c85d56",
+    accent: "#6c211e",
+    iconFile: "Fighting icon SV.png",
+  },
+  poison: {
+    label: "Poison",
+    color: "#a96ad8",
+    accent: "#522a71",
+    iconFile: "Poison icon SV.png",
+  },
+  ground: {
+    label: "Ground",
+    color: "#d0b45f",
+    accent: "#6d5514",
+    iconFile: "Ground icon SV.png",
+  },
+  flying: {
+    label: "Flying",
+    color: "#8aa4f6",
+    accent: "#31499a",
+    iconFile: "Flying icon SV.png",
+  },
+  psychic: {
+    label: "Psychic",
+    color: "#f171a6",
+    accent: "#91264f",
+    iconFile: "Psychic icon SV.png",
+  },
+  bug: { label: "Bug", color: "#9bbf44", accent: "#4d6115", iconFile: "Bug icon SV.png" },
+  rock: { label: "Rock", color: "#c1a46d", accent: "#6b5324", iconFile: "Rock icon SV.png" },
+  ghost: {
+    label: "Ghost",
+    color: "#7c6ec7",
+    accent: "#382a73",
+    iconFile: "Ghost icon SV.png",
+  },
+  dragon: {
+    label: "Dragon",
+    color: "#7367f0",
+    accent: "#2f248c",
+    iconFile: "Dragon icon SV.png",
+  },
+  dark: { label: "Dark", color: "#7d6b5d", accent: "#352920", iconFile: "Dark icon SV.png" },
+  steel: {
+    label: "Steel",
+    color: "#8fa6b3",
+    accent: "#3c525e",
+    iconFile: "Steel icon SV.png",
+  },
+  fairy: {
+    label: "Fairy",
+    color: "#ef9ed1",
+    accent: "#8f365f",
+    iconFile: "Fairy icon SV.png",
+  },
+};
+
+const LABEL_TO_TYPE = new Map(
+  TYPE_ORDER.map((type) => [TYPE_META[type].label.toLowerCase(), type] as const),
+);
+
+export function getTypeIconUrl(type: PokemonType) {
+  return `/type-icons/${type}.svg`;
+}
+
+export function getTypeFromLabel(label: string) {
+  return LABEL_TO_TYPE.get(label.toLowerCase());
+}
+
+export const ATTACK_CHART: MatchupChart = {
+  normal: { rock: 0.5, steel: 0.5, ghost: 0 },
+  fire: {
+    fire: 0.5,
+    water: 0.5,
+    grass: 2,
+    ice: 2,
+    bug: 2,
+    rock: 0.5,
+    dragon: 0.5,
+    steel: 2,
+  },
+  water: {
+    fire: 2,
+    water: 0.5,
+    grass: 0.5,
+    ground: 2,
+    rock: 2,
+    dragon: 0.5,
+  },
+  electric: {
+    water: 2,
+    electric: 0.5,
+    grass: 0.5,
+    ground: 0,
+    flying: 2,
+    dragon: 0.5,
+  },
+  grass: {
+    fire: 0.5,
+    water: 2,
+    grass: 0.5,
+    poison: 0.5,
+    ground: 2,
+    flying: 0.5,
+    bug: 0.5,
+    rock: 2,
+    dragon: 0.5,
+    steel: 0.5,
+  },
+  ice: {
+    fire: 0.5,
+    water: 0.5,
+    grass: 2,
+    ice: 0.5,
+    ground: 2,
+    flying: 2,
+    dragon: 2,
+    steel: 0.5,
+  },
+  fighting: {
+    normal: 2,
+    ice: 2,
+    poison: 0.5,
+    flying: 0.5,
+    psychic: 0.5,
+    bug: 0.5,
+    rock: 2,
+    ghost: 0,
+    dark: 2,
+    steel: 2,
+    fairy: 0.5,
+  },
+  poison: {
+    grass: 2,
+    poison: 0.5,
+    ground: 0.5,
+    rock: 0.5,
+    ghost: 0.5,
+    steel: 0,
+    fairy: 2,
+  },
+  ground: {
+    fire: 2,
+    electric: 2,
+    grass: 0.5,
+    poison: 2,
+    flying: 0,
+    bug: 0.5,
+    rock: 2,
+    steel: 2,
+  },
+  flying: {
+    electric: 0.5,
+    grass: 2,
+    fighting: 2,
+    bug: 2,
+    rock: 0.5,
+    steel: 0.5,
+  },
+  psychic: {
+    fighting: 2,
+    poison: 2,
+    psychic: 0.5,
+    dark: 0,
+    steel: 0.5,
+  },
+  bug: {
+    fire: 0.5,
+    grass: 2,
+    fighting: 0.5,
+    poison: 0.5,
+    flying: 0.5,
+    psychic: 2,
+    ghost: 0.5,
+    dark: 2,
+    steel: 0.5,
+    fairy: 0.5,
+  },
+  rock: {
+    fire: 2,
+    ice: 2,
+    fighting: 0.5,
+    ground: 0.5,
+    flying: 2,
+    bug: 2,
+    steel: 0.5,
+  },
+  ghost: {
+    normal: 0,
+    psychic: 2,
+    ghost: 2,
+    dark: 0.5,
+  },
+  dragon: {
+    dragon: 2,
+    steel: 0.5,
+    fairy: 0,
+  },
+  dark: {
+    fighting: 0.5,
+    psychic: 2,
+    ghost: 2,
+    dark: 0.5,
+    fairy: 0.5,
+  },
+  steel: {
+    fire: 0.5,
+    water: 0.5,
+    electric: 0.5,
+    ice: 2,
+    rock: 2,
+    steel: 0.5,
+    fairy: 2,
+  },
+  fairy: {
+    fire: 0.5,
+    fighting: 2,
+    poison: 0.5,
+    dragon: 2,
+    dark: 2,
+    steel: 0.5,
+  },
+};
