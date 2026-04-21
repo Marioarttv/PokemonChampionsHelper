@@ -7056,191 +7056,239 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                     Pokemon are loaded.
                   </p>
                 ) : teamPreviewRecommendation ? (
-                  <article className="opponent-coverage-row ohko-result-row strong">
-                    <div className="ohko-result-top">
-                      <div className="opponent-coverage-main">
-                        <div>
-                          <strong>
-                            Recommended bring{" "}
-                            {teamPreviewRecommendation.diagnostics.solverMode === "dense" ? "(Full Scan)" : "(Quickscan)"}
-                          </strong>
-                          <p>
-                            Robust preview value {Math.round(teamPreviewRecommendation.previewValue * 100)}% • Maximin{" "}
-                            {Math.round(teamPreviewRecommendation.robustScore)} • Average{" "}
-                            {Math.round(teamPreviewRecommendation.averageScore)}
-                          </p>
-                        </div>
-                      </div>
+                  (() => {
+                    const rec = teamPreviewRecommendation;
+                    const previewPct = Math.min(100, Math.max(0, Math.round(rec.previewValue * 100)));
+                    const maxReasonDelta = rec.reasons.reduce(
+                      (max, reason) => Math.max(max, Math.abs(reason.delta)),
+                      1,
+                    );
+                    const solverIsDense = rec.diagnostics.solverMode === "dense";
+                    const leadSet = new Set(rec.primaryLead);
+                    const altLeadSet = new Set(rec.altLead ?? []);
 
-                      <div className="ohko-summary-side">
-                        <span className="mini-type-pill neutral-pill">
-                          {teamPreviewRecommendation.diagnostics.solverMode === "dense" ? "Full Scan" : "Quickscan"}
-                        </span>
-                        {teamPreviewRecommendation.diagnostics.solverMode === "dense" ? (
-                          <>
-                            <span className="mini-type-pill neutral-pill">
-                              {teamPreviewRecommendation.candidateCounts.allyCandidates} of{" "}
-                              {teamPreviewRecommendation.candidateCounts.allyStrategies} ally strategies searched
+                    return (
+                      <article className="bring-preview">
+                        <header className="bring-preview__head">
+                          <div className="bring-preview__headline">
+                            <span className="bring-preview__eyebrow">
+                              {solverIsDense ? "Full Scan" : "Quickscan"} · Recommendation
                             </span>
-                            <span className="mini-type-pill neutral-pill">
-                              {teamPreviewRecommendation.candidateCounts.enemyCandidates} of{" "}
-                              {teamPreviewRecommendation.candidateCounts.enemyStrategies} enemy strategies searched
-                            </span>
-                          </>
-                        ) : (
-                          <>
-                            <span className="mini-type-pill neutral-pill">
-                              {teamPreviewRecommendation.candidateCounts.allyFourCandidates} / 15 ally fours kept
-                            </span>
-                            <span className="mini-type-pill neutral-pill">
-                              {teamPreviewRecommendation.candidateCounts.enemyFourCandidates} / 15 enemy fours kept
-                            </span>
-                            <span className="mini-type-pill neutral-pill">
-                              {teamPreviewRecommendation.candidateCounts.threatLines} threat lines built
-                            </span>
-                          </>
-                        )}
-                        <span className="mini-type-pill neutral-pill">
-                          {teamPreviewRecommendation.candidateCounts.matrixCells} tactical cells •{" "}
-                          {Math.round(teamPreviewRecommendation.diagnostics.elapsedMs)} ms
-                        </span>
-                      </div>
-                    </div>
+                            <h3 className="bring-preview__title">Bring Into Preview</h3>
+                          </div>
 
-                    <div className="ohko-breakdown-grid">
-                      <article className="ohko-breakdown-card strong">
-                        <div className="ohko-breakdown-top">
-                          <div className="opponent-coverage-main">
-                            <div>
-                              <strong>Best Four</strong>
-                              <p>Bring these four into preview by default.</p>
+                          <div
+                            className="bring-preview__gauge"
+                            style={{
+                              background: `conic-gradient(var(--status-good) ${previewPct * 3.6}deg, rgba(226, 232, 255, 0.08) 0)`,
+                            }}
+                            role="img"
+                            aria-label={`Robust preview value ${previewPct}%`}
+                          >
+                            <div className="bring-preview__gauge-inner">
+                              <strong>{previewPct}%</strong>
+                              <span>Robust</span>
                             </div>
                           </div>
-                        </div>
 
-                        <div className="ohko-summary-side">
-                          {teamPreviewRecommendation.bestFour.map((slotIndex) => {
+                          <dl className="bring-preview__stats">
+                            <div>
+                              <dt>Maximin</dt>
+                              <dd>{Math.round(rec.robustScore).toLocaleString()}</dd>
+                            </div>
+                            <div>
+                              <dt>Average</dt>
+                              <dd>{Math.round(rec.averageScore).toLocaleString()}</dd>
+                            </div>
+                          </dl>
+
+                          <ul className="bring-preview__telemetry" aria-label="Solver diagnostics">
+                            {solverIsDense ? (
+                              <>
+                                <li>
+                                  <em>{rec.candidateCounts.allyCandidates}</em>/
+                                  {rec.candidateCounts.allyStrategies} ally strats
+                                </li>
+                                <li>
+                                  <em>{rec.candidateCounts.enemyCandidates}</em>/
+                                  {rec.candidateCounts.enemyStrategies} enemy strats
+                                </li>
+                              </>
+                            ) : (
+                              <>
+                                <li>
+                                  <em>{rec.candidateCounts.allyFourCandidates}</em>/15 ally fours
+                                </li>
+                                <li>
+                                  <em>{rec.candidateCounts.enemyFourCandidates}</em>/15 enemy fours
+                                </li>
+                                <li>
+                                  <em>{rec.candidateCounts.threatLines}</em> threat lines
+                                </li>
+                              </>
+                            )}
+                            <li>
+                              <em>{rec.candidateCounts.matrixCells}</em> cells
+                            </li>
+                            <li>
+                              <em>{Math.round(rec.diagnostics.elapsedMs)}</em>ms
+                            </li>
+                          </ul>
+                        </header>
+
+                        <section className="bring-preview__lineup" aria-label="Recommended four">
+                          {rec.bestFour.map((slotIndex) => {
                             const member = battleEngineAllyMemberBySlot.get(slotIndex);
                             if (!member) {
                               return null;
                             }
-
+                            const isLead = leadSet.has(slotIndex);
+                            const leadOrder = rec.primaryLead.indexOf(slotIndex);
+                            const isAltLead = !isLead && altLeadSet.has(slotIndex);
+                            const roleLabel = isLead
+                              ? `Lead ${leadOrder + 1}`
+                              : isAltLead
+                                ? "Alt lead"
+                                : "Back";
                             return (
-                              <span key={`preview-best-four-${slotIndex}`} className="mini-type-pill neutral-pill">
-                                {member.pokemon.name}
-                              </span>
-                            );
-                          })}
-                        </div>
-                      </article>
-
-                      <article className="ohko-breakdown-card">
-                        <div className="ohko-breakdown-top">
-                          <div className="opponent-coverage-main">
-                            <div>
-                              <strong>Primary Lead</strong>
-                              <p>Default opener from the recommended four.</p>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="ohko-summary-side">
-                          {teamPreviewRecommendation.primaryLead.map((slotIndex) => {
-                            const member = battleEngineAllyMemberBySlot.get(slotIndex);
-                            if (!member) {
-                              return null;
-                            }
-
-                            return (
-                              <span key={`preview-primary-lead-${slotIndex}`} className="mini-type-pill neutral-pill">
-                                {member.pokemon.name}
-                              </span>
-                            );
-                          })}
-                          {teamPreviewRecommendation.altLead ? (
-                            <span className="mini-type-pill neutral-pill">
-                              Alt lead:{" "}
-                              {teamPreviewRecommendation.altLead
-                                .map((slotIndex) => battleEngineAllyMemberBySlot.get(slotIndex)?.pokemon.name ?? `Slot ${slotIndex + 1}`)
-                                .join(" + ")}
-                            </span>
-                          ) : null}
-                        </div>
-                      </article>
-
-                      <article className="ohko-breakdown-card">
-                        <div className="ohko-breakdown-top">
-                          <div className="opponent-coverage-main">
-                            <div>
-                              <strong>Why this four</strong>
-                              <p>Largest positive contributors from the preview scorer.</p>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="coverage-chip-list">
-                          {teamPreviewRecommendation.reasons.map((reason) => (
-                            <span key={`preview-reason-${reason.feature}`} className="mini-type-pill neutral-pill">
-                              {reason.label} {formatSignedScore(reason.delta)}
-                            </span>
-                          ))}
-                        </div>
-                      </article>
-
-                      {teamPreviewRecommendation.dangerNotes.length > 0 ? (
-                        <article className="ohko-breakdown-card">
-                          <div className="ohko-breakdown-top">
-                            <div className="opponent-coverage-main">
-                              <div>
-                                <strong>Danger Notes</strong>
-                                <p>Matchup traps the solver is flagging.</p>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="coverage-chip-list">
-                            {teamPreviewRecommendation.dangerNotes.map((note) => (
-                              <span key={note} className="mini-type-pill neutral-pill">
-                                {note}
-                              </span>
-                            ))}
-                          </div>
-                        </article>
-                      ) : null}
-
-                      {teamPreviewRecommendation.alternatives.length > 0 ? (
-                        <article className="ohko-breakdown-card">
-                          <div className="ohko-breakdown-top">
-                            <div className="opponent-coverage-main">
-                              <div>
-                                <strong>Alternatives</strong>
-                                <p>Backup fours if you dislike the default line.</p>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="coverage-chip-list">
-                            {teamPreviewRecommendation.alternatives.map((alternative, index) => (
-                              <span
-                                key={`preview-alt-${alternative.four.join("-")}-${alternative.lead.join("-")}`}
-                                className="mini-type-pill neutral-pill"
+                              <div
+                                key={`preview-lineup-${slotIndex}`}
+                                className={`bring-preview__slot${isLead ? " is-lead" : ""}${
+                                  isAltLead ? " is-alt" : ""
+                                }`}
                               >
-                                #{index + 2}{" "}
-                                {alternative.four
-                                  .map((slotIndex) => battleEngineAllyMemberBySlot.get(slotIndex)?.pokemon.name ?? `Slot ${slotIndex + 1}`)
-                                  .join(", ")}{" "}
-                                • Lead{" "}
-                                {alternative.lead
-                                  .map((slotIndex) => battleEngineAllyMemberBySlot.get(slotIndex)?.pokemon.name ?? `Slot ${slotIndex + 1}`)
-                                  .join(" + ")}{" "}
-                                • {Math.round(alternative.previewValue * 100)}%
+                                <span className="bring-preview__slot-role">{roleLabel}</span>
+                                <PokemonSprite
+                                  pokemon={member.pokemon}
+                                  className="bring-preview__slot-sprite"
+                                />
+                                <div className="bring-preview__slot-name">{member.pokemon.name}</div>
+                              </div>
+                            );
+                          })}
+                        </section>
+
+                        <section className="bring-preview__data">
+                          <article className="bring-preview__panel">
+                            <header className="bring-preview__panel-head">
+                              <h4>Why this four</h4>
+                              <span>
+                                Top {rec.reasons.length} contributor
+                                {rec.reasons.length === 1 ? "" : "s"}
                               </span>
-                            ))}
-                          </div>
-                        </article>
-                      ) : null}
-                    </div>
-                  </article>
+                            </header>
+                            <ul className="bring-preview__reasons">
+                              {rec.reasons.map((reason) => {
+                                const pct = Math.max(
+                                  6,
+                                  Math.round((Math.abs(reason.delta) / maxReasonDelta) * 100),
+                                );
+                                const isNegative = reason.delta < 0;
+                                return (
+                                  <li
+                                    key={`preview-reason-${reason.feature}`}
+                                    className={isNegative ? "is-negative" : undefined}
+                                  >
+                                    <span className="bring-preview__reason-label">{reason.label}</span>
+                                    <span className="bring-preview__reason-bar" aria-hidden="true">
+                                      <span
+                                        className="bring-preview__reason-bar-fill"
+                                        style={{ width: `${pct}%` }}
+                                      />
+                                    </span>
+                                    <span className="bring-preview__reason-value">
+                                      {formatSignedScore(reason.delta)}
+                                    </span>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </article>
+
+                          {rec.dangerNotes.length > 0 ? (
+                            <article className="bring-preview__panel bring-preview__panel--danger">
+                              <header className="bring-preview__panel-head">
+                                <h4>Watch-outs</h4>
+                                <span>
+                                  {rec.dangerNotes.length} flag
+                                  {rec.dangerNotes.length === 1 ? "" : "s"}
+                                </span>
+                              </header>
+                              <ul className="bring-preview__dangers">
+                                {rec.dangerNotes.map((note) => (
+                                  <li key={note}>
+                                    <span className="bring-preview__danger-glyph" aria-hidden="true">
+                                      !
+                                    </span>
+                                    <span>{note}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </article>
+                          ) : null}
+
+                          {rec.alternatives.length > 0 ? (
+                            <article className="bring-preview__panel bring-preview__panel--alts">
+                              <header className="bring-preview__panel-head">
+                                <h4>Alternatives</h4>
+                                <span>
+                                  {rec.alternatives.length} backup line
+                                  {rec.alternatives.length === 1 ? "" : "s"}
+                                </span>
+                              </header>
+                              <ul className="bring-preview__alts">
+                                {rec.alternatives.map((alternative, index) => {
+                                  const altPct = Math.min(
+                                    100,
+                                    Math.max(0, Math.round(alternative.previewValue * 100)),
+                                  );
+                                  const leadNames = alternative.lead
+                                    .map(
+                                      (si) =>
+                                        battleEngineAllyMemberBySlot.get(si)?.pokemon.name ??
+                                        `#${si + 1}`,
+                                    )
+                                    .join(" + ");
+                                  return (
+                                    <li
+                                      key={`preview-alt-${alternative.four.join("-")}-${alternative.lead.join("-")}`}
+                                    >
+                                      <span className="bring-preview__alt-rank">#{index + 2}</span>
+                                      <div className="bring-preview__alt-sprites">
+                                        {alternative.four.map((si) => {
+                                          const m = battleEngineAllyMemberBySlot.get(si);
+                                          return m ? (
+                                            <PokemonSprite
+                                              key={`preview-alt-sprite-${index}-${si}`}
+                                              pokemon={m.pokemon}
+                                              className="bring-preview__alt-sprite"
+                                            />
+                                          ) : null;
+                                        })}
+                                      </div>
+                                      <div className="bring-preview__alt-lead">
+                                        <span>Lead</span>
+                                        <strong>{leadNames}</strong>
+                                      </div>
+                                      <div className="bring-preview__alt-value">
+                                        <span className="bring-preview__alt-bar" aria-hidden="true">
+                                          <span
+                                            className="bring-preview__alt-bar-fill"
+                                            style={{ width: `${altPct}%` }}
+                                          />
+                                        </span>
+                                        <strong>{altPct}%</strong>
+                                      </div>
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            </article>
+                          ) : null}
+                        </section>
+                      </article>
+                    );
+                  })()
                 ) : (
                   <p className="selector-note team-elo-note" style={{ marginBottom: "1rem" }}>
                     Load at least four allies and four enemies to run the bring-four preview solver.
