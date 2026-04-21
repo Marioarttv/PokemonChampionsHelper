@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { getDamagePreview, resolveTurn } from "..";
+import { getDamagePreview, getEffectiveSpeed, resolveTurn } from "..";
 import {
   buildMovePlan,
   buildPassPlan,
+  buildSwitchPlan,
   createTestBattleState,
   makeMember,
   makeMove,
@@ -239,6 +240,36 @@ describe("engine regression coverage", () => {
     expect(result.state.combatants["enemy-0"].statusCondition).toBe("none");
   });
 
+  it("fires lead Intimidate so White Herb activates and Unburden doubles speed", () => {
+    const unburdenUser = makePokemon("Combo User", { baseStats: { atk: 120, spe: 80 } });
+    const partner = makePokemon("Partner", { baseStats: { spe: 70 } });
+    const intimidator = makePokemon("Intimidator", { baseStats: { spe: 60 } });
+    const fasterEnemy = makePokemon("Faster Enemy", { baseStats: { spe: 120 } });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 60, target: "normal" });
+    const state = createTestBattleState({
+      ally: [
+        makeMember({
+          side: "ally",
+          slot: 0,
+          pokemon: unburdenUser,
+          moveNames: ["Tackle"],
+          abilityName: "Unburden",
+          itemName: "White Herb",
+        }),
+        makeMember({ side: "ally", slot: 1, pokemon: partner, moveNames: [] }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: intimidator, moveNames: [], abilityName: "Intimidate" }),
+        makeMember({ side: "enemy", slot: 1, pokemon: fasterEnemy, moveNames: ["Tackle"] }),
+      ],
+      moves: [tackle],
+    });
+
+    expect(state.combatants["ally-0"].stages.attack).toBe(0);
+    expect(state.combatants["ally-0"].itemConsumed).toBe(true);
+    expect(getEffectiveSpeed(state, "ally-0")).toBeGreaterThan(getEffectiveSpeed(state, "enemy-1"));
+  });
+
   it("applies Choice Scarf speed when ordering actions", () => {
     const scarfUser = makePokemon("Scarf User", { baseStats: { atk: 120, spe: 100 } });
     const fasterTarget = makePokemon("Faster Target", { baseStats: { atk: 110, spe: 110 } });
@@ -255,6 +286,52 @@ describe("engine regression coverage", () => {
       buildMovePlan(state, "enemy", [{ actorId: "enemy-0", moveName: "Tackle", targetId: "ally-0" }]),
     );
 
+    const firstAttackEvent = result.events.find((event) => event.text.includes("uses Tackle on"));
+    expect(firstAttackEvent?.actorId).toBe("ally-0");
+  });
+
+  it("applies switch-in Intimidate before move order for the rest of the turn", () => {
+    const unburdenUser = makePokemon("Combo User", { baseStats: { atk: 120, spe: 80 } });
+    const allyPartner = makePokemon("Ally Partner", { baseStats: { spe: 70 } });
+    const enemyLead = makePokemon("Enemy Lead", { baseStats: { spe: 50 } });
+    const fasterEnemy = makePokemon("Faster Enemy", { baseStats: { atk: 110, spe: 120 } });
+    const intimidator = makePokemon("Intimidator", { baseStats: { spe: 60 } });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 60, target: "normal" });
+    const state = createTestBattleState({
+      ally: [
+        makeMember({
+          side: "ally",
+          slot: 0,
+          pokemon: unburdenUser,
+          moveNames: ["Tackle"],
+          abilityName: "Unburden",
+          itemName: "White Herb",
+        }),
+        makeMember({ side: "ally", slot: 1, pokemon: allyPartner, moveNames: [] }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: enemyLead, moveNames: [] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: fasterEnemy, moveNames: ["Tackle"] }),
+        makeMember({ side: "enemy", slot: 2, pokemon: intimidator, moveNames: [], abilityName: "Intimidate", isActive: false }),
+      ],
+      moves: [tackle],
+    });
+
+    const result = resolveTurn(
+      state,
+      buildMovePlan(state, "ally", [{ actorId: "ally-0", moveName: "Tackle", targetId: "enemy-1" }]),
+      {
+        side: "enemy",
+        actions: [
+          ...buildSwitchPlan(state, "enemy", [{ actorId: "enemy-0", switchInId: "enemy-2" }]).actions,
+          ...buildMovePlan(state, "enemy", [{ actorId: "enemy-1", moveName: "Tackle", targetId: "ally-0" }]).actions,
+        ],
+        summary: "enemy switch + attack",
+        heuristicScore: 0,
+      },
+    );
+
+    expect(result.state.combatants["ally-0"].itemConsumed).toBe(true);
     const firstAttackEvent = result.events.find((event) => event.text.includes("uses Tackle on"));
     expect(firstAttackEvent?.actorId).toBe("ally-0");
   });

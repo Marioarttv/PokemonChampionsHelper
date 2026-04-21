@@ -29,6 +29,7 @@ type FixtureMemberOptions = {
   slot: number;
   pokemon: PokemonRecord;
   moveNames?: string[];
+  abilityName?: string | null;
   currentHpPercent?: number;
   itemName?: string | null;
   statusCondition?: BattleStateMemberInput["statusCondition"];
@@ -106,6 +107,7 @@ export function makeMember(options: FixtureMemberOptions): BattleStateMemberInpu
     pokemon: options.pokemon,
     teamIndex: options.slot,
     moveNames: options.moveNames ?? [],
+    abilityName: options.abilityName ?? null,
     currentHpPercent: options.currentHpPercent ?? 100,
     itemName: options.itemName ?? null,
     statusCondition: options.statusCondition ?? "none",
@@ -179,6 +181,29 @@ export function buildPassPlan(state: BattleState, side: BattleSide, actorIds: st
       },
     })),
     summary: `${side} pass`,
+    heuristicScore: 0,
+  };
+}
+
+export function buildSwitchPlan(
+  state: BattleState,
+  side: BattleSide,
+  entries: Array<{ actorId: string; switchInId: string }>,
+): JointActionPlan {
+  return {
+    side,
+    actions: entries.map(({ actorId, switchInId }) => ({
+      actorId,
+      actorLabel: state.combatants[actorId]?.pokemon.name ?? actorId,
+      summary: `${state.combatants[actorId]?.pokemon.name ?? actorId}: switch`,
+      heuristicScore: 0,
+      action: {
+        type: "switch" as const,
+        actorId,
+        switchInId,
+      },
+    })),
+    summary: entries.map(({ actorId }) => `${state.combatants[actorId]?.pokemon.name ?? actorId}: switch`).join(" | "),
     heuristicScore: 0,
   };
 }

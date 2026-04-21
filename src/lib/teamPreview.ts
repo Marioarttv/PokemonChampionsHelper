@@ -65,6 +65,7 @@ type PreviewCombatantMeta = {
   combatant: BattleCombatantState;
   roleTags: Set<PreviewRoleTag>;
   abilityKey: string;
+  itemKey: string;
   speed: number;
   damagingMoves: BattleMoveOption[];
   primaryType: PokemonType | null;
@@ -81,6 +82,7 @@ type PreviewThreatProfile = {
   tailwindModeStrength: number;
   trickRoomModeStrength: number;
   weatherStrength: Record<PreviewWeather, number>;
+  statDropPressure: number;
   statDropPunisherRisk: number;
 };
 
@@ -293,6 +295,7 @@ const FEATURE_LABELS: Record<string, string> = {
   redundancy_penalty: "Redundancy penalty",
   weakness_overlap_penalty: "Shared weakness penalty",
   stat_drop_punish_risk: "Stat-drop punish risk",
+  speed_trigger_value: "Triggered speed swing",
   anti_speed_synergy: "Speed-mode conflict",
 };
 
@@ -446,6 +449,7 @@ function buildMeta(state: BattleState, members: BattleStateMemberInput[]) {
         combatant,
         roleTags,
         abilityKey: normalizeKey(combatant.abilityName ?? combatant.abilityId),
+        itemKey: normalizeKey(combatant.itemName ?? combatant.itemId),
         speed,
         damagingMoves: combatant.knownMoves.filter((move) => move.category !== null),
         primaryType,
@@ -603,6 +607,11 @@ function buildThreatProfile(team: PreviewCombatantMeta[]) {
       sand: clamp(weatherStrength.sand / Math.max(1, team.length), 0, 1),
       snow: clamp(weatherStrength.snow / Math.max(1, team.length), 0, 1),
     },
+    statDropPressure: clamp(
+      team.filter((meta) => meta.roleTags.has("statDropPressure")).length / Math.max(1, team.length),
+      0,
+      1,
+    ),
     statDropPunisherRisk: clamp(
       team.filter((meta) => meta.roleTags.has("statDropPunisher")).length / Math.max(1, team.length),
       0,
@@ -672,6 +681,10 @@ function getWeatherModeValue(meta: PreviewCombatantMeta, allyProfile: PreviewThr
     value += allyProfile.weatherStrength.snow * 55;
   }
   return value;
+}
+
+function hasWhiteHerbUnburdenCombo(meta: PreviewCombatantMeta) {
+  return meta.abilityKey === "unburden" && meta.itemKey === "whiteherb";
 }
 
 function getSupportActionValue(meta: PreviewCombatantMeta, enemyProfile: PreviewThreatProfile, enemies: PreviewCombatantMeta[]) {
@@ -784,6 +797,14 @@ function scoreCombatant(
   const weatherValue = getWeatherModeValue(meta, allyProfile);
   if (weatherValue > 0) {
     addScore(breakdown, "weather_value", weatherValue);
+  }
+
+  if (hasWhiteHerbUnburdenCombo(meta) && enemyProfile.statDropPressure > 0) {
+    addScore(
+      breakdown,
+      "speed_trigger_value",
+      60 + enemyProfile.statDropPressure * 120 + enemyProfile.tailwindModeStrength * 18,
+    );
   }
 
   if (meta.roleTags.has("intimidate")) {

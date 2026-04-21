@@ -1457,6 +1457,7 @@ function executeSwitch(state: BattleState, action: BattleAction & { type: "switc
     targetId: switchIn.id,
     text: `${actor.pokemon.name} switches out for ${switchIn.pokemon.name}.`,
   });
+  triggerEntryAbility(state, switchIn.id, events);
 }
 
 function applyDamage(state: BattleState, targetId: string, damage: number) {
@@ -1685,6 +1686,45 @@ function applyReactiveStageDelta(
   return actualDelta;
 }
 
+function applyIntimidate(state: BattleState, source: BattleCombatantState, events: TurnEvent[]) {
+  for (const targetId of getActiveIds(state, getOpponentSide(source.side))) {
+    const target = state.combatants[targetId];
+    if (!target || target.currentHp <= 0) {
+      continue;
+    }
+
+    const actualDelta = applyReactiveStageDelta(target, { attack: -1 }, events, { source });
+    if (hasAnyStageDelta(actualDelta)) {
+      events.push({
+        actorId: source.id,
+        targetId: target.id,
+        text: `${source.pokemon.name}'s Intimidate lowers ${target.pokemon.name}'s Attack.`,
+      });
+    }
+  }
+}
+
+function triggerEntryAbility(state: BattleState, combatantId: string, events: TurnEvent[]) {
+  const combatant = state.combatants[combatantId];
+  if (!combatant || combatant.currentHp <= 0 || !isActiveCombatant(state, combatantId)) {
+    return;
+  }
+
+  if (getAbilityKey(combatant) === "intimidate") {
+    applyIntimidate(state, combatant, events);
+  }
+}
+
+function applyInitialEntryEffects(state: BattleState) {
+  const initialActiveIds = [...state.sides.ally.activeIds, ...state.sides.enemy.activeIds].filter(
+    (combatantId): combatantId is string => Boolean(combatantId),
+  );
+
+  for (const combatantId of initialActiveIds) {
+    triggerEntryAbility(state, combatantId, []);
+  }
+}
+
 function applyStatusCondition(
   state: BattleState,
   target: BattleCombatantState,
@@ -1817,16 +1857,16 @@ function applyOnHitEffects(
   target: BattleCombatantState,
   move: BattleMoveOption,
   events: TurnEvent[],
-  actorName: string,
+  actor: BattleCombatantState,
   shouldProcSecondary: boolean,
   actedIds: Set<string>,
 ) {
   const chanceGated = (move.effectData?.secondaryChance ?? move.effectData?.flinchChance ?? 100) < 100;
   if (move.effectData?.targetStages && (!chanceGated || shouldProcSecondary)) {
-    applyStageDelta(target, move.effectData.targetStages);
+    applyReactiveStageDelta(target, move.effectData.targetStages, events, { source: actor });
     events.push({
       targetId: target.id,
-      text: `${target.pokemon.name}'s stats shift after ${actorName}'s ${move.name}.`,
+      text: `${target.pokemon.name}'s stats shift after ${actor.pokemon.name}'s ${move.name}.`,
     });
   }
 
@@ -1845,7 +1885,7 @@ function applyOnHitEffects(
     target.isFlinched = true;
     events.push({
       targetId: target.id,
-      text: `${target.pokemon.name} flinches after ${actorName}'s ${move.name}.`,
+      text: `${target.pokemon.name} flinches after ${actor.pokemon.name}'s ${move.name}.`,
     });
   }
 }
@@ -2014,7 +2054,7 @@ function executeMove(
   }
 
   if (move.effectKind === "boost") {
-    applyStageDelta(actor, move.effectData?.selfStages);
+    applyReactiveStageDelta(actor, move.effectData?.selfStages, events, { source: actor });
     events.push({ actorId: actor.id, text: `${actor.pokemon.name} powers up with ${move.name}.` });
     return;
   }
@@ -2071,8 +2111,9 @@ function executeMove(
 
       let appliedAnything = false;
       if (move.effectData?.targetStages) {
-        applyStageDelta(target, move.effectData.targetStages);
-        appliedAnything = true;
+        appliedAnything =
+          hasAnyStageDelta(applyReactiveStageDelta(target, move.effectData.targetStages, events, { source: actor })) ||
+          appliedAnything;
       }
       if (move.effectData?.statusCondition && applyStatusCondition(state, target, move.effectData.statusCondition, move)) {
         appliedAnything = true;
@@ -2172,7 +2213,7 @@ function executeMove(
         target,
         move,
         events,
-        actor.pokemon.name,
+        actor,
         shouldSecondaryProc(move, secondaryMode),
         actedIds,
       );
