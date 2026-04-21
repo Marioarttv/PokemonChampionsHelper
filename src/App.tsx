@@ -10,6 +10,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   POKEMON_CHAMPIONS_ACTIVE_REGULATION,
   POKEMON_CHAMPIONS_ACTIVE_REGULATION_WINDOW,
@@ -88,6 +89,7 @@ import {
   type SearchPlanScore,
   type SearchRecommendation,
 } from "./lib/engine";
+import { buildBattleEngineInputSignature } from "./lib/engine/signature";
 import {
   calculateMatchupEloScore,
   compareMatchupEloSummaries,
@@ -114,6 +116,7 @@ import {
   saveSpeciesMoveset,
   type PersistedSpeciesMoveset,
 } from "./lib/speciesMovesets";
+import { importShowdownTeamText } from "./lib/showdownTeamImport";
 
 type SiteMode = "calculator" | "team" | "movesets" | "ohko";
 type CalculatorMode = "defense" | "attack";
@@ -3806,6 +3809,22 @@ function normalizePersistedOpenerSelections(
   }) as [OpenerSelection, OpenerSelection];
 }
 
+function formatImportIssueList(values: string[], maxVisible = 3) {
+  const uniqueValues = Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+
+  if (uniqueValues.length === 0) {
+    return "";
+  }
+
+  const visibleValues = uniqueValues.slice(0, maxVisible).join(", ");
+
+  if (uniqueValues.length <= maxVisible) {
+    return visibleValues;
+  }
+
+  return `${visibleValues}, +${uniqueValues.length - maxVisible} more`;
+}
+
 function createEmptyOpponentSlots() {
   return Array.from({ length: MAX_OPPONENT_SCOUT_SLOTS }, () => "");
 }
@@ -4583,6 +4602,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const [speciesMovesets, setSpeciesMovesets] = useState<PersistedSpeciesMoveset[]>([]);
   const [storageMessage, setStorageMessage] = useState<string | null>(null);
   const [storageError, setStorageError] = useState<string | null>(null);
+  const [showdownImportText, setShowdownImportText] = useState("");
+  const [showdownImportOpen, setShowdownImportOpen] = useState(false);
   const [activeSavedTeamId, setActiveSavedTeamId] = useState<string | null>(null);
   const [teamBuilderFormat, setTeamBuilderFormat] = useState<TeamBuilderFormat>("regulationMA");
   const [quickPokemonQuery, setQuickPokemonQuery] = useState("");
@@ -5050,6 +5071,16 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     onStartNewTeam();
   };
 
+  const confirmReplaceCurrentTeam = () => {
+    if (!hasTeamBuilderProgress) {
+      return true;
+    }
+
+    return window.confirm(
+      "Importing a team will replace the current team builder. Any unsaved changes will be lost.",
+    );
+  };
+
   const saveCurrentTeam = async () => {
     try {
       setStorageError(null);
@@ -5128,6 +5159,11 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       return;
     }
 
+    if (!confirmReplaceCurrentTeam()) {
+      event.target.value = "";
+      return;
+    }
+
     try {
       const text = await file.text();
       const parsed = JSON.parse(text) as Partial<PersistedTeam>;
@@ -5148,6 +5184,93 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       event.target.value = "";
     }
   };
+
+  const importTeamFromShowdownText = () => {
+    const trimmed = showdownImportText.trim();
+
+    if (!trimmed) {
+      setStorageError("Paste a Pokemon Showdown export first.");
+      return;
+    }
+
+    if (!database || !battleData) {
+      setStorageError("The local Pokemon and move databases must finish loading before importing.");
+      return;
+    }
+
+    if (!confirmReplaceCurrentTeam()) {
+      return;
+    }
+
+    try {
+      const imported = importShowdownTeamText(trimmed, {
+        pokemonEntries: database,
+        moveByKey,
+        maxTeamSize: TEAM_SIZE,
+        maxMovesPerSlot: MAX_ATTACK_TYPES_PER_SLOT,
+      });
+
+      if (imported.slots.length === 0) {
+        throw new Error("No Pokemon sets were found in the pasted Showdown text.");
+      }
+
+      const warningParts: string[] = [];
+
+      if (imported.extraPokemonCount > 0) {
+        warningParts.push(
+          `ignored ${imported.extraPokemonCount} extra Pokemon beyond the first ${TEAM_SIZE}`,
+        );
+      }
+
+      if (imported.skippedStatusMoves.length > 0) {
+        warningParts.push(
+          `skipped ${imported.skippedStatusMoves.length} status move${imported.skippedStatusMoves.length === 1 ? "" : "s"} because the team builder only tracks attacking moves`,
+        );
+      }
+
+      if (imported.unknownMoves.length > 0) {
+        warningParts.push(`couldn't match moves: ${formatImportIssueList(imported.unknownMoves)}`);
+      }
+
+      if (imported.unresolvedSpecies.length > 0) {
+        warningParts.push(`couldn't match Pokemon: ${formatImportIssueList(imported.unresolvedSpecies)}`);
+      }
+
+      setTeamName("Imported Team");
+      setActiveSavedTeamId(null);
+      setTeamSlots(normalizeTeamSlots(imported.slots));
+      setOpenerSelections(normalizePersistedOpenerSelections(undefined));
+      setShowdownImportText("");
+      setStorageMessage(
+        `Imported ${imported.importedPokemonCount} Pokemon from Showdown text${warningParts.length > 0 ? `; ${warningParts.join("; ")}.` : "."}`,
+      );
+      setStorageError(null);
+      setShowdownImportOpen(false);
+    } catch (error) {
+      setStorageError(error instanceof Error ? error.message : "Failed to import Showdown text.");
+    }
+  };
+
+  useEffect(() => {
+    if (!showdownImportOpen) {
+      return;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setShowdownImportOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+
+    return () => {
+      window.removeEventListener("keydown", handleKey);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [showdownImportOpen]);
 
   useEffect(() => {
     if (filledLeadOptions.length === 0) {
@@ -5908,25 +6031,11 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const canRunBattleEngine = doublesThreatReady && battleEngineAllyMembers.length >= 2 && battleEngineEnemyMembers.length >= 2;
   const battleEngineInputSignature = useMemo(
     () =>
-      JSON.stringify({
+      buildBattleEngineInputSignature({
         allySelection: doublesAllySelection,
         enemySelection: doublesEnemySelection,
-        allyMembers: battleEngineAllyMembers.map((member) => ({
-          id: member.id,
-          hp: member.currentHp ?? member.currentHpPercent ?? 100,
-          stages: member.stages ?? null,
-          statusCondition: member.statusCondition ?? "none",
-          sleepTurns: member.sleepTurns ?? 0,
-          active: member.isActive,
-        })),
-        enemyMembers: battleEngineEnemyMembers.map((member) => ({
-          id: member.id,
-          hp: member.currentHpPercent ?? 100,
-          stages: member.stages ?? null,
-          statusCondition: member.statusCondition ?? "none",
-          sleepTurns: member.sleepTurns ?? 0,
-          active: member.isActive,
-        })),
+        allyMembers: battleEngineAllyMembers,
+        enemyMembers: battleEngineEnemyMembers,
         weather: damageWeather,
         terrain: damageTerrain,
         allyTailwind: doublesAllyTailwind,
@@ -6528,6 +6637,25 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
               Import JSON
             </button>
           </div>
+          <button
+            type="button"
+            className="showdown-import-trigger"
+            onClick={() => setShowdownImportOpen(true)}
+            aria-haspopup="dialog"
+            aria-expanded={showdownImportOpen}
+          >
+            <span className="showdown-import-trigger__text">
+              <span className="showdown-import-trigger__title">Pokemon Showdown Import</span>
+              <span className="showdown-import-trigger__hint">
+                {showdownImportText.trim()
+                  ? `${showdownImportText.trim().length} chars pasted · click to review`
+                  : "Open the import dialog to paste a Showdown export"}
+              </span>
+            </span>
+            <span className="showdown-import-trigger__icon" aria-hidden="true">
+              ↗
+            </span>
+          </button>
           <input
             ref={importInputRef}
             className="hidden-file-input"
@@ -6545,39 +6673,154 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             <span>{savedTeams.length}</span>
           </div>
           {savedTeams.length > 0 ? (
-            <div className="saved-teams-list">
-              {savedTeams.map((savedTeam) => (
-                <article
-                  key={savedTeam.id}
-                  className={`saved-team-card ${activeSavedTeamId === savedTeam.id ? "active" : ""}`}
-                >
-                  <div>
-                    <strong>{savedTeam.name}</strong>
-                    <p>{new Date(savedTeam.updatedAt).toLocaleString()}</p>
-                  </div>
-                  <div className="saved-team-actions">
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => loadSavedTeamIntoBuilder(savedTeam)}
-                    >
-                      Load
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => removeSavedTeam(savedTeam)}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </article>
-              ))}
-            </div>
+            <ul className="saved-teams-list">
+              {savedTeams.map((savedTeam) => {
+                const filledSlots = savedTeam.slots.filter((slot) => slot.pokemonId);
+                const updated = new Date(savedTeam.updatedAt);
+                const isActive = activeSavedTeamId === savedTeam.id;
+                return (
+                  <li
+                    key={savedTeam.id}
+                    className={`saved-team-row${isActive ? " is-active" : ""}`}
+                  >
+                    <div className="saved-team-row__identity">
+                      <strong title={savedTeam.name}>{savedTeam.name}</strong>
+                      <span className="saved-team-row__meta">
+                        <span className="saved-team-row__slot-count">{filledSlots.length}/6</span>
+                        <span aria-hidden="true">·</span>
+                        <time dateTime={savedTeam.updatedAt} title={updated.toLocaleString()}>
+                          {updated.toLocaleDateString(undefined, {
+                            month: "short",
+                            day: "numeric",
+                          })}
+                        </time>
+                      </span>
+                    </div>
+                    <div className="saved-team-row__sprites" aria-hidden="true">
+                      {Array.from({ length: TEAM_SIZE }).map((_, slotIndex) => {
+                        const slot = savedTeam.slots[slotIndex];
+                        const pokemonId = slot?.pokemonId;
+                        return pokemonId ? (
+                          <img
+                            key={`${savedTeam.id}-${slotIndex}-${pokemonId}`}
+                            className="saved-team-row__sprite"
+                            src={getPokemonSpriteUrl(pokemonId)}
+                            alt=""
+                            loading="lazy"
+                          />
+                        ) : (
+                          <span
+                            key={`${savedTeam.id}-${slotIndex}-empty`}
+                            className="saved-team-row__sprite saved-team-row__sprite--empty"
+                          />
+                        );
+                      })}
+                    </div>
+                    <div className="saved-team-row__actions">
+                      <button
+                        type="button"
+                        className="saved-team-row__action"
+                        onClick={() => loadSavedTeamIntoBuilder(savedTeam)}
+                        aria-label={`Load ${savedTeam.name}`}
+                        title="Load team"
+                      >
+                        Load
+                      </button>
+                      <button
+                        type="button"
+                        className="saved-team-row__action saved-team-row__action--danger"
+                        onClick={() => removeSavedTeam(savedTeam)}
+                        aria-label={`Delete ${savedTeam.name}`}
+                        title="Delete team"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
           ) : (
             <div className="team-slot-empty">No saved teams yet. Save one locally to keep it offline.</div>
           )}
         </div>
+
+        {showdownImportOpen && typeof document !== "undefined"
+          ? createPortal(
+          <div
+            className="showdown-import-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="showdown-import-modal-title"
+            onClick={(event) => {
+              if (event.target === event.currentTarget) {
+                setShowdownImportOpen(false);
+              }
+            }}
+          >
+            <div className="showdown-import-modal__dialog" role="document">
+              <header className="showdown-import-modal__header">
+                <div className="showdown-import-modal__title">
+                  <span className="eyebrow">Import</span>
+                  <h3 id="showdown-import-modal-title">Pokemon Showdown Import</h3>
+                </div>
+                <button
+                  type="button"
+                  className="showdown-import-modal__close"
+                  onClick={() => setShowdownImportOpen(false)}
+                  aria-label="Close Showdown import"
+                  title="Close"
+                >
+                  ×
+                </button>
+              </header>
+              <div className="showdown-import-modal__body">
+                <textarea
+                  id="showdown-import"
+                  className="showdown-import-input"
+                  rows={12}
+                  value={showdownImportText}
+                  onChange={(event) => setShowdownImportText(event.target.value)}
+                  placeholder={"Charizard @ Charizardite Y\nAbility: Blaze\n- Heat Wave\n- Weather Ball\n- Solar Beam\n- Protect"}
+                  aria-label="Pokemon Showdown team export"
+                  autoFocus
+                />
+                <p className="selector-note">
+                  Pasted imports ignore EVs and nature. Mega stones resolve to mega forms when possible, and only
+                  damaging moves are saved into the current team builder.
+                </p>
+              </div>
+              <footer className="showdown-import-modal__footer">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setShowdownImportText("")}
+                  disabled={!showdownImportText}
+                >
+                  Clear Text
+                </button>
+                <div className="showdown-import-modal__footer-spacer" />
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setShowdownImportOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={importTeamFromShowdownText}
+                  disabled={!showdownImportText.trim()}
+                >
+                  Import Showdown Text
+                </button>
+              </footer>
+            </div>
+          </div>,
+            document.body,
+          )
+          : null}
       </section>
 
       <section className="team-grid">
