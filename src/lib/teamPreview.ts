@@ -287,6 +287,7 @@ const FEATURE_LABELS: Record<string, string> = {
   quick_guard_value: "Quick Guard into priority",
   fake_out_value: "Fake Out tempo",
   weather_value: "Weather mode coherence",
+  weather_control_value: "Weather control value",
   priority_value: "Priority cleanup value",
   utility_value: "Support utility",
   lead_pair_pressure: "Lead pair opening pressure",
@@ -683,6 +684,89 @@ function getWeatherModeValue(meta: PreviewCombatantMeta, allyProfile: PreviewThr
   return value;
 }
 
+function getTypeMatchCount(team: PreviewCombatantMeta[], type: PokemonType) {
+  return team.filter((meta) => meta.primaryType === type || meta.secondaryType === type).length;
+}
+
+function getDamagingMoveTypeShare(team: PreviewCombatantMeta[], type: PokemonType) {
+  const moves = team.flatMap((meta) => meta.damagingMoves);
+  const totalPower = moves.reduce((sum, move) => sum + Math.max(1, move.basePower ?? 0), 0);
+  if (totalPower <= 0) {
+    return 0;
+  }
+
+  const typePower = moves
+    .filter((move) => normalizeKey(move.type) === type)
+    .reduce((sum, move) => sum + Math.max(1, move.basePower ?? 0), 0);
+  return typePower / totalPower;
+}
+
+function hasDamagingMoveType(meta: PreviewCombatantMeta, type: PokemonType) {
+  return meta.damagingMoves.some((move) => normalizeKey(move.type) === type);
+}
+
+function getWeatherSetterKinds(meta: PreviewCombatantMeta) {
+  const weather: PreviewWeather[] = [];
+  if (meta.roleTags.has("weatherRain")) {
+    weather.push("rain");
+  }
+  if (meta.roleTags.has("weatherSun")) {
+    weather.push("sun");
+  }
+  if (meta.roleTags.has("weatherSand")) {
+    weather.push("sand");
+  }
+  if (meta.roleTags.has("weatherSnow")) {
+    weather.push("snow");
+  }
+  return weather;
+}
+
+function getWeatherControlValue(
+  meta: PreviewCombatantMeta,
+  enemies: PreviewCombatantMeta[],
+  enemyProfile: PreviewThreatProfile,
+) {
+  let value = 0;
+
+  for (const ownWeather of getWeatherSetterKinds(meta)) {
+    const conflictingEnemyWeatherStrength = (["rain", "sun", "sand", "snow"] as const)
+      .filter((weather) => weather !== ownWeather)
+      .reduce((sum, weather) => sum + enemyProfile.weatherStrength[weather], 0);
+    const conflictingEnemySetters = enemies.filter(
+      (enemy) => getWeatherSetterKinds(enemy).some((weather) => weather !== ownWeather),
+    ).length;
+    const conflictingEnemyAbusers = enemies.filter((enemy) =>
+      (["rain", "sun", "sand", "snow"] as const).some(
+        (weather) => weather !== ownWeather && hasWeatherAbuser(enemy, weather),
+      ),
+    ).length;
+
+    value += conflictingEnemyWeatherStrength * 115;
+    value += conflictingEnemySetters * 24;
+    value += conflictingEnemyAbusers * 15;
+
+    if (ownWeather === "sun") {
+      const enemyWaterTypes = getTypeMatchCount(enemies, "water");
+      const enemyWaterMoveShare = getDamagingMoveTypeShare(enemies, "water");
+      value += enemyWaterTypes * (hasDamagingMoveType(meta, "grass") ? 30 : 14);
+      value += enemyWaterMoveShare * 105;
+      if (hasDamagingMoveType(meta, "fire")) {
+        value += enemyProfile.weatherStrength.rain * 42;
+      }
+    }
+
+    if (ownWeather === "rain") {
+      const enemyFireTypes = getTypeMatchCount(enemies, "fire");
+      const enemyFireMoveShare = getDamagingMoveTypeShare(enemies, "fire");
+      value += enemyFireTypes * 16;
+      value += enemyFireMoveShare * 95;
+    }
+  }
+
+  return value;
+}
+
 function hasWhiteHerbUnburdenCombo(meta: PreviewCombatantMeta) {
   return meta.abilityKey === "unburden" && meta.itemKey === "whiteherb";
 }
@@ -797,6 +881,11 @@ function scoreCombatant(
   const weatherValue = getWeatherModeValue(meta, allyProfile);
   if (weatherValue > 0) {
     addScore(breakdown, "weather_value", weatherValue);
+  }
+
+  const weatherControlValue = getWeatherControlValue(meta, enemies, enemyProfile);
+  if (weatherControlValue > 0) {
+    addScore(breakdown, "weather_control_value", weatherControlValue);
   }
 
   if (hasWhiteHerbUnburdenCombo(meta) && enemyProfile.statDropPressure > 0) {

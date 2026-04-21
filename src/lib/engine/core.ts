@@ -835,6 +835,55 @@ function scoreProtectAction(state: BattleState, actorId: string) {
   return highestThreat * 1.4 + (100 - hpPercent) * 0.45;
 }
 
+function getSpeedAdvantageScore(state: BattleState, side: BattleSide, trickRoomActive: boolean) {
+  const ownIds = getActiveIds(state, side);
+  const enemyIds = getActiveIds(state, getOpponentSide(side));
+  let score = 0;
+
+  for (const ownId of ownIds) {
+    const ownSpeed = getEffectiveSpeed(state, ownId);
+
+    for (const enemyId of enemyIds) {
+      const enemySpeed = getEffectiveSpeed(state, enemyId);
+      if (ownSpeed === enemySpeed) {
+        score += 0.25;
+        continue;
+      }
+
+      const movesFirst = trickRoomActive ? ownSpeed < enemySpeed : ownSpeed > enemySpeed;
+      score += movesFirst ? 1 : -1;
+    }
+  }
+
+  return score;
+}
+
+function scoreTrickRoomAction(state: BattleState, actorId: string) {
+  const actor = state.combatants[actorId];
+  if (!actor) {
+    return 0;
+  }
+
+  const currentlyActive = state.field.trickRoomTurns > 0;
+  const currentScore = getSpeedAdvantageScore(state, actor.side, currentlyActive);
+  const toggledScore = getSpeedAdvantageScore(state, actor.side, !currentlyActive);
+  const swing = toggledScore - currentScore;
+  const ownActiveIds = getActiveIds(state, actor.side);
+  const enemyActiveIds = getActiveIds(state, getOpponentSide(actor.side));
+  const ownAverageSpeed =
+    ownActiveIds.length > 0
+      ? ownActiveIds.reduce((sum, combatantId) => sum + getEffectiveSpeed(state, combatantId), 0) / ownActiveIds.length
+      : 0;
+  const enemyAverageSpeed =
+    enemyActiveIds.length > 0
+      ? enemyActiveIds.reduce((sum, combatantId) => sum + getEffectiveSpeed(state, combatantId), 0) / enemyActiveIds.length
+      : 0;
+  const averageSpeedGap = currentlyActive ? ownAverageSpeed - enemyAverageSpeed : enemyAverageSpeed - ownAverageSpeed;
+  const statusScore = actor.currentHp > actor.maxHp * 0.55 ? 18 : -12;
+
+  return 85 + swing * 95 + averageSpeedGap * 0.8 + statusScore;
+}
+
 function scoreSwitchAction(state: BattleState, actorId: string, switchInId: string) {
   const incoming = state.combatants[switchInId];
   if (!incoming) {
@@ -1143,7 +1192,7 @@ function buildPlannedAction(
       actorLabel,
       action,
       summary: `${actorLabel}: Trick Room`,
-      heuristicScore: 90,
+      heuristicScore: scoreTrickRoomAction(state, actorId),
     };
   }
 

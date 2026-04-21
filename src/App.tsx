@@ -1,5 +1,6 @@
 import {
   memo,
+  startTransition,
   useDeferredValue,
   useEffect,
   useMemo,
@@ -6526,7 +6527,6 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           sanitizeSavedAttacks,
           sanitizeKnownMovesToSavedAttacks,
         });
-        const runtime = getBattleSimulatorMemberState("ally", slotIndex, slot.pokemon.id);
 
         return [
           buildAllyBattleStateMember({
@@ -6539,12 +6539,12 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
               statSpread: slot.resolvedStatSpread,
             },
             moveByKey,
-            runtime,
-            isActive: doublesAllySelection.includes(slotIndex),
+            runtime: DEFAULT_BATTLE_SIMULATOR_MEMBER_STATE,
+            isActive: false,
           }),
         ];
       }),
-    [battleSimulatorState, doublesAllySelection, moveByKey, speciesMovesetByKey, team],
+    [moveByKey, speciesMovesetByKey, team],
   );
   const battleEngineEnemyMembers = useMemo<BattleStateMemberInput[]>(
     () =>
@@ -6570,13 +6570,38 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     [battleSimulatorState, doublesEnemySelection, moveByKey, scoutingOpponentEntries],
   );
   const doublesThreatReady = doublesAllyMembers.length === 2 && doublesEnemyMembers.length === 2;
+  const previewRecommendationSettings = useMemo(
+    () => ({
+      weather: damageWeather,
+      terrain: damageTerrain,
+      allyTailwind: doublesAllyTailwind,
+      enemyTailwind: doublesEnemyTailwind,
+      trickRoom: doublesTrickRoom,
+      attackStage: damageAttackStage,
+      defenseStage: damageDefenseStage,
+      solverMode: teamPreviewSolverMode,
+    }),
+    [
+      damageAttackStage,
+      damageDefenseStage,
+      damageTerrain,
+      damageWeather,
+      doublesAllyTailwind,
+      doublesEnemyTailwind,
+      doublesTrickRoom,
+      teamPreviewSolverMode,
+    ],
+  );
+  const deferredAnalyzedOpponentEntries = useDeferredValue(analyzedOpponentEntries);
+  const deferredPreviewBattleEngineAllyMembers = useDeferredValue(previewBattleEngineAllyMembers);
+  const deferredPreviewRecommendationSettings = useDeferredValue(previewRecommendationSettings);
   const teamPreviewRecommendation = useMemo<TeamPreviewRecommendation | null>(() => {
-    if (previewBattleEngineAllyMembers.length < 4 || analyzedOpponentEntries.length < 4) {
+    if (deferredPreviewBattleEngineAllyMembers.length < 4 || deferredAnalyzedOpponentEntries.length < 4) {
       return null;
     }
 
     const previewModeOptions =
-      teamPreviewSolverMode === "sparse"
+      deferredPreviewRecommendationSettings.solverMode === "sparse"
         ? {
             solverMode: "sparse" as const,
             timeBudgetMs: 250,
@@ -6594,7 +6619,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           };
 
     return recommendTeamPreview({
-      ally: previewBattleEngineAllyMembers.map((member) => ({
+      ally: deferredPreviewBattleEngineAllyMembers.map((member) => ({
         ...member,
         isActive: false,
         currentHp: undefined,
@@ -6613,7 +6638,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         isFlinched: false,
         wasSwitchedInThisTurn: false,
       })),
-      enemy: analyzedOpponentEntries.map((entry) => {
+      enemy: deferredAnalyzedOpponentEntries.map((entry) => {
         return buildPreviewEnemyBattleStateMember({
           slotIndex: entry.slotIndex,
           pokemon: entry.pokemon,
@@ -6631,27 +6656,20 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         });
       }),
       moveByKey,
-      weather: damageWeather,
-      terrain: damageTerrain,
-      allyTailwind: doublesAllyTailwind,
-      enemyTailwind: doublesEnemyTailwind,
-      trickRoom: doublesTrickRoom,
-      attackStage: damageAttackStage,
-      defenseStage: damageDefenseStage,
+      weather: deferredPreviewRecommendationSettings.weather,
+      terrain: deferredPreviewRecommendationSettings.terrain,
+      allyTailwind: deferredPreviewRecommendationSettings.allyTailwind,
+      enemyTailwind: deferredPreviewRecommendationSettings.enemyTailwind,
+      trickRoom: deferredPreviewRecommendationSettings.trickRoom,
+      attackStage: deferredPreviewRecommendationSettings.attackStage,
+      defenseStage: deferredPreviewRecommendationSettings.defenseStage,
       ...previewModeOptions,
     });
   }, [
-    analyzedOpponentEntries,
-    damageAttackStage,
-    damageDefenseStage,
-    damageTerrain,
-    damageWeather,
-    doublesAllyTailwind,
-    doublesEnemyTailwind,
-    doublesTrickRoom,
+    deferredAnalyzedOpponentEntries,
+    deferredPreviewBattleEngineAllyMembers,
+    deferredPreviewRecommendationSettings,
     moveByKey,
-    previewBattleEngineAllyMembers,
-    teamPreviewSolverMode,
   ]);
   const solverBringOrder = useMemo(() => {
     if (!teamPreviewRecommendation) {
@@ -7213,7 +7231,9 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       return;
     }
 
-    setAnalyzedOpponentEntries(opponentEntries);
+    startTransition(() => {
+      setAnalyzedOpponentEntries(opponentEntries);
+    });
   };
   const runBattleEngineAnalysis = () => {
     if (!canRunBattleEngine) {
@@ -7933,7 +7953,12 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
               <span>Preview mode</span>
               <select
                 value={teamPreviewSolverMode}
-                onChange={(event) => setTeamPreviewSolverMode(event.target.value as TeamPreviewSolverMode)}
+                onChange={(event) => {
+                  const nextMode = event.target.value as TeamPreviewSolverMode;
+                  startTransition(() => {
+                    setTeamPreviewSolverMode(nextMode);
+                  });
+                }}
               >
                 {TEAM_PREVIEW_SCAN_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateJointActionPlans, getDamagePreview, getEffectiveSpeed, resolveTurn } from "..";
+import { generateJointActionPlans, getDamagePreview, getEffectiveSpeed, recommendBestPlan, resolveTurn } from "..";
 import {
   buildMovePlan,
   buildPassPlan,
@@ -362,6 +362,46 @@ describe("engine regression coverage", () => {
 
     const firstAttackEvent = result.events.find((event) => event.text.includes("uses Tackle on"));
     expect(firstAttackEvent?.actorId).toBe("ally-0");
+  });
+
+  it("prioritizes Trick Room as the enemy counterplay when their board is slower", () => {
+    const sneasler = makePokemon("Sneasler", { baseStats: { atk: 130, spe: 120 } });
+    const aerodactyl = makePokemon("Aerodactyl", { baseStats: { atk: 105, spe: 130 } });
+    const oranguru = makePokemon("Oranguru", { baseStats: { hp: 110, def: 110, spd: 110, spe: 60 } });
+    const meowstic = makePokemon("Meowstic", { baseStats: { spa: 95, spe: 104 } });
+    const fakeOut = makeMove("Fake Out", {
+      type: "Normal",
+      category: "Physical",
+      basePower: 40,
+      priority: 3,
+      target: "normal",
+    });
+    const tailwind = makeMove("Tailwind", { type: "Flying", category: "Status", basePower: 0, target: "self", priority: 0 });
+    const trickRoom = makeMove("Trick Room", { type: "Psychic", category: "Status", basePower: 0, target: "all" });
+    const protect = makeMove("Protect", { type: "Normal", category: "Status", basePower: 0, target: "self", priority: 4 });
+    const psychic = makeMove("Psychic", { type: "Psychic", category: "Special", basePower: 90, target: "normal" });
+
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: sneasler, moveNames: ["Fake Out"] }),
+        makeMember({ side: "ally", slot: 1, pokemon: aerodactyl, moveNames: ["Tailwind"] }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: oranguru, moveNames: ["Trick Room", "Protect"] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: meowstic, moveNames: ["Psychic"] }),
+      ],
+      moves: [fakeOut, tailwind, trickRoom, protect, psychic],
+    });
+
+    const recommendation = recommendBestPlan(state, {
+      depth: 2,
+      maxJointPlansPerSide: 8,
+      maxIndividualActionsPerActor: 5,
+    });
+
+    expect(recommendation.bestPlan?.summary).toContain("Fake Out");
+    expect(recommendation.bestPlan?.summary).toContain("Tailwind");
+    expect(recommendation.enemyBestResponse?.summary).toContain("Trick Room");
   });
 
   it("applies switch-in Intimidate before move order for the rest of the turn", () => {
