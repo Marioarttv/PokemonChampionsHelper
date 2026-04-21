@@ -117,6 +117,7 @@ import {
   type PersistedTeam,
   type PersistedTeamSlot,
 } from "./lib/savedTeams";
+import { getLoadedOpponentEntries } from "./lib/opponentRoster";
 import {
   deleteSpeciesMoveset,
   listSpeciesMovesets,
@@ -5001,23 +5002,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   );
 
   const opponentEntries = useMemo<LoadedOpponentEntry[]>(
-    () =>
-      opponentRoster
-        .map((entry) =>
-          entry.pokemon
-            ? {
-                slotIndex: entry.slotIndex,
-                query: entry.query,
-                pokemon: entry.pokemon,
-                savedAttacks: entry.savedAttacks,
-                presetMoveNames: entry.presetMoveNames,
-                abilityName: entry.abilityName,
-                itemName: entry.itemName,
-                movesetSource: entry.movesetSource,
-              }
-            : null,
-        )
-        .filter((entry): entry is LoadedOpponentEntry => Boolean(entry)),
+    () => getLoadedOpponentEntries(opponentRoster),
     [opponentRoster],
   );
   const scoutingOpponentEntries = useDeferredValue(opponentEntries);
