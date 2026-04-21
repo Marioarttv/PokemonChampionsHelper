@@ -31,6 +31,12 @@ npm install
 npm run dev
 ```
 
+Run the regression suite with:
+
+```bash
+npm test
+```
+
 ## Production Build
 
 ```bash
@@ -61,6 +67,7 @@ The current battle engine lives under `src/lib/engine/` and is already capable o
 - resolving turn order using priority, speed, Tailwind, and Trick Room
 - simulating direct damage with rough min / average / max branches
 - reasoning about support/status play such as Protect, Fake Out, Tailwind, Trick Room, Helping Hand, redirection, screens, guards, Taunt, Safeguard, Ally Switch, Encore, Disable, common healing/setup lines, and several status / speed-control moves
+- handling 5-stat stages, protect-family dedupe, `allAdjacent` collateral, baseline terrain/type/powder status immunity rules, and weighted candidate moves for partial / unknown enemy knowledge
 - scoring positions with HP, survival, pressure, speed control, and side-condition heuristics
 - recommending a line based on worst-case enemy counterplay rather than raw damage alone
 

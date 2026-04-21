@@ -20,12 +20,18 @@ The engine lives in `src/lib/engine/`.
   Defines the canonical battle state, actions, move metadata, side conditions, volatile statuses, and search result types.
 - `core.ts`
   Handles state construction, move normalization, action generation, turn resolution, and battle utility helpers.
+- `moveRegistry.ts`
+  Centralizes special-move families, protect-family checks, and shared move-role tagging used by both the engine and team preview.
+- `rules/`
+  Contains curated non-damage rules for speed and status applicability.
+- `adapters/fromUiState.ts`
+  Converts UI-facing team / scouting state into engine-ready members and hidden-information inputs.
+- `knowledge.ts`
+  Builds weighted enemy move candidates for partial / unknown information.
 - `evaluate.ts`
   Scores non-terminal states with handcrafted heuristics.
 - `search.ts`
   Runs the shallow adversarial search and produces the recommendation shown in the UI.
-
-The UI integration currently happens in `src/App.tsx`, where selected allies and enemies are converted into engine inputs and fed to the recommendation panel.
 
 ## What Is Implemented
 
@@ -35,7 +41,7 @@ The engine tracks:
 
 - active and bench Pokemon for each side
 - current HP and max HP
-- attack, defense, and speed stages
+- attack, defense, special attack, special defense, and speed stages
 - status conditions: burn, paralysis, sleep
 - volatile state such as Protect, flinch, Helping Hand, Taunt, Encore, and Disable
 - side conditions such as Tailwind, Reflect, Light Screen, Aurora Veil, Safeguard, Quick Guard, Wide Guard, redirection, and Ally Switch pairing
@@ -58,7 +64,7 @@ It also respects some action restrictions already modeled in state:
 - Taunt blocks non-damaging moves
 - Encore locks a Pokemon into a previous move
 - Disable blocks the disabled move
-- sleep limits action choice
+- sleep countdown resolves at turn start, so sleepers can wake even if they would otherwise pass or switch
 
 ### 3. Turn Resolution
 
@@ -72,11 +78,13 @@ The turn resolver currently models:
 - screens and Aurora Veil damage reduction
 - Quick Guard and Wide Guard
 - Safeguard blocking new status
+- baseline terrain / type / powder status immunities
 - redirection through Follow Me / Rage Powder
 - Ally Switch target swapping
 - Encore and Disable application
 - burn/paralysis/sleep state handling
 - basic recoil from Life Orb
+- `allAdjacent` collateral such as Bulldoze hitting the ally partner
 - automatic replacement from the bench after a faint
 
 ### 4. Search
@@ -106,6 +114,8 @@ Enemy move knowledge is now split conceptually into:
   No reliable move data
 
 When the enemy set is partial or unknown, the engine can add a few inferred utility moves such as Protect, Taunt, Feint, Safeguard, Ally Switch, Disable, Encore, Icy Wind, Electroweb, or Trick Room based on rough heuristics. This is still lightweight, but it is better than pretending an unknown Pokemon has no support options.
+
+Preset and unknown enemy sets are now modeled as weighted candidate moves rather than always being treated as fully known. The search diagnostics expose those candidate assumptions so recommendation output can be audited.
 
 ## Supported Move Families
 
@@ -137,11 +147,15 @@ The engine is not yet a full competitive simulator. Important limitations still 
 - no exact accuracy math, evasion, or full probability trees
 - secondary effects are coarse branches, not exact per-move distributions
 - no full status-resolution rules for every edge case
-- no complete support for redirection immunity, terrain immunity, sound/powder edge cases, and similar move exceptions
+- only a curated subset of terrain / type / powder immunity rules
 - no exact cartridge handling for repeated Protect odds, priority-blocking subtleties, or every special-case move interaction
-- no complete hidden-information belief model
+- no full belief-state search over complete enemy move-set combinations
 - no deep multi-turn planning with transposition tables or advanced pruning
 - no exact move PP, choice lock, item consumption, hazard layers, or weather chip loops yet
+
+## Testing
+
+The engine now has a small Vitest regression harness covering core mechanics such as Fake Out, sleep wake-up, protect-family handling, `allAdjacent` collateral, stage correctness for setup / debuff moves, baseline status immunities, and the App-side engine-input signature.
 
 ## Near-Term Goals
 

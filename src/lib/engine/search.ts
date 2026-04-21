@@ -1,6 +1,7 @@
 import { ENGINE_DEFAULTS, generateJointActionPlans, resolveTurn } from "./core";
 import { evaluateBattleState } from "./evaluate";
 import type {
+  BranchPolicy,
   BattleState,
   SearchBranchModel,
   SearchDiagnostics,
@@ -11,51 +12,57 @@ import type {
 
 const FULL_TURN_BRANCHES = [
   {
+    label: "low-roll",
     weight: 0.2,
     damageMode: "min" as const,
     accuracyMode: "conservative" as const,
     secondaryMode: "off" as const,
   },
   {
+    label: "expected",
     weight: 0.6,
     damageMode: "average" as const,
     accuracyMode: "expected" as const,
     secondaryMode: "expected" as const,
   },
   {
+    label: "high-roll",
     weight: 0.2,
     damageMode: "max" as const,
     accuracyMode: "optimistic" as const,
     secondaryMode: "on" as const,
   },
-];
+] satisfies BranchPolicy["branches"];
 
 const EXPECTED_ONLY_BRANCHES = [
   {
+    label: "expected",
     weight: 1,
     damageMode: "average" as const,
     accuracyMode: "expected" as const,
     secondaryMode: "expected" as const,
   },
-];
+] satisfies BranchPolicy["branches"];
 
 const EXPECTED_PLUS_RISK_BRANCHES = [
   {
+    label: "expected",
     weight: 0.75,
     damageMode: "average" as const,
     accuracyMode: "expected" as const,
     secondaryMode: "expected" as const,
   },
   {
+    label: "risk-averse",
     weight: 0.25,
     damageMode: "min" as const,
     accuracyMode: "conservative" as const,
     secondaryMode: "off" as const,
   },
-];
+] satisfies BranchPolicy["branches"];
 
 type SearchContext = Required<Pick<SearchOptions, "maxJointPlansPerSide" | "maxIndividualActionsPerActor">> & {
-  branches: typeof FULL_TURN_BRANCHES;
+  branches: BranchPolicy["branches"];
   diagnostics: SearchDiagnostics;
 };
 
@@ -65,18 +72,23 @@ function createSearchDiagnostics(): SearchDiagnostics {
     resolveTurnCalls: 0,
     generatedJointPlans: 0,
     planPairEvaluations: 0,
+    enemyAssumptions: [],
   };
 }
 
-function getTurnBranches(branchModel: SearchBranchModel) {
+function getBranchPolicy(branchModel: SearchBranchModel, branchPolicy?: BranchPolicy): BranchPolicy {
+  if (branchPolicy?.branches?.length) {
+    return branchPolicy;
+  }
+
   switch (branchModel) {
     case "expectedOnly":
-      return EXPECTED_ONLY_BRANCHES;
+      return { key: "expectedOnly", branches: EXPECTED_ONLY_BRANCHES };
     case "expectedPlusRisk":
-      return EXPECTED_PLUS_RISK_BRANCHES;
+      return { key: "expectedPlusRisk", branches: EXPECTED_PLUS_RISK_BRANCHES };
     case "full":
     default:
-      return FULL_TURN_BRANCHES;
+      return { key: "full", branches: FULL_TURN_BRANCHES };
   }
 }
 
@@ -163,12 +175,20 @@ export function recommendBestPlan(state: BattleState, options?: SearchOptions): 
   const maxIndividualActionsPerActor =
     options?.maxIndividualActionsPerActor ?? ENGINE_DEFAULTS.maxIndividualActionsPerActor;
   const branchModel = options?.branchModel ?? "full";
+  const branchPolicy = getBranchPolicy(branchModel, options?.branchPolicy);
   const diagnostics = createSearchDiagnostics();
+  diagnostics.enemyAssumptions = Object.values(state.combatants)
+    .filter((combatant) => combatant.side === "enemy")
+    .flatMap((combatant) =>
+      combatant.candidateMoves.map(
+        (move) => `${combatant.label}:${move.name}:${move.candidateSource ?? "candidate"}:${move.candidateWeight.toFixed(2)}`,
+      ),
+    );
 
   const scoredPlans = scoreJointPlans(state, depth, {
     maxJointPlansPerSide,
     maxIndividualActionsPerActor,
-    branches: getTurnBranches(branchModel),
+    branches: branchPolicy.branches,
     diagnostics,
   }).sort((left, right) => right.score - left.score);
 

@@ -1,12 +1,15 @@
 import { getTypeFromLabel } from "../../data/typeChart";
 import type { MoveRecord } from "../battleData";
-import { calculateRoughDamage, getLevel50HpValue, getLevel50OtherStatValue, getStatStageMultiplier } from "../damage";
+import { calculateRoughDamage, getLevel50HpValue } from "../damage";
 import {
   getDefaultDamageAbilityId,
   getDefaultDamageAbilityIdFromNames,
   normalizeDamageAbilityId,
 } from "../damageAbilities";
 import { normalizeDamageItemId } from "../damageItems";
+import { getEffectiveSpeedForBattleState } from "./rules/speed";
+import { canApplyStatusCondition } from "./rules/status";
+import { getSpecialMoveDefinition, hasProtectFamilyMove, normalizeMoveKey } from "./moveRegistry";
 import type {
   BattleAction,
   BattleCombatantState,
@@ -17,6 +20,7 @@ import type {
   BattleStageDelta,
   BattleState,
   BattleStatusCondition,
+  CandidateMove,
   CreateBattleStateInput,
   DamageRollMode,
   JointActionPlan,
@@ -37,114 +41,25 @@ const EXTENDED_SCREEN_TURNS = 8;
 const DEFAULT_SLEEP_TURNS = 2;
 const DOUBLES_SCREEN_MULTIPLIER = 2 / 3;
 
-type SpecialMoveDefinition = {
-  effectKind: BattleMoveOption["effectKind"];
-  targetKind: BattleMoveOption["targetKind"];
-  effectData?: BattleMoveEffectData;
-};
-
-const SPECIAL_MOVE_DEFINITIONS: Record<string, SpecialMoveDefinition> = {
-  protect: { effectKind: "protect", targetKind: "self" },
-  detect: { effectKind: "protect", targetKind: "self" },
-  banefulbunker: { effectKind: "protect", targetKind: "self" },
-  burninbulwark: { effectKind: "protect", targetKind: "self" },
-  burningbulwark: { effectKind: "protect", targetKind: "self" },
-  kingsshield: { effectKind: "protect", targetKind: "self" },
-  obstruct: { effectKind: "protect", targetKind: "self" },
-  silktrap: { effectKind: "protect", targetKind: "self" },
-  spikyshield: { effectKind: "protect", targetKind: "self" },
-  quickguard: { effectKind: "guard", targetKind: "field", effectData: { guard: "quickGuard" } },
-  wideguard: { effectKind: "guard", targetKind: "field", effectData: { guard: "wideGuard" } },
-  tailwind: { effectKind: "tailwind", targetKind: "field" },
-  trickroom: { effectKind: "trickRoom", targetKind: "field" },
-  safeguard: { effectKind: "safeguard", targetKind: "field", effectData: { safeguardTurns: DEFAULT_SCREEN_TURNS } },
-  allyswitch: { effectKind: "allySwitch", targetKind: "self" },
-  feint: {
-    effectKind: "damage",
-    targetKind: "singleOpponent",
-    effectData: { breaksProtect: true, breaksGuards: true },
-  },
-  encore: { effectKind: "encore", targetKind: "singleOpponent", effectData: { encoreTurns: 3 } },
-  disable: { effectKind: "disable", targetKind: "singleOpponent", effectData: { disableTurns: 3 } },
-  helpinghand: { effectKind: "helpingHand", targetKind: "singleAlly", effectData: { helpingHand: true } },
-  followme: { effectKind: "redirection", targetKind: "self", effectData: { setsRedirection: true } },
-  ragepowder: { effectKind: "redirection", targetKind: "self", effectData: { setsRedirection: true } },
-  taunt: { effectKind: "taunt", targetKind: "singleOpponent", effectData: { tauntTurns: DEFAULT_TAUNT_TURNS } },
-  thunderwave: { effectKind: "status", targetKind: "singleOpponent", effectData: { statusCondition: "paralysis" } },
-  glare: { effectKind: "status", targetKind: "singleOpponent", effectData: { statusCondition: "paralysis" } },
-  stunspore: { effectKind: "status", targetKind: "singleOpponent", effectData: { statusCondition: "paralysis" } },
-  willowisp: { effectKind: "status", targetKind: "singleOpponent", effectData: { statusCondition: "burn" } },
-  spore: { effectKind: "status", targetKind: "singleOpponent", effectData: { statusCondition: "sleep" } },
-  sleeppowder: { effectKind: "status", targetKind: "singleOpponent", effectData: { statusCondition: "sleep" } },
-  hypnosis: { effectKind: "status", targetKind: "singleOpponent", effectData: { statusCondition: "sleep" } },
-  reflect: { effectKind: "screen", targetKind: "field", effectData: { screen: "reflect" } },
-  lightscreen: { effectKind: "screen", targetKind: "field", effectData: { screen: "lightScreen" } },
-  auroraveil: { effectKind: "screen", targetKind: "field", effectData: { screen: "auroraVeil" } },
-  swordsdance: { effectKind: "boost", targetKind: "self", effectData: { selfStages: { attack: 2 } } },
-  nastyplot: { effectKind: "boost", targetKind: "self", effectData: { selfStages: { attack: 2 } } },
-  calmmind: { effectKind: "boost", targetKind: "self", effectData: { selfStages: { attack: 1, defense: 1 } } },
-  dragondance: { effectKind: "boost", targetKind: "self", effectData: { selfStages: { attack: 1, speed: 1 } } },
-  agility: { effectKind: "boost", targetKind: "self", effectData: { selfStages: { speed: 2 } } },
-  irondefense: { effectKind: "boost", targetKind: "self", effectData: { selfStages: { defense: 2 } } },
-  bulkup: { effectKind: "boost", targetKind: "self", effectData: { selfStages: { attack: 1, defense: 1 } } },
-  recover: { effectKind: "heal", targetKind: "self", effectData: { healFraction: 0.5 } },
-  roost: { effectKind: "heal", targetKind: "self", effectData: { healFraction: 0.5 } },
-  slackoff: { effectKind: "heal", targetKind: "self", effectData: { healFraction: 0.5 } },
-  softboiled: { effectKind: "heal", targetKind: "self", effectData: { healFraction: 0.5 } },
-  moonlight: { effectKind: "heal", targetKind: "self", effectData: { healFraction: 0.5 } },
-  morningsun: { effectKind: "heal", targetKind: "self", effectData: { healFraction: 0.5 } },
-  synthesis: { effectKind: "heal", targetKind: "self", effectData: { healFraction: 0.5 } },
-  lifedew: { effectKind: "heal", targetKind: "allAllies", effectData: { healAlliesFraction: 0.25 } },
-  icywind: { effectKind: "damage", targetKind: "allOpponents", effectData: { targetStages: { speed: -1 } } },
-  electroweb: { effectKind: "damage", targetKind: "allOpponents", effectData: { targetStages: { speed: -1 } } },
-  bulldoze: { effectKind: "damage", targetKind: "allOpponents", effectData: { targetStages: { speed: -1 } } },
-  rocktomb: { effectKind: "damage", targetKind: "singleOpponent", effectData: { targetStages: { speed: -1 } } },
-  nuzzle: { effectKind: "damage", targetKind: "singleOpponent", effectData: { statusCondition: "paralysis" } },
-  snarl: { effectKind: "damage", targetKind: "allOpponents", effectData: { targetStages: { attack: -1 } } },
-  breakingswipe: { effectKind: "damage", targetKind: "allOpponents", effectData: { targetStages: { attack: -1 } } },
-  chillingwater: { effectKind: "damage", targetKind: "singleOpponent", effectData: { targetStages: { attack: -1 } } },
-  rockslide: { effectKind: "damage", targetKind: "allOpponents", effectData: { flinchChance: 30 } },
-  airslash: { effectKind: "damage", targetKind: "singleOpponent", effectData: { flinchChance: 30 } },
-  heatwave: { effectKind: "damage", targetKind: "allOpponents", effectData: { statusCondition: "burn", secondaryChance: 10 } },
-  scaryface: { effectKind: "status", targetKind: "singleOpponent", effectData: { targetStages: { speed: -2 } } },
-  cottonspore: { effectKind: "status", targetKind: "singleOpponent", effectData: { targetStages: { speed: -3 } } },
-};
-
-function normalizeKey(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
-}
-
 function clampStage(value: number) {
   return Math.max(-6, Math.min(6, value));
 }
 
 function getMoveFromLookup(moveName: string, moveByKey: ReadonlyMap<string, MoveRecord>) {
-  return moveByKey.get(moveName.toLowerCase()) ?? moveByKey.get(normalizeKey(moveName)) ?? moveByKey.get(moveName) ?? null;
+  return moveByKey.get(moveName.toLowerCase()) ?? moveByKey.get(normalizeMoveKey(moveName)) ?? moveByKey.get(moveName) ?? null;
 }
 
 function isSnowActive(state: BattleState) {
   return state.field.weather === "snow";
 }
 
-function getSpecialMoveDefinition(moveName: string | undefined, category: string | null | undefined) {
-  const key = normalizeKey(moveName ?? "");
-  if (SPECIAL_MOVE_DEFINITIONS[key]) {
-    return SPECIAL_MOVE_DEFINITIONS[key];
-  }
-
-  if (category === "Status") {
-    return {
-      effectKind: "unsupported" as const,
-      targetKind: "singleOpponent" as const,
-    };
-  }
-
-  return null;
-}
-
 function getDefaultTargetKind(target: string | null | undefined) {
-  if (target === "allAdjacentFoes" || target === "allAdjacent") {
+  if (target === "allAdjacentFoes") {
     return "allOpponents" as const;
+  }
+
+  if (target === "allAdjacent") {
+    return "allAdjacent" as const;
   }
 
   return "singleOpponent" as const;
@@ -160,6 +75,8 @@ function buildBaseMoveOption(
   isSpreadMove: boolean,
   source: BattleMoveOption["source"],
   savedAttack: BattleMoveOption["savedAttack"],
+  candidateWeight = 1,
+  candidateSource: BattleMoveOption["candidateSource"] = null,
 ) {
   const effectDefinition = getSpecialMoveDefinition(moveRecord?.name ?? moveName, moveRecord?.category);
   const effectKind = effectDefinition?.effectKind ?? "damage";
@@ -167,7 +84,7 @@ function buildBaseMoveOption(
   const accuracy = moveRecord?.accuracy === true || moveRecord?.accuracy === undefined ? 100 : moveRecord.accuracy;
 
   return {
-    id: `${actorId}-${source}-${normalizeKey(moveRecord?.name ?? moveName)}`,
+    id: `${actorId}-${source}-${normalizeMoveKey(moveRecord?.name ?? moveName)}`,
     name: moveRecord?.name ?? moveName,
     effectKind,
     targetKind,
@@ -182,12 +99,16 @@ function buildBaseMoveOption(
     isSpreadMove,
     shortDesc: moveRecord?.shortDesc ?? moveRecord?.desc ?? "",
     effectData: effectDefinition?.effectData ?? null,
+    candidateWeight,
+    candidateSource,
   } satisfies BattleMoveOption;
 }
 
 function buildMoveOptionFromSavedAttack(
   actorId: string,
-  savedAttack: NonNullable<CreateBattleStateInput["ally"][number]["savedAttacks"]>[number],
+  savedAttack:
+    | NonNullable<CreateBattleStateInput["ally"][number]["savedAttacks"]>[number]
+    | NonNullable<CreateBattleStateInput["ally"][number]["knownMoves"]>[number],
   moveByKey: CreateBattleStateInput["moveByKey"],
 ): BattleMoveOption {
   const moveRecord =
@@ -197,11 +118,13 @@ function buildMoveOptionFromSavedAttack(
 
   const option = buildBaseMoveOption(
     actorId,
-    moveRecord?.name ?? savedAttack.label ?? "Saved Attack",
+    moveRecord?.name ?? ("name" in savedAttack ? savedAttack.name : undefined) ?? savedAttack.label ?? "Saved Move",
     moveRecord,
-    savedAttack.type,
+    savedAttack.type ?? (moveRecord ? getTypeFromLabel(moveRecord.type) ?? null : null),
     savedAttack.basePower ?? moveRecord?.basePower ?? null,
-    savedAttack.category ?? (moveRecord?.category?.toLowerCase() as BattleMoveOption["category"] | undefined) ?? null,
+    savedAttack.category === "status"
+      ? null
+      : savedAttack.category ?? (moveRecord?.category?.toLowerCase() as BattleMoveOption["category"] | undefined) ?? null,
     savedAttack.isSpreadMove ?? (moveRecord?.target === "allAdjacentFoes" || moveRecord?.target === "allAdjacent"),
     "savedAttack",
     savedAttack,
@@ -233,16 +156,18 @@ function buildMoveOptionFromMoveName(
     moveRecord.category === "Status" ? null : (moveRecord.category.toLowerCase() as NonNullable<BattleMoveOption["category"]>),
     moveRecord.target === "allAdjacentFoes" || moveRecord.target === "allAdjacent",
     "presetMove",
-    moveRecord.category !== "Status" && resolvedType
-      ? {
-          id: `move-${normalizeKey(moveRecord.name)}`,
-          label: moveRecord.name,
-          type: resolvedType,
-          basePower: moveRecord.basePower > 0 ? moveRecord.basePower : undefined,
-          category: moveRecord.category.toLowerCase() as NonNullable<BattleMoveOption["category"]>,
-          isSpreadMove: moveRecord.target === "allAdjacentFoes" || moveRecord.target === "allAdjacent",
-        }
-      : null,
+    {
+      id: `move-${normalizeMoveKey(moveRecord.name)}`,
+      name: moveRecord.name,
+      label: moveRecord.name,
+      type: resolvedType ?? undefined,
+      basePower: moveRecord.basePower > 0 ? moveRecord.basePower : undefined,
+      category:
+        moveRecord.category === "Status"
+          ? "status"
+          : (moveRecord.category.toLowerCase() as NonNullable<CreateBattleStateInput["ally"][number]["knownMoves"]>[number]["category"]),
+      isSpreadMove: moveRecord.target === "allAdjacentFoes" || moveRecord.target === "allAdjacent",
+    },
   );
 }
 
@@ -258,19 +183,22 @@ function buildMoveOptionFromInferredMoveName(
 
   return {
     ...move,
-    id: `${actorId}-inferred-${normalizeKey(move.name)}`,
+    id: `${actorId}-inferred-${normalizeMoveKey(move.name)}`,
     source: "inferred",
     shortDesc: move.shortDesc || "Inferred utility option for hidden-information planning.",
+    candidateSource: "inferred",
   };
 }
 
 function buildKnownMoves(
   actorId: string,
   savedAttacks: CreateBattleStateInput["ally"][number]["savedAttacks"],
+  knownMoves: CreateBattleStateInput["ally"][number]["knownMoves"],
   moveNames: string[] | undefined,
-  inferredMoveNames: string[] | undefined,
   moveByKey: CreateBattleStateInput["moveByKey"],
   universalProtect: boolean,
+  candidateMoves?: CandidateMove[],
+  inferredMoveNames?: string[],
 ) {
   const byId = new Map<string, BattleMoveOption>();
   const byName = new Set<string>();
@@ -278,7 +206,17 @@ function buildKnownMoves(
   for (const savedAttack of savedAttacks ?? []) {
     const move = buildMoveOptionFromSavedAttack(actorId, savedAttack, moveByKey);
     byId.set(move.id, move);
-    byName.add(normalizeKey(move.name));
+    byName.add(normalizeMoveKey(move.name));
+  }
+
+  for (const knownMove of knownMoves ?? []) {
+    const move = buildMoveOptionFromSavedAttack(actorId, knownMove, moveByKey);
+    const nameKey = normalizeMoveKey(move.name);
+    if (byName.has(nameKey)) {
+      continue;
+    }
+    byId.set(move.id, move);
+    byName.add(nameKey);
   }
 
   for (const moveName of moveNames ?? []) {
@@ -286,11 +224,32 @@ function buildKnownMoves(
     if (!move) {
       continue;
     }
-    const nameKey = normalizeKey(move.name);
+    const nameKey = normalizeMoveKey(move.name);
     if (byName.has(nameKey)) {
       continue;
     }
     byId.set(move.id, move);
+    byName.add(nameKey);
+  }
+
+  const candidateById = new Map<string, BattleMoveOption>();
+  for (const candidateMove of candidateMoves ?? []) {
+    const move = buildMoveOptionFromMoveName(actorId, candidateMove.name, moveByKey);
+    if (!move) {
+      continue;
+    }
+    const nameKey = normalizeMoveKey(move.name);
+    if (byName.has(nameKey)) {
+      continue;
+    }
+    candidateById.set(`${actorId}-candidate-${normalizeMoveKey(move.name)}`, {
+      ...move,
+      id: `${actorId}-candidate-${normalizeMoveKey(move.name)}`,
+      source: "candidate",
+      candidateWeight: candidateMove.weight,
+      candidateSource: candidateMove.source,
+      shortDesc: move.shortDesc || "Candidate move considered during hidden-information search.",
+    });
     byName.add(nameKey);
   }
 
@@ -299,15 +258,15 @@ function buildKnownMoves(
     if (!move) {
       continue;
     }
-    const nameKey = normalizeKey(move.name);
+    const nameKey = normalizeMoveKey(move.name);
     if (byName.has(nameKey)) {
       continue;
     }
-    byId.set(move.id, move);
+    candidateById.set(move.id, move);
     byName.add(nameKey);
   }
 
-  if (universalProtect && !byName.has("protect")) {
+  if (universalProtect && !hasProtectFamilyMove([...byId.values(), ...candidateById.values()])) {
     byId.set(`${actorId}-assumed-protect`, {
       id: `${actorId}-assumed-protect`,
       name: "Protect",
@@ -324,10 +283,15 @@ function buildKnownMoves(
       isSpreadMove: false,
       shortDesc: "Assumed universal defensive option for engine planning.",
       effectData: null,
+      candidateWeight: 1,
+      candidateSource: null,
     });
   }
 
-  return [...byId.values()];
+  return {
+    knownMoves: [...byId.values()],
+    candidateMoves: [...candidateById.values()],
+  };
 }
 
 function createCombatantState(
@@ -336,6 +300,9 @@ function createCombatantState(
   moveByKey: CreateBattleStateInput["moveByKey"],
   attackStage: number,
   defenseStage: number,
+  specialAttackStage: number,
+  specialDefenseStage: number,
+  speedStage: number,
   universalProtect: boolean,
 ): BattleCombatantState {
   const maxHp = getLevel50HpValue(member.pokemon.baseStats.hp);
@@ -355,6 +322,16 @@ function createCombatantState(
   const statusCondition = member.statusCondition ?? "none";
   const sleepTurns =
     statusCondition === "sleep" ? Math.max(1, Math.round(member.sleepTurns ?? DEFAULT_SLEEP_TURNS)) : 0;
+  const moves = buildKnownMoves(
+    member.id,
+    member.savedAttacks,
+    member.knownMoves,
+    member.moveNames,
+    moveByKey,
+    universalProtect,
+    member.candidateMoves,
+    member.inferredMoveNames,
+  );
 
   return {
     id: member.id,
@@ -372,7 +349,9 @@ function createCombatantState(
     stages: {
       attack: clampStage(member.stages?.attack ?? attackStage),
       defense: clampStage(member.stages?.defense ?? defenseStage),
-      speed: clampStage(member.stages?.speed ?? 0),
+      specialAttack: clampStage(member.stages?.specialAttack ?? specialAttackStage),
+      specialDefense: clampStage(member.stages?.specialDefense ?? specialDefenseStage),
+      speed: clampStage(member.stages?.speed ?? speedStage),
     },
     statusCondition,
     sleepTurns,
@@ -382,14 +361,9 @@ function createCombatantState(
     disableTurns: Math.max(0, Math.round(member.disableTurns ?? 0)),
     disabledMoveId: member.disabledMoveId ?? null,
     helpingHandTurns: Math.max(0, Math.round(member.helpingHandTurns ?? 0)),
-    knownMoves: buildKnownMoves(
-      member.id,
-      member.savedAttacks,
-      member.moveNames,
-      member.inferredMoveNames,
-      moveByKey,
-      universalProtect,
-    ),
+    knownMoves: moves.knownMoves,
+    candidateMoves: moves.candidateMoves,
+    knowledge: member.knowledge ?? "known",
     lastMoveId: member.lastMoveId ?? null,
     isProtected: member.isProtected ?? false,
     isFlinched: member.isFlinched ?? false,
@@ -403,6 +377,9 @@ function createSideState(
   moveByKey: CreateBattleStateInput["moveByKey"],
   attackStage: number,
   defenseStage: number,
+  specialAttackStage: number,
+  specialDefenseStage: number,
+  speedStage: number,
   universalProtect: boolean,
 ) {
   const sorted = [...members].sort((left, right) => left.teamIndex - right.teamIndex);
@@ -411,7 +388,17 @@ function createSideState(
   const benchIds: string[] = [];
 
   for (const member of sorted) {
-    const combatant = createCombatantState(side, member, moveByKey, attackStage, defenseStage, universalProtect);
+    const combatant = createCombatantState(
+      side,
+      member,
+      moveByKey,
+      attackStage,
+      defenseStage,
+      specialAttackStage,
+      specialDefenseStage,
+      speedStage,
+      universalProtect,
+    );
     combatants[combatant.id] = combatant;
     if (member.isActive && activeIds.length < 2) {
       activeIds.push(combatant.id);
@@ -445,9 +432,32 @@ function createSideState(
 export function createBattleState(input: CreateBattleStateInput): BattleState {
   const attackStage = input.attackStage ?? 0;
   const defenseStage = input.defenseStage ?? 0;
+  const specialAttackStage = input.specialAttackStage ?? attackStage;
+  const specialDefenseStage = input.specialDefenseStage ?? defenseStage;
+  const speedStage = input.speedStage ?? 0;
   const universalProtect = input.universalProtect ?? true;
-  const ally = createSideState("ally", input.ally, input.moveByKey, attackStage, defenseStage, universalProtect);
-  const enemy = createSideState("enemy", input.enemy, input.moveByKey, attackStage, defenseStage, universalProtect);
+  const ally = createSideState(
+    "ally",
+    input.ally,
+    input.moveByKey,
+    attackStage,
+    defenseStage,
+    specialAttackStage,
+    specialDefenseStage,
+    speedStage,
+    universalProtect,
+  );
+  const enemy = createSideState(
+    "enemy",
+    input.enemy,
+    input.moveByKey,
+    attackStage,
+    defenseStage,
+    specialAttackStage,
+    specialDefenseStage,
+    speedStage,
+    universalProtect,
+  );
   const allyTailwindTurns = input.allySide?.tailwindTurns ?? (input.allyTailwind ? DEFAULT_TAILWIND_TURNS : 0);
   const enemyTailwindTurns = input.enemySide?.tailwindTurns ?? (input.enemyTailwind ? DEFAULT_TAILWIND_TURNS : 0);
   const trickRoomTurns = input.fieldState?.trickRoomTurns ?? (input.trickRoom ? DEFAULT_TRICK_ROOM_TURNS : 0);
@@ -479,6 +489,9 @@ export function createBattleState(input: CreateBattleStateInput): BattleState {
       trickRoomTurns,
       turn: input.fieldState?.turn ?? 1,
     },
+    policies: {
+      replacement: input.replacementPolicy ?? "firstAvailable",
+    },
   };
 }
 
@@ -491,6 +504,7 @@ export function cloneBattleState(state: BattleState): BattleState {
           ...combatant,
           stages: { ...combatant.stages },
           knownMoves: [...combatant.knownMoves],
+          candidateMoves: [...combatant.candidateMoves],
         },
       ]),
     ),
@@ -523,6 +537,7 @@ export function cloneBattleState(state: BattleState): BattleState {
       },
     },
     field: { ...state.field },
+    policies: { ...state.policies },
   };
 }
 
@@ -559,7 +574,12 @@ export function isActiveCombatant(state: BattleState, combatantId: string) {
 }
 
 export function getMoveOption(state: BattleState, actorId: string, moveId: string) {
-  return state.combatants[actorId]?.knownMoves.find((move) => move.id === moveId) ?? null;
+  const combatant = state.combatants[actorId];
+  if (!combatant) {
+    return null;
+  }
+
+  return [...combatant.knownMoves, ...combatant.candidateMoves].find((move) => move.id === moveId) ?? null;
 }
 
 function isNonDamagingMove(move: BattleMoveOption) {
@@ -572,11 +592,7 @@ export function getEffectiveSpeed(state: BattleState, combatantId: string) {
     return 0;
   }
 
-  const speedStageMultiplier = getStatStageMultiplier(combatant.stages.speed);
-  const baseSpeed = getLevel50OtherStatValue(combatant.pokemon.baseStats.spe);
-  const tailwindMultiplier = state.sides[combatant.side].tailwindTurns > 0 ? 2 : 1;
-  const paralysisMultiplier = combatant.statusCondition === "paralysis" ? 0.5 : 1;
-  return Math.floor(baseSpeed * speedStageMultiplier * tailwindMultiplier * paralysisMultiplier);
+  return getEffectiveSpeedForBattleState(state, combatant);
 }
 
 export function isGrounded(combatant: BattleCombatantState) {
@@ -672,8 +688,8 @@ export function getDamagePreview(
     terrain: state.field.terrain,
     attackerGrounded: isGrounded(attacker),
     defenderGrounded: isGrounded(defender),
-    attackerStatStage: attacker.stages.attack,
-    defenderStatStage: defender.stages.defense,
+    attackerStatStage: move.category === "physical" ? attacker.stages.attack : attacker.stages.specialAttack,
+    defenderStatStage: move.category === "physical" ? defender.stages.defense : defender.stages.specialDefense,
     attackerAbility: attacker.abilityId,
     defenderAbility: defender.abilityId,
     attackerItem: attacker.itemId,
@@ -986,6 +1002,8 @@ function scoreBoostAction(state: BattleState, actorId: string, effectData: Battl
   const stageValue =
     Math.abs(effectData.selfStages.attack ?? 0) * 30 +
     Math.abs(effectData.selfStages.defense ?? 0) * 24 +
+    Math.abs(effectData.selfStages.specialAttack ?? 0) * 30 +
+    Math.abs(effectData.selfStages.specialDefense ?? 0) * 24 +
     Math.abs(effectData.selfStages.speed ?? 0) * 22;
   return stageValue + pressure * 0.3;
 }
@@ -1218,17 +1236,21 @@ function buildPlannedAction(
           : "target";
   const debuffBonus =
     Math.abs(move.effectData?.targetStages?.attack ?? 0) * 22 +
+    Math.abs(move.effectData?.targetStages?.specialAttack ?? 0) * 22 +
     Math.abs(move.effectData?.targetStages?.speed ?? 0) * 18 +
     (move.effectData?.statusCondition === "paralysis" ? 35 : 0);
 
-  const inferredPenalty = move.source === "inferred" ? -20 : 0;
+  const uncertaintyPenalty =
+    move.source === "candidate" || move.source === "inferred"
+      ? Math.max(10, Math.round((1 - Math.min(1, move.candidateWeight)) * 30) + (move.source === "inferred" ? 10 : 0))
+      : 0;
 
   return {
     actorId,
     actorLabel,
     action,
     summary: `${actorLabel}: ${move.name}${targetLabel ? ` into ${targetLabel}` : ""}`,
-    heuristicScore: projectedDamage + koBonus + fakeOutBonus + debuffBonus + inferredPenalty,
+    heuristicScore: projectedDamage + koBonus + fakeOutBonus + debuffBonus - uncertaintyPenalty,
   };
 }
 
@@ -1246,8 +1268,20 @@ function generateActionsForActor(
   const allyIds = getOtherActiveAllyIds(state, actorId);
   const actions: PlannedAction[] = [];
   const encoredMoveId = actor.encoreTurns > 0 ? actor.encoredMoveId : null;
+  const movePool = [...actor.knownMoves, ...actor.candidateMoves].sort((left, right) => {
+    if (left.source === right.source) {
+      return right.candidateWeight - left.candidateWeight;
+    }
+    if (left.source === "candidate" || left.source === "inferred") {
+      return 1;
+    }
+    if (right.source === "candidate" || right.source === "inferred") {
+      return -1;
+    }
+    return 0;
+  });
 
-  for (const move of actor.knownMoves) {
+  for (const move of movePool) {
     if (move.effectKind === "unsupported") {
       continue;
     }
@@ -1264,7 +1298,13 @@ function generateActionsForActor(
       continue;
     }
 
-    if (move.targetKind === "field" || move.targetKind === "self" || move.targetKind === "allOpponents" || move.targetKind === "allAllies") {
+    if (
+      move.targetKind === "field" ||
+      move.targetKind === "self" ||
+      move.targetKind === "allOpponents" ||
+      move.targetKind === "allAdjacent" ||
+      move.targetKind === "allAllies"
+    ) {
       actions.push(buildPlannedAction(state, actorId, { type: "move", actorId, moveId: move.id, targetId: null }));
       continue;
     }
@@ -1289,7 +1329,7 @@ function generateActionsForActor(
     actions.push(buildPlannedAction(state, actorId, { type: "pass", actorId }));
   }
 
-  if (actor.statusCondition === "sleep" && actor.sleepTurns > 0) {
+  if (actor.statusCondition === "sleep" && actor.sleepTurns > 1) {
     return actions
       .filter((entry) => entry.action.type === "switch" || entry.action.type === "pass")
       .slice(0, maxIndividualActions);
@@ -1428,6 +1468,12 @@ function applyStageDelta(combatant: BattleCombatantState, delta: BattleStageDelt
   if (typeof delta.defense === "number") {
     combatant.stages.defense = clampStage(combatant.stages.defense + delta.defense);
   }
+  if (typeof delta.specialAttack === "number") {
+    combatant.stages.specialAttack = clampStage(combatant.stages.specialAttack + delta.specialAttack);
+  }
+  if (typeof delta.specialDefense === "number") {
+    combatant.stages.specialDefense = clampStage(combatant.stages.specialDefense + delta.specialDefense);
+  }
   if (typeof delta.speed === "number") {
     combatant.stages.speed = clampStage(combatant.stages.speed + delta.speed);
   }
@@ -1437,12 +1483,13 @@ function applyStatusCondition(
   state: BattleState,
   target: BattleCombatantState,
   statusCondition: BattleStatusCondition | undefined,
+  move: BattleMoveOption,
 ) {
   if (!statusCondition || statusCondition === "none" || target.statusCondition !== "none") {
     return false;
   }
 
-  if (state.sides[target.side].safeguardTurns > 0) {
+  if (!canApplyStatusCondition(state, target, statusCondition, move)) {
     return false;
   }
 
@@ -1452,7 +1499,7 @@ function applyStatusCondition(
 }
 
 function getScreenTurns(actor: BattleCombatantState) {
-  return normalizeKey(actor.itemName ?? "") === "lightclay" ? EXTENDED_SCREEN_TURNS : DEFAULT_SCREEN_TURNS;
+  return normalizeMoveKey(actor.itemName ?? "") === "lightclay" ? EXTENDED_SCREEN_TURNS : DEFAULT_SCREEN_TURNS;
 }
 
 function resolveSingleTarget(state: BattleState, actor: BattleCombatantState, originalTargetId: string, move: BattleMoveOption) {
@@ -1526,6 +1573,12 @@ function getTargetIdsForAction(state: BattleState, actor: BattleCombatantState, 
     return getActiveIds(state, getOpponentSide(actor.side));
   }
 
+  if (move.targetKind === "allAdjacent") {
+    return [...getActiveIds(state, actor.side), ...getActiveIds(state, getOpponentSide(actor.side))].filter(
+      (combatantId) => combatantId !== actor.id,
+    );
+  }
+
   if (move.targetKind === "singleOpponent") {
     if (!targetId || !isCombatantAlive(state, targetId)) {
       return [];
@@ -1574,7 +1627,7 @@ function applyOnHitEffects(
   if (
     move.effectData?.statusCondition &&
     (!chanceGated || shouldProcSecondary) &&
-    applyStatusCondition(state, target, move.effectData.statusCondition)
+    applyStatusCondition(state, target, move.effectData.statusCondition, move)
   ) {
     events.push({
       targetId: target.id,
@@ -1591,21 +1644,27 @@ function applyOnHitEffects(
   }
 }
 
-function tryResolveSleep(actor: BattleCombatantState, events: TurnEvent[]) {
-  if (actor.statusCondition !== "sleep") {
-    return false;
+function resolveStartOfTurnSleep(state: BattleState, events: TurnEvent[]) {
+  const asleepThisTurn = new Set<string>();
+
+  for (const actorId of [...getActiveIds(state, "ally"), ...getActiveIds(state, "enemy")]) {
+    const actor = state.combatants[actorId];
+    if (!actor || actor.statusCondition !== "sleep") {
+      continue;
+    }
+
+    if (actor.sleepTurns <= 1) {
+      actor.statusCondition = "none";
+      actor.sleepTurns = 0;
+      events.push({ actorId: actor.id, text: `${actor.pokemon.name} woke up.` });
+      continue;
+    }
+
+    actor.sleepTurns -= 1;
+    asleepThisTurn.add(actor.id);
   }
 
-  if (actor.sleepTurns <= 1) {
-    actor.statusCondition = "none";
-    actor.sleepTurns = 0;
-    events.push({ actorId: actor.id, text: `${actor.pokemon.name} woke up.` });
-    return false;
-  }
-
-  actor.sleepTurns -= 1;
-  events.push({ actorId: actor.id, text: `${actor.pokemon.name} is asleep and cannot move.` });
-  return true;
+  return asleepThisTurn;
 }
 
 type TurnResolutionOptions = {
@@ -1620,6 +1679,7 @@ function executeMove(
   damageMode: DamageRollMode,
   resolutionOptions: TurnResolutionOptions,
   actedIds: Set<string>,
+  asleepThisTurn: Set<string>,
 ) {
   const actor = state.combatants[action.actorId];
   const move = getMoveOption(state, action.actorId, action.moveId);
@@ -1629,7 +1689,8 @@ function executeMove(
     return;
   }
 
-  if (tryResolveSleep(actor, events)) {
+  if (asleepThisTurn.has(actor.id)) {
+    events.push({ actorId: actor.id, text: `${actor.pokemon.name} is asleep and cannot move.` });
     return;
   }
 
@@ -1807,7 +1868,7 @@ function executeMove(
         applyStageDelta(target, move.effectData.targetStages);
         appliedAnything = true;
       }
-      if (move.effectData?.statusCondition && applyStatusCondition(state, target, move.effectData.statusCondition)) {
+      if (move.effectData?.statusCondition && applyStatusCondition(state, target, move.effectData.statusCondition, move)) {
         appliedAnything = true;
         events.push({ actorId: actor.id, targetId, text: `${target.pokemon.name} is now ${move.effectData.statusCondition}.` });
       }
@@ -1919,6 +1980,16 @@ function executeMove(
   }
 }
 
+function chooseReplacementId(state: BattleState, side: BattleSide) {
+  const sideState = state.sides[side];
+
+  switch (state.policies.replacement) {
+    case "firstAvailable":
+    default:
+      return sideState.benchIds.find((candidateId) => isCombatantAlive(state, candidateId)) ?? null;
+  }
+}
+
 function replaceFaintedActives(state: BattleState, side: BattleSide, events: TurnEvent[]) {
   const sideState = state.sides[side];
 
@@ -1929,7 +2000,7 @@ function replaceFaintedActives(state: BattleState, side: BattleSide, events: Tur
     }
 
     sideState.activeIds[index] = null;
-    const replacementId = sideState.benchIds.find((candidateId) => isCombatantAlive(state, candidateId)) ?? null;
+    const replacementId = chooseReplacementId(state, side);
     if (!replacementId) {
       continue;
     }
@@ -2001,6 +2072,7 @@ export function resolveTurn(
   const state = cloneBattleState(initialState);
   const events: TurnEvent[] = [];
   const startingActiveIds = new Set([...getActiveIds(state, "ally"), ...getActiveIds(state, "enemy")]);
+  const asleepThisTurn = resolveStartOfTurnSleep(state, events);
   const allActions = [...(allyPlan?.actions ?? []), ...(enemyPlan?.actions ?? [])];
 
   for (const action of allActions) {
@@ -2024,7 +2096,7 @@ export function resolveTurn(
       continue;
     }
 
-    executeMove(state, action.action, events, damageMode, resolutionOptions, actedIds);
+    executeMove(state, action.action, events, damageMode, resolutionOptions, actedIds, asleepThisTurn);
     actedIds.add(action.actorId);
   }
 

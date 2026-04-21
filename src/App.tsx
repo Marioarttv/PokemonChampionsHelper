@@ -91,6 +91,12 @@ import {
 } from "./lib/engine";
 import { buildBattleEngineInputSignature } from "./lib/engine/signature";
 import {
+  buildAllyBattleStateMember,
+  buildEnemyBattleStateMember,
+  buildPreviewEnemyBattleStateMember,
+  resolveStoredOrPresetMoveset,
+} from "./lib/engine/adapters/fromUiState";
+import {
   calculateMatchupEloScore,
   compareMatchupEloSummaries,
   summarizeMatchupElo,
@@ -105,6 +111,7 @@ import {
   deleteSavedTeam,
   listSavedTeams,
   saveTeam,
+  type PersistedKnownMove,
   type PersistedOpenerSelection,
   type PersistedSavedAttack,
   type PersistedTeam,
@@ -170,6 +177,7 @@ type OpponentRosterEntry = {
   query: string;
   pokemon: PokemonRecord | null;
   savedAttacks: PersistedSavedAttack[];
+  knownMoves: PersistedKnownMove[];
   presetMoveNames: string[];
   abilityName: string | null;
   itemName: string | null;
@@ -181,6 +189,7 @@ type LoadedOpponentEntry = Omit<OpponentRosterEntry, "pokemon"> & {
 type StoredMovesetSource = "custom" | "preset" | "none";
 type ResolvedSpeciesMoveset = {
   savedAttacks: PersistedSavedAttack[];
+  knownMoves: PersistedKnownMove[];
   allMoveNames: string[];
   abilityName: string | null;
   itemName: string | null;
@@ -546,6 +555,87 @@ function sanitizeSavedAttacks(
     })
     .filter((attack): attack is PersistedSavedAttack => attack !== null)
     .slice(0, limit);
+}
+
+function sanitizeKnownMovesToSavedAttacks(
+  knownMoves: PersistedKnownMove[] | null | undefined,
+  pokemon?: PokemonRecord | null,
+  limit = MAX_ATTACK_TYPES_PER_SLOT,
+) {
+  if (!Array.isArray(knownMoves)) {
+    return [];
+  }
+
+  return sanitizeSavedAttacks(
+    knownMoves
+      .filter((move) => Boolean(move.type) && move.category !== "status")
+      .map((move) => ({
+        id: move.id,
+        label: move.label,
+        type: move.type!,
+        basePower: move.basePower,
+        category: move.category === "status" ? undefined : move.category,
+        isSpreadMove: move.isSpreadMove,
+      })),
+    pokemon,
+    limit,
+  );
+}
+
+function buildPersistedKnownMovesFromDraftAttacks(
+  draftAttacks: PersistedSavedAttack[] | null | undefined,
+  moveByKey: ReadonlyMap<string, MoveRecord>,
+  fallbackKnownMoves: PersistedKnownMove[] = [],
+  limit = MAX_ATTACK_TYPES_PER_SLOT,
+) {
+  const byKey = new Map<string, PersistedKnownMove>();
+
+  const addMove = (move: PersistedKnownMove) => {
+    const moveName = (move.name?.trim() || move.label.trim());
+    const key = normalizeTextKey(moveName);
+    if (!key || byKey.has(key)) {
+      return;
+    }
+    byKey.set(key, {
+      ...move,
+      name: move.name ?? moveName,
+      label: move.label || moveName,
+    });
+  };
+
+  for (const move of fallbackKnownMoves) {
+    if (move.category === "status") {
+      addMove(move);
+    }
+  }
+
+  for (const attack of draftAttacks ?? []) {
+    const moveName = attack.label.trim();
+    if (!moveName) {
+      continue;
+    }
+
+    const matchedMove = getMoveRecordByName(moveName, moveByKey);
+    const matchedType = matchedMove ? getMovePokemonType(matchedMove) : null;
+
+    addMove({
+      id: attack.id,
+      name: matchedMove?.name ?? attack.label,
+      label: matchedMove?.name ?? attack.label,
+      type: matchedType ?? attack.type,
+      basePower:
+        matchedMove && matchedMove.basePower > 0
+          ? matchedMove.basePower
+          : attack.basePower,
+      category:
+        matchedMove
+          ? (matchedMove.category.toLowerCase() as PersistedKnownMove["category"])
+          : attack.category,
+      isSpreadMove: matchedMove ? isSpreadTarget(matchedMove.target) : attack.isSpreadMove,
+    });
+  }
+
+  return [...byKey.values()].slice(0, limit);
 }
 
 function buildLegacySavedAttacks(slot: PersistedTeamSlot): PersistedSavedAttack[] {
@@ -2203,8 +2293,8 @@ function getStoredOrPresetSavedAttacks(
   const inheritedSpeciesMoveset = inheritedMovesetKey ? speciesMovesetByKey.get(inheritedMovesetKey) ?? null : null;
   const speciesMoveset = directSpeciesMoveset ?? inheritedSpeciesMoveset;
   const preset = getOpponentPreset(pokemon);
-  const customSavedAttacks = speciesMoveset?.savedAttacks?.length
-    ? sanitizeSavedAttacks(speciesMoveset.savedAttacks, pokemon, limit)
+  const customSavedAttacks = speciesMoveset?.knownMoves?.length
+    ? sanitizeKnownMovesToSavedAttacks(speciesMoveset.knownMoves, pokemon, limit)
     : [];
   const presetSavedAttacks = getOpponentPresetSavedAttacks(pokemon, moveByKey).slice(0, limit);
   const directCustomAbilityName = getResolvedFieldValue(directSpeciesMoveset?.abilityName);
@@ -2217,6 +2307,7 @@ function getStoredOrPresetSavedAttacks(
 
   return {
     savedAttacks: customSavedAttacks.length > 0 ? customSavedAttacks : presetSavedAttacks,
+    knownMoves: [],
     allMoveNames:
       customSavedAttacks.length > 0
         ? customSavedAttacks.map((attack) => getAttackLabel(attack))
@@ -4862,6 +4953,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             query,
             pokemon: null,
             savedAttacks: [],
+            knownMoves: [],
             presetMoveNames: [],
             abilityName: null,
             itemName: null,
@@ -4872,14 +4964,33 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         const pokemon =
           teamBuilderPokemonByKey.get(trimmed.toLowerCase()) ?? teamBuilderPokemonByKey.get(trimmed) ?? null;
         const storedMoves = pokemon
-          ? getStoredOrPresetSavedAttacks(pokemon, speciesMovesetByKey, moveByKey, MAX_SPECIES_MOVESET_SIZE)
-          : { savedAttacks: [], allMoveNames: [], abilityName: null, itemName: null, movesetSource: "none" as const };
+          ? resolveStoredOrPresetMoveset({
+              pokemon,
+              speciesMovesetByKey,
+              moveByKey,
+              limit: MAX_SPECIES_MOVESET_SIZE,
+              normalizePokemonNameKey,
+              getResolvedPresetAbilityName,
+              isChampionsMegaEntry,
+              getInheritedMovesetKey,
+              sanitizeSavedAttacks,
+              sanitizeKnownMovesToSavedAttacks,
+            })
+          : {
+              savedAttacks: [],
+              knownMoves: [],
+              allMoveNames: [],
+              abilityName: null,
+              itemName: null,
+              movesetSource: "none" as const,
+            };
 
         return {
           slotIndex,
           query,
           pokemon,
           savedAttacks: storedMoves.savedAttacks,
+          knownMoves: storedMoves.knownMoves,
           presetMoveNames: storedMoves.allMoveNames,
           abilityName: storedMoves.abilityName,
           itemName: storedMoves.itemName,
@@ -5520,6 +5631,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             query: string;
             pokemon: PokemonRecord;
             savedAttacks: PersistedSavedAttack[];
+            knownMoves: PersistedKnownMove[];
             presetMoveNames: string[];
             abilityName: string | null;
             itemName: string | null;
@@ -5947,42 +6059,30 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           return [];
         }
 
-        const resolvedMoveset = getStoredOrPresetSavedAttacks(
-          slot.pokemon,
+        const resolvedMoveset = resolveStoredOrPresetMoveset({
+          pokemon: slot.pokemon,
           speciesMovesetByKey,
           moveByKey,
-          MAX_SPECIES_MOVESET_SIZE,
-        );
+          limit: MAX_SPECIES_MOVESET_SIZE,
+          normalizePokemonNameKey,
+          getResolvedPresetAbilityName,
+          isChampionsMegaEntry,
+          getInheritedMovesetKey,
+          sanitizeSavedAttacks,
+          sanitizeKnownMovesToSavedAttacks,
+        });
         const runtime = getBattleSimulatorMemberState("ally", slotIndex, slot.pokemon.id);
-        const maxHp = getLevel50HpValue(slot.pokemon.baseStats.hp);
 
         return [
-          {
-            id: `ally-${slotIndex}`,
-            label: `Slot ${slotIndex + 1}`,
+          buildAllyBattleStateMember({
+            slotIndex,
             pokemon: slot.pokemon,
-            teamIndex: slotIndex,
-            currentHp: getLevel50CurrentHpFromPercent(maxHp, runtime.hpPercent),
-            abilityName: resolvedMoveset.abilityName,
-            itemName: resolvedMoveset.itemName,
-            savedAttacks:
-              slot.savedAttacks.length > 0
-                ? slot.savedAttacks
-                : resolvedMoveset.savedAttacks.length > 0
-                  ? resolvedMoveset.savedAttacks
-                  : createStabProxySavedAttacks(slot.pokemon),
-            moveNames: resolvedMoveset.allMoveNames,
-            inferredMoveNames: [],
-            knowledge: "known",
-            stages: {
-              attack: runtime.attackStage,
-              defense: runtime.defenseStage,
-              speed: runtime.speedStage,
-            },
-            statusCondition: runtime.statusCondition,
-            sleepTurns: runtime.statusCondition === "sleep" ? runtime.sleepTurns : 0,
+            slotSavedAttacks: slot.savedAttacks,
+            resolvedMoveset,
+            moveByKey,
+            runtime,
             isActive: doublesAllySelection.includes(slotIndex),
-          } satisfies BattleStateMemberInput,
+          }),
         ];
       }),
     [battleSimulatorState, doublesAllySelection, moveByKey, speciesMovesetByKey, team],
@@ -5991,39 +6091,21 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     () =>
       scoutingOpponentEntries.map((entry) => {
         const runtime = getBattleSimulatorMemberState("enemy", entry.slotIndex, entry.pokemon.id);
-        return {
-          id: `enemy-${entry.slotIndex}`,
-          label: `Enemy ${entry.slotIndex + 1}`,
+        return buildEnemyBattleStateMember({
+          slotIndex: entry.slotIndex,
           pokemon: entry.pokemon,
-          teamIndex: entry.slotIndex,
-          currentHpPercent: runtime.hpPercent,
-          abilityName: entry.abilityName,
-          itemName: entry.itemName,
-          savedAttacks:
-            entry.savedAttacks.length > 0 ? entry.savedAttacks : createStabProxySavedAttacks(entry.pokemon),
-          moveNames: entry.presetMoveNames,
-          inferredMoveNames: getInferredEngineMoveNames({
-            pokemon: entry.pokemon,
-            savedAttacks: entry.savedAttacks,
-            presetMoveNames: entry.presetMoveNames,
-            moveByKey,
+          resolvedMoveset: {
+            savedAttacks: entry.savedAttacks.length > 0 ? entry.savedAttacks : createStabProxySavedAttacks(entry.pokemon),
+            knownMoves: entry.knownMoves,
+            allMoveNames: entry.presetMoveNames,
+            abilityName: entry.abilityName,
+            itemName: entry.itemName,
             movesetSource: entry.movesetSource,
-          }),
-          knowledge:
-            entry.movesetSource === "custom"
-              ? "known"
-              : entry.movesetSource === "preset"
-                ? "partial"
-                : "unknown",
-          stages: {
-            attack: runtime.attackStage,
-            defense: runtime.defenseStage,
-            speed: runtime.speedStage,
           },
-          statusCondition: runtime.statusCondition,
-          sleepTurns: runtime.statusCondition === "sleep" ? runtime.sleepTurns : 0,
+          moveByKey,
+          runtime,
           isActive: doublesEnemySelection.includes(entry.slotIndex),
-        } satisfies BattleStateMemberInput;
+        });
       }),
     [battleSimulatorState, doublesEnemySelection, moveByKey, scoutingOpponentEntries],
   );
@@ -6105,34 +6187,20 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         wasSwitchedInThisTurn: false,
       })),
       enemy: analyzedOpponentEntries.map((entry) => {
-        return {
-          id: `preview-enemy-${entry.slotIndex}`,
-          label: `Enemy ${entry.slotIndex + 1}`,
+        return buildPreviewEnemyBattleStateMember({
+          slotIndex: entry.slotIndex,
           pokemon: entry.pokemon,
-          teamIndex: entry.slotIndex,
-          currentHpPercent: 100,
-          abilityName: entry.abilityName,
-          itemName: entry.itemName,
-          savedAttacks:
-            entry.savedAttacks.length > 0 ? entry.savedAttacks : createStabProxySavedAttacks(entry.pokemon),
-          moveNames: entry.presetMoveNames,
-          inferredMoveNames: getInferredEngineMoveNames({
-            pokemon: entry.pokemon,
-            savedAttacks: entry.savedAttacks,
-            presetMoveNames: entry.presetMoveNames,
-            moveByKey,
+          resolvedMoveset: {
+            savedAttacks: entry.savedAttacks.length > 0 ? entry.savedAttacks : createStabProxySavedAttacks(entry.pokemon),
+            knownMoves: entry.knownMoves,
+            allMoveNames: entry.presetMoveNames,
+            abilityName: entry.abilityName,
+            itemName: entry.itemName,
             movesetSource: entry.movesetSource,
-          }),
-          knowledge:
-            entry.movesetSource === "custom"
-              ? "known"
-              : entry.movesetSource === "preset"
-                ? "partial"
-                : "unknown",
-          statusCondition: "none",
-          sleepTurns: 0,
+          },
+          moveByKey,
           isActive: entry.slotIndex < 2,
-        } satisfies BattleStateMemberInput;
+        });
       }),
       moveByKey,
       weather: damageWeather,
@@ -9336,7 +9404,7 @@ function MovesetDatabaseView() {
     selectedSpeciesKey !== null ? speciesMovesetByKey.get(selectedSpeciesKey) ?? null : null;
   const selectedHasCustomOverride = Boolean(
     selectedCustomMoveset &&
-      (selectedCustomMoveset.savedAttacks.length > 0 || selectedCustomMoveset.abilityName || selectedCustomMoveset.itemName),
+      ((selectedCustomMoveset.knownMoves?.length ?? 0) > 0 || selectedCustomMoveset.abilityName || selectedCustomMoveset.itemName),
   );
   const selectedPreset = useMemo(() => (selectedPokemon ? getOpponentPreset(selectedPokemon) : null), [selectedPokemon]);
   const selectedPresetResolvedAbilityName = useMemo(
@@ -9360,8 +9428,19 @@ function MovesetDatabaseView() {
   const selectedResolvedMoveset = useMemo(
     () =>
       selectedPokemon
-        ? getStoredOrPresetSavedAttacks(selectedPokemon, speciesMovesetByKey, moveByKey, MAX_SPECIES_MOVESET_SIZE)
-        : { savedAttacks: [], allMoveNames: [], abilityName: null, itemName: null, movesetSource: "none" as const },
+        ? resolveStoredOrPresetMoveset({
+            pokemon: selectedPokemon,
+            speciesMovesetByKey,
+            moveByKey,
+            limit: MAX_SPECIES_MOVESET_SIZE,
+            normalizePokemonNameKey,
+            getResolvedPresetAbilityName,
+            isChampionsMegaEntry,
+            getInheritedMovesetKey,
+            sanitizeSavedAttacks,
+            sanitizeKnownMovesToSavedAttacks,
+          })
+        : { savedAttacks: [], knownMoves: [], allMoveNames: [], abilityName: null, itemName: null, movesetSource: "none" as const },
     [moveByKey, selectedPokemon, speciesMovesetByKey],
   );
   const selectedPresetMoveNames = useMemo(
@@ -9406,8 +9485,8 @@ function MovesetDatabaseView() {
     }
 
     const nextDraft =
-      selectedCustomMoveset?.savedAttacks?.length
-        ? sanitizeSavedAttacks(selectedCustomMoveset.savedAttacks, selectedPokemon, MAX_SPECIES_MOVESET_SIZE)
+      selectedCustomMoveset?.knownMoves?.length
+        ? sanitizeKnownMovesToSavedAttacks(selectedCustomMoveset.knownMoves, selectedPokemon, MAX_SPECIES_MOVESET_SIZE)
         : selectedResolvedMoveset.savedAttacks;
 
     setDraftSavedAttacks(nextDraft);
@@ -9464,10 +9543,16 @@ function MovesetDatabaseView() {
 
     try {
       setStorageError(null);
+      const knownMoves = buildPersistedKnownMovesFromDraftAttacks(
+        nextAttacks,
+        moveByKey,
+        selectedResolvedMoveset.knownMoves,
+        MAX_SPECIES_MOVESET_SIZE,
+      );
       const saved = await saveSpeciesMoveset(
         getPokemonMovesetKey(selectedPokemon),
         selectedPokemon.name,
-        sanitizeSavedAttacks(nextAttacks, selectedPokemon, MAX_SPECIES_MOVESET_SIZE),
+        knownMoves,
         {
           abilityName: draftAbilityName.trim() || undefined,
           itemName: draftItemName.trim() || undefined,
@@ -9553,7 +9638,7 @@ function MovesetDatabaseView() {
                   const customMoveset = speciesMovesetByKey.get(speciesKey) ?? null;
                   const hasCustomOverride = Boolean(
                     customMoveset &&
-                      (customMoveset.savedAttacks.length > 0 || customMoveset.abilityName || customMoveset.itemName),
+                      ((customMoveset.knownMoves?.length ?? 0) > 0 || customMoveset.abilityName || customMoveset.itemName),
                   );
                   const presetMoves = getOpponentPresetMoveNames(pokemon);
                   const isSelected = selectedSpeciesKey === speciesKey;
@@ -9571,8 +9656,8 @@ function MovesetDatabaseView() {
                           <strong>{pokemon.name}</strong>
                           <p>
                             {hasCustomOverride
-                              ? customMoveset?.savedAttacks?.length
-                                ? `${customMoveset.savedAttacks.length} custom move${customMoveset.savedAttacks.length === 1 ? "" : "s"}`
+                              ? (customMoveset?.knownMoves?.length ?? 0) > 0
+                                ? `${customMoveset?.knownMoves?.length ?? 0} custom move${(customMoveset?.knownMoves?.length ?? 0) === 1 ? "" : "s"}`
                                 : "Custom ability/item override"
                               : presetMoves.length > 0
                                 ? `${presetMoves.length} preset move${presetMoves.length === 1 ? "" : "s"}`
@@ -9679,8 +9764,8 @@ function MovesetDatabaseView() {
                   <div className="attack-editor-topbar">
                     <p className="selector-note">
                       The imported movepool below includes status and support moves with descriptions. Custom overrides
-                      here still target the damaging moves used by Team Builder and the rough damage tools, plus any
-                      ability or item override you want to apply.
+                      here can override damaging moves for Team Builder / rough damage tools, while typed support move
+                      names such as Protect or Tailwind are still preserved in the stored enemy moveset.
                     </p>
                     <button
                       type="button"

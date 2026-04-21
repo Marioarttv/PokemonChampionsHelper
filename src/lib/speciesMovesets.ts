@@ -1,9 +1,10 @@
-import type { PersistedSavedAttack } from "./savedTeams";
+import type { PersistedKnownMove } from "./savedTeams";
 
 export type PersistedSpeciesMoveset = {
   speciesKey: string;
   speciesName: string;
-  savedAttacks: PersistedSavedAttack[];
+  knownMoves: PersistedKnownMove[];
+  savedAttacks?: PersistedKnownMove[];
   abilityName?: string;
   itemName?: string;
   updatedAt: string;
@@ -38,7 +39,12 @@ function readAllMovesets() {
       {
         speciesKey: value?.speciesKey ?? key,
         speciesName: value?.speciesName ?? key,
-        savedAttacks: Array.isArray(value?.savedAttacks) ? value.savedAttacks : [],
+        knownMoves: Array.isArray(value?.knownMoves)
+          ? value.knownMoves
+          : Array.isArray(value?.savedAttacks)
+            ? value.savedAttacks
+            : [],
+        savedAttacks: Array.isArray(value?.savedAttacks) ? value.savedAttacks : undefined,
         abilityName: typeof value?.abilityName === "string" ? value.abilityName : undefined,
         itemName: typeof value?.itemName === "string" ? value.itemName : undefined,
         updatedAt: typeof value?.updatedAt === "string" ? value.updatedAt : new Date(0).toISOString(),
@@ -60,7 +66,7 @@ export async function listSpeciesMovesets() {
 export async function saveSpeciesMoveset(
   speciesKey: string,
   speciesName: string,
-  savedAttacks: PersistedSavedAttack[],
+  knownMoves: PersistedKnownMove[],
   options?: {
     abilityName?: string;
     itemName?: string;
@@ -70,7 +76,8 @@ export async function saveSpeciesMoveset(
   const persisted: PersistedSpeciesMoveset = {
     speciesKey,
     speciesName,
-    savedAttacks,
+    knownMoves,
+    savedAttacks: knownMoves,
     abilityName: options?.abilityName,
     itemName: options?.itemName,
     updatedAt: new Date().toISOString(),

@@ -14,6 +14,7 @@ import {
   type SearchBranchModel,
   type SearchDiagnostics,
 } from "./engine";
+import { getMoveRoleTags } from "./engine/moveRegistry";
 
 type PreviewRoleTag =
   | "physical"
@@ -409,85 +410,8 @@ function getRoleTags(combatant: BattleCombatantState) {
   }
 
   for (const move of combatant.knownMoves) {
-    if (move.category === "physical") {
-      tags.add("physical");
-    }
-    if (move.category === "special") {
-      tags.add("special");
-    }
-    if (move.priority > 0 && move.category !== null) {
-      tags.add("priority");
-    }
-    if (move.isSpreadMove && move.category !== null) {
-      tags.add("spread");
-    }
-    if (move.effectKind === "tailwind") {
-      tags.add("tailwind");
-      tags.add("speedControl");
-    }
-    if (move.effectKind === "trickRoom") {
-      tags.add("trickRoom");
-      tags.add("speedControl");
-    }
-    if (move.effectKind === "redirection") {
-      tags.add("redirection");
-    }
-    if (move.effectKind === "guard" && move.effectData?.guard === "wideGuard") {
-      tags.add("wideGuard");
-    }
-    if (move.effectKind === "guard" && move.effectData?.guard === "quickGuard") {
-      tags.add("quickGuard");
-    }
-    if (move.effectKind === "fakeOut" || normalizeKey(move.name) === "fakeout") {
-      tags.add("fakeOut");
-    }
-    if (move.effectKind === "protect") {
-      tags.add("protect");
-    }
-    if (move.effectKind === "boost") {
-      tags.add("setup");
-    }
-    if (move.effectKind === "heal") {
-      tags.add("healing");
-    }
-    if (move.effectKind === "taunt") {
-      tags.add("taunt");
-    }
-    if (move.effectKind === "encore") {
-      tags.add("encore");
-    }
-    if (move.effectKind === "disable") {
-      tags.add("disable");
-    }
-    if (move.effectKind === "helpingHand") {
-      tags.add("helpingHand");
-    }
-    if (move.effectKind === "status") {
-      tags.add("status");
-      if ((move.effectData?.targetStages?.speed ?? 0) < 0 || move.effectData?.statusCondition === "paralysis") {
-        tags.add("speedControl");
-        tags.add("statDropPressure");
-      }
-    }
-    if (move.effectKind === "damage" && move.effectData) {
-      if ((move.effectData.targetStages?.speed ?? 0) < 0) {
-        tags.add("speedControl");
-        tags.add("statDropPressure");
-      }
-      if ((move.effectData.targetStages?.attack ?? 0) < 0) {
-        tags.add("statDropPressure");
-      }
-    }
-
-    const moveKey = normalizeKey(move.name);
-    if (moveKey === "raindance") {
-      tags.add("weatherRain");
-    } else if (moveKey === "sunnyday") {
-      tags.add("weatherSun");
-    } else if (moveKey === "sandstorm") {
-      tags.add("weatherSand");
-    } else if (moveKey === "snowscape" || moveKey === "hail") {
-      tags.add("weatherSnow");
+    for (const roleTag of getMoveRoleTags(move)) {
+      tags.add(roleTag as PreviewRoleTag);
     }
   }
 

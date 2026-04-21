@@ -2,10 +2,22 @@ import type { PokemonType } from "../data/typeChart";
 
 export type PersistedAttackTypeDefaults = Partial<Record<PokemonType, number>>;
 export type PersistedAttackTypeSpreadDefaults = Partial<Record<PokemonType, boolean>>;
-export type PersistedAttackCategory = "physical" | "special";
+export type PersistedMoveCategory = "physical" | "special" | "status";
+export type PersistedAttackCategory = Extract<PersistedMoveCategory, "physical" | "special">;
+
+export type PersistedKnownMove = {
+  id: string;
+  name?: string;
+  label: string;
+  type?: PokemonType;
+  basePower?: number;
+  category?: PersistedMoveCategory;
+  isSpreadMove?: boolean;
+};
+
 export type PersistedSavedAttack = {
   id: string;
-  label?: string;
+  label: string;
   type: PokemonType;
   basePower?: number;
   category?: PersistedAttackCategory;
@@ -16,6 +28,7 @@ export type PersistedTeamSlot = {
   query: string;
   pokemonId: string | null;
   savedAttacks?: PersistedSavedAttack[];
+  knownMoves?: PersistedKnownMove[];
   attackTypes?: PokemonType[];
   attackTypeDefaults?: PersistedAttackTypeDefaults;
   attackTypeSpreadDefaults?: PersistedAttackTypeSpreadDefaults;

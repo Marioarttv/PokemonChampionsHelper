@@ -4,7 +4,7 @@ import type { DamageAbilityId } from "../damageAbilities";
 import type { DamageCategory, DamageTerrain, DamageWeather } from "../damage";
 import type { DamageItemId } from "../damageItems";
 import type { PokemonRecord } from "../pokemonDb";
-import type { PersistedSavedAttack } from "../savedTeams";
+import type { PersistedKnownMove, PersistedSavedAttack } from "../savedTeams";
 
 export type BattleSide = "ally" | "enemy";
 export type DamageRollMode = "min" | "average" | "max";
@@ -13,6 +13,7 @@ export type BattleScreenKind = "reflect" | "lightScreen" | "auroraVeil";
 export type BattleGuardKind = "quickGuard" | "wideGuard";
 export type BattleStageDelta = Partial<Record<keyof BattleStatStages, number>>;
 export type KnowledgeLevel = "known" | "partial" | "unknown";
+export type ReplacementPolicyId = "firstAvailable";
 export type MoveEffectKind =
   | "damage"
   | "fakeOut"
@@ -35,10 +36,20 @@ export type MoveEffectKind =
 export type MoveTargetKind =
   | "singleOpponent"
   | "allOpponents"
+  | "allAdjacent"
   | "singleAlly"
   | "allAllies"
   | "self"
   | "field";
+
+export type CandidateMoveSource = "observed" | "preset" | "inferred";
+
+export type CandidateMove = {
+  name: string;
+  source: CandidateMoveSource;
+  weight: number;
+  confidence: "known" | "candidate";
+};
 
 export type BattleMoveEffectData = {
   selfStages?: BattleStageDelta;
@@ -59,7 +70,10 @@ export type BattleMoveEffectData = {
   breaksGuards?: boolean;
   secondaryChance?: number;
   flinchChance?: number;
+  powderMove?: boolean;
 };
+
+export type BattleMoveSource = "savedAttack" | "presetMove" | "assumed" | "inferred" | "candidate";
 
 export type BattleMoveOption = {
   id: string;
@@ -68,8 +82,8 @@ export type BattleMoveOption = {
   targetKind: MoveTargetKind;
   priority: number;
   accuracy: number;
-  source: "savedAttack" | "presetMove" | "assumed" | "inferred";
-  savedAttack: PersistedSavedAttack | null;
+  source: BattleMoveSource;
+  savedAttack: PersistedKnownMove | null;
   moveRecord: MoveRecord | null;
   type: PokemonType | null;
   basePower: number | null;
@@ -77,11 +91,15 @@ export type BattleMoveOption = {
   isSpreadMove: boolean;
   shortDesc: string;
   effectData: BattleMoveEffectData | null;
+  candidateWeight: number;
+  candidateSource: CandidateMoveSource | null;
 };
 
 export type BattleStatStages = {
   attack: number;
   defense: number;
+  specialAttack: number;
+  specialDefense: number;
   speed: number;
 };
 
@@ -108,6 +126,8 @@ export type BattleCombatantState = {
   disabledMoveId: string | null;
   helpingHandTurns: number;
   knownMoves: BattleMoveOption[];
+  candidateMoves: BattleMoveOption[];
+  knowledge: KnowledgeLevel;
   lastMoveId: string | null;
   isProtected: boolean;
   isFlinched: boolean;
@@ -139,6 +159,9 @@ export type BattleState = {
   combatants: Record<string, BattleCombatantState>;
   sides: Record<BattleSide, BattleSideState>;
   field: BattleFieldState;
+  policies: {
+    replacement: ReplacementPolicyId;
+  };
 };
 
 export type BattleAction =
@@ -211,8 +234,10 @@ export type BattleStateMemberInput = {
   abilityName?: string | null;
   itemName?: string | null;
   savedAttacks?: PersistedSavedAttack[];
+  knownMoves?: PersistedKnownMove[];
   moveNames?: string[];
   inferredMoveNames?: string[];
+  candidateMoves?: CandidateMove[];
   knowledge?: KnowledgeLevel;
   stages?: Partial<BattleStatStages>;
   statusCondition?: BattleStatusCondition;
@@ -242,7 +267,11 @@ export type CreateBattleStateInput = {
   trickRoom?: boolean;
   attackStage?: number;
   defenseStage?: number;
+  specialAttackStage?: number;
+  specialDefenseStage?: number;
+  speedStage?: number;
   universalProtect?: boolean;
+  replacementPolicy?: ReplacementPolicyId;
   allySide?: Partial<BattleSideState>;
   enemySide?: Partial<BattleSideState>;
   fieldState?: Partial<BattleFieldState>;
@@ -255,6 +284,7 @@ export type SearchDiagnostics = {
   resolveTurnCalls: number;
   generatedJointPlans: number;
   planPairEvaluations: number;
+  enemyAssumptions: string[];
 };
 
 export type SearchOptions = {
@@ -262,8 +292,18 @@ export type SearchOptions = {
   maxJointPlansPerSide?: number;
   maxIndividualActionsPerActor?: number;
   branchModel?: SearchBranchModel;
-  damageModeWeights?: Array<{
-    mode: DamageRollMode;
-    weight: number;
-  }>;
+  branchPolicy?: BranchPolicy;
+};
+
+export type TurnBranch = {
+  label: string;
+  damageMode: DamageRollMode;
+  accuracyMode: "conservative" | "expected" | "optimistic";
+  secondaryMode: "off" | "expected" | "on";
+  weight: number;
+};
+
+export type BranchPolicy = {
+  key: string;
+  branches: TurnBranch[];
 };

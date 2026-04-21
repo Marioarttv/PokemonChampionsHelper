@@ -2,7 +2,7 @@ import { CHAMPIONS_META_MOVESETS_RAW } from "../data/championsMetaMovesetsRaw";
 import { getTypeFromLabel } from "../data/typeChart";
 import { isSpreadTarget, type MoveRecord } from "./battleData";
 import type { PokemonRecord } from "./pokemonDb";
-import type { PersistedAttackCategory, PersistedSavedAttack } from "./savedTeams";
+import type { PersistedKnownMove, PersistedSavedAttack } from "./savedTeams";
 
 export type OpponentPresetMeta = {
   title: string;
@@ -154,28 +154,42 @@ function getPresetMoveLookupKey(moveName: string) {
   return moveName.toLowerCase();
 }
 
+function buildPresetKnownMove(
+  _pokemon: PokemonRecord,
+  move: MoveRecord,
+  index: number,
+): PersistedKnownMove | null {
+  const type = getTypeFromLabel(move.type);
+
+  return {
+    id: `preset-${move.id}-${index}`,
+    name: move.name,
+    label: move.name,
+    type: type ?? undefined,
+    basePower: move.basePower > 0 ? move.basePower : undefined,
+    category: move.category.toLowerCase() as PersistedKnownMove["category"],
+    isSpreadMove: isSpreadTarget(move.target),
+  };
+}
+
 function buildPresetSavedAttack(
   pokemon: PokemonRecord,
   move: MoveRecord,
   index: number,
 ): PersistedSavedAttack | null {
-  if (move.category === "Status") {
-    return null;
-  }
+  const knownMove = buildPresetKnownMove(pokemon, move, index);
 
-  const type = getTypeFromLabel(move.type);
-
-  if (!type) {
+  if (!knownMove?.type || knownMove.category === "status") {
     return null;
   }
 
   return {
-    id: `preset-${pokemon.id}-${normalizeKey(move.name)}-${index}`,
-    label: move.name,
-    type,
-    basePower: move.basePower > 0 ? move.basePower : undefined,
-    category: move.category.toLowerCase() as PersistedAttackCategory,
-    isSpreadMove: isSpreadTarget(move.target),
+    id: knownMove.id,
+    label: knownMove.label,
+    type: knownMove.type,
+    basePower: knownMove.basePower,
+    category: knownMove.category,
+    isSpreadMove: knownMove.isSpreadMove,
   };
 }
 
@@ -228,4 +242,21 @@ export function getOpponentPresetSavedAttacks(
       return move ? buildPresetSavedAttack(pokemon, move, index) : null;
     })
     .filter((attack): attack is PersistedSavedAttack => attack !== null);
+}
+
+export function getOpponentPresetKnownMoves(
+  pokemon: PokemonRecord,
+  moveByKey: ReadonlyMap<string, MoveRecord>,
+) {
+  return getOpponentPresetMoveNames(pokemon)
+    .map((rawMoveName, index) => {
+      const moveName = resolvePresetMoveName(rawMoveName);
+      const move =
+        moveByKey.get(getPresetMoveLookupKey(moveName)) ??
+        moveByKey.get(normalizeKey(moveName)) ??
+        null;
+
+      return move ? buildPresetKnownMove(pokemon, move, index) : null;
+    })
+    .filter((attack): attack is PersistedKnownMove => attack !== null);
 }
