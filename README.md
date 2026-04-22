@@ -13,8 +13,11 @@ The app currently includes:
 - a rough damage calculator with weather, terrain, stages, abilities, and items
 - a 2v2 threat board for selected doubles leads
 - a search-based battle engine that recommends worst-case-safe doubles lines
+- a migration path toward:
+  - `src/lib/engine/` as the current approximate tactical engine
+  - `src/lib/sim/` as the new authoritative battle-kernel layer
 
-For the detailed engine progress log and roadmap, see [`docs/battle-engine.md`](docs/battle-engine.md).
+For the detailed engine progress log and roadmap, see [`docs/battle-engine.md`](docs/battle-engine.md) and [`docs/simulator-architecture.md`](docs/simulator-architecture.md).
 
 ## Stack
 
@@ -72,6 +75,14 @@ The current battle engine lives under `src/lib/engine/` and is already capable o
 - recommending a line based on worst-case enemy counterplay rather than raw damage alone
 
 The engine is still a tactical approximation, not a full cartridge-accurate simulator.
+
+The new authoritative simulator scaffold under `src/lib/sim/` currently provides:
+
+- deterministic seeded RNG
+- serializable battle/public/private state types
+- replay/event/patch structures
+- adapter boundaries for approximate and authoritative backends
+- explicit unsupported-mechanic markers instead of silent approximation on unimplemented authoritative turn resolution
 
 ## Near-Term Roadmap
 

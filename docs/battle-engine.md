@@ -24,6 +24,8 @@ The engine remains synchronous at its core for testability and determinism. The 
   Lightweight canonical state key for search caching.
 - `transposition.ts`
   Exact-value transposition table used by iterative deepening.
+- `../sim/`
+  Authoritative simulator scaffold: seeded RNG, public/private battle state, replay types, and adapter boundary.
 - `knowledge.ts`
   Produces enemy move candidates and normalized weights from preset/inferred knowledge.
 - `adapters/fromUiState.ts`
@@ -71,7 +73,8 @@ The engine remains synchronous at its core for testability and determinism. The 
 ### Likely
 
 - expected-value objective over enemy policy weights
-- enemy move beliefs and action heuristics combine into plan likelihood weights
+- move-set membership and current-board action priors are handled as separate signals
+- plan likelihood weights now combine move membership confidence, action priors derived from legal-action heuristics, and joint-plan heuristic score
 - still uses the same legal-action generation and branch model
 
 ### Hybrid
@@ -95,6 +98,11 @@ The search now uses:
 - move ordering:
   prior PV, heuristic action scores, and lightweight history reuse improve cutoff quality
 
+TT safety note:
+
+- the current key is only sound while hidden-information beliefs stay static during a search call
+- if future search work mutates beliefs in-tree, that belief state must also enter the TT key
+
 ## Branch Model Staging
 
 The existing turn-branch support remains intact:
@@ -109,7 +117,7 @@ Deep mode stages the search:
 2. keep only the strongest few ally plans
 3. re-search those plans with the full branch model
 
-This keeps the current engine structure intact instead of rewriting it into a different paradigm.
+The staging pass now computes enemy plans once per state instead of regenerating them per ally candidate.
 
 ## Hidden Information and Beliefs
 
@@ -120,7 +128,7 @@ Enemy move handling is now belief-aware.
 - treats known moves as certainty
 - includes candidate moves with normalized weights
 - supports top-`N` truncation
-- returns policy weights and confidence summaries usable by both evaluation and diagnostics
+- returns move-on-set belief weights and confidence summaries usable by both evaluation and diagnostics
 
 This belief helper is now used in:
 
@@ -134,6 +142,15 @@ This belief helper is now used in:
 - evaluator pressure, bench-quality, and tempo terms
 
 For fully known custom enemy sets, the behavior remains deterministic because there are no candidate moves to blend in.
+
+Search-specific note:
+
+- robust mode semantics are unchanged
+- likely/hybrid mode now distinguish:
+  - move membership confidence:
+    "is this move plausibly on the set?"
+  - action prior:
+    "how likely is this move to be clicked on this board right now?"
 
 ## Evaluator
 
@@ -220,6 +237,14 @@ Regression coverage in `src/lib/engine/__tests__/core.regression.test.ts` now in
 - belief-aware hidden-information denial
 - switching under immediate threat
 - deterministic deep-mode diagnostics shape
+
+Additional search regression coverage in `src/lib/engine/__tests__/search.regression.test.ts` now includes:
+
+- root states with no legal enemy plan
+- likely vs robust objective separation on hidden-information fixtures
+- hybrid score bounds
+- deep staged candidate filtering
+- transposition key/result stability
 
 Benchmarking:
 

@@ -9,8 +9,9 @@ import type {
 export type BelievedMove = {
   move: BattleMoveOption;
   certainty: number;
+  membershipWeight: number;
   policyWeight: number;
-  rawPolicyWeight: number;
+  rawMembershipWeight: number;
   inferred: boolean;
 };
 
@@ -34,8 +35,9 @@ export function getBelievedMoves(
     byMoveKey.set(normalizeMoveKey(move.name), {
       move,
       certainty: 1,
+      membershipWeight: 0,
       policyWeight: 0,
-      rawPolicyWeight: 1,
+      rawMembershipWeight: 1,
       inferred: false,
     });
   }
@@ -49,8 +51,9 @@ export function getBelievedMoves(
     byMoveKey.set(key, {
       move,
       certainty: clamp(move.candidateWeight, minimumCandidateWeight, 1),
+      membershipWeight: 0,
       policyWeight: 0,
-      rawPolicyWeight: clamp(move.candidateWeight, minimumCandidateWeight, 1),
+      rawMembershipWeight: clamp(move.candidateWeight, minimumCandidateWeight, 1),
       inferred: move.source === "inferred" || move.source === "candidate",
     });
   }
@@ -59,18 +62,20 @@ export function getBelievedMoves(
     if (left.certainty !== right.certainty) {
       return right.certainty - left.certainty;
     }
-    if (left.rawPolicyWeight !== right.rawPolicyWeight) {
-      return right.rawPolicyWeight - left.rawPolicyWeight;
+    if (left.rawMembershipWeight !== right.rawMembershipWeight) {
+      return right.rawMembershipWeight - left.rawMembershipWeight;
     }
     return left.move.name.localeCompare(right.move.name);
   });
 
   const truncated = typeof options.topN === "number" ? ordered.slice(0, options.topN) : ordered;
-  const totalWeight = truncated.reduce((sum, entry) => sum + entry.rawPolicyWeight, 0) || 1;
+  const totalWeight = truncated.reduce((sum, entry) => sum + entry.rawMembershipWeight, 0) || 1;
 
   return truncated.map((entry) => ({
     ...entry,
-    policyWeight: entry.rawPolicyWeight / totalWeight,
+    membershipWeight: entry.rawMembershipWeight / totalWeight,
+    // `policyWeight` remains the normalized move-on-set belief for existing consumers.
+    policyWeight: entry.rawMembershipWeight / totalWeight,
   }));
 }
 

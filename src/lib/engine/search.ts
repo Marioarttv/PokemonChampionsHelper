@@ -119,6 +119,11 @@ type SearchPlanEvaluation = SearchPlanScore & {
   predictedPv: SearchPvStep[];
 };
 
+type WeightedEnemyPlan = {
+  plan: JointActionPlan;
+  policyWeight: number;
+};
+
 class SearchAbortedError extends Error {
   constructor() {
     super("Search budget exhausted");
@@ -285,28 +290,79 @@ function planDependsOnInference(state: BattleState, plan: JointActionPlan | null
   return plan ? getMoveInferencePenalty(state, plan) > 0 : false;
 }
 
-function getEnemyPlanPolicyWeights(state: BattleState, enemyPlans: JointActionPlan[]) {
+function buildActionIdentity(plan: JointActionPlan["actions"][number]) {
+  const { action } = plan;
+  switch (action.type) {
+    case "move":
+      return `${action.actorId}::move::${action.moveId}::${action.targetId ?? ""}`;
+    case "switch":
+      return `${action.actorId}::switch::${action.switchInId}`;
+    case "pass":
+    default:
+      return `${action.actorId}::pass`;
+  }
+}
+
+function scoreToLikelihoodFactor(score: number) {
+  return Math.exp(Math.max(-3, Math.min(3, score / 90)));
+}
+
+function buildEnemyActionPriorLookup(enemyPlans: JointActionPlan[]) {
+  const rawActionWeightsByActor = new Map<string, Map<string, number>>();
+
+  for (const plan of enemyPlans) {
+    for (const entry of plan.actions) {
+      const actionKey = buildActionIdentity(entry);
+      const actorWeights = rawActionWeightsByActor.get(entry.actorId) ?? new Map<string, number>();
+      const nextWeight = Math.max(actorWeights.get(actionKey) ?? 0, scoreToLikelihoodFactor(entry.heuristicScore));
+      actorWeights.set(actionKey, nextWeight);
+      rawActionWeightsByActor.set(entry.actorId, actorWeights);
+    }
+  }
+
+  const priors = new Map<string, number>();
+  for (const [actorId, actionWeights] of rawActionWeightsByActor.entries()) {
+    const total = [...actionWeights.values()].reduce((sum, weight) => sum + weight, 0) || 1;
+    for (const [actionKey, weight] of actionWeights.entries()) {
+      priors.set(`${actorId}::${actionKey}`, weight / total);
+    }
+  }
+
+  return priors;
+}
+
+function getEnemyPlanPolicyWeights(state: BattleState, enemyPlans: JointActionPlan[]): WeightedEnemyPlan[] {
+  if (enemyPlans.length === 0) {
+    return [];
+  }
+
+  const actionPriorLookup = buildEnemyActionPriorLookup(enemyPlans);
+  const moveBeliefsByActor = new Map(
+    Object.values(state.combatants)
+      .filter((combatant) => combatant.side === "enemy")
+      .map((combatant) => [
+        combatant.id,
+        new Map(getBelievedMoves(combatant, { topN: 6 }).map((entry) => [entry.move.id, entry])),
+      ]),
+  );
+
   const rawWeights = enemyPlans.map((plan) => {
     const actorWeight = plan.actions.reduce((product, action) => {
       const resolvedAction = action.action;
-      if (resolvedAction.type === "switch") {
-        return product * 0.45;
-      }
-      if (resolvedAction.type === "pass") {
-        return product * 0.15;
+      const actionKey = `${action.actorId}::${buildActionIdentity(action)}`;
+      const actionPrior = actionPriorLookup.get(actionKey) ?? 0.05;
+
+      if (resolvedAction.type === "switch" || resolvedAction.type === "pass") {
+        return product * Math.max(0.02, actionPrior);
       }
 
-      const actor = state.combatants[action.actorId];
-      if (!actor) {
-        return product;
-      }
-
-      const belief = getBelievedMoves(actor, { topN: 6 }).find((entry) => entry.move.id === resolvedAction.moveId);
-      const beliefWeight = belief?.policyWeight ?? 0.05;
-      return product * Math.max(0.05, beliefWeight);
+      const actorBeliefs = moveBeliefsByActor.get(action.actorId);
+      const moveMembership = actorBeliefs?.get(resolvedAction.moveId)?.certainty ?? 0.05;
+      return product * Math.max(0.01, moveMembership * actionPrior);
     }, 1);
 
-    return Math.max(0.0001, actorWeight * Math.max(1, plan.heuristicScore + 120));
+    const planHeuristicFactor = scoreToLikelihoodFactor(plan.heuristicScore);
+    return Math.max(0.0001, actorWeight * planHeuristicFactor);
   });
 
   const total = rawWeights.reduce((sum, weight) => sum + weight, 0) || 1;
@@ -365,13 +421,17 @@ function selectDeepSearchCandidates(
     return plans;
   }
 
+  const stagedEnemyPlans = generateJointActionPlans(state, "enemy", {
+    maxIndividualActionsPerActor: Math.max(2, Math.min(context.maxIndividualActionsPerActor, 3)),
+    maxJointPlans: Math.max(2, Math.min(context.maxJointPlansPerSide, 4)),
+  });
+  if (stagedEnemyPlans.length === 0) {
+    return plans;
+  }
+
   const quickPolicy = context.orderingBranches;
+  const enemyWeights = getEnemyPlanPolicyWeights(state, stagedEnemyPlans);
   const scored = plans.map((plan) => {
-    const enemyPlans = generateJointActionPlans(state, "enemy", {
-      maxIndividualActionsPerActor: Math.max(2, Math.min(context.maxIndividualActionsPerActor, 3)),
-      maxJointPlans: Math.max(2, Math.min(context.maxJointPlansPerSide, 4)),
-    });
-    const enemyWeights = getEnemyPlanPolicyWeights(state, enemyPlans);
     let worstRobust = Number.POSITIVE_INFINITY;
     let likely = 0;
 
@@ -387,6 +447,11 @@ function selectDeepSearchCandidates(
       }
       worstRobust = Math.min(worstRobust, weightedScore);
       likely += weightedScore * enemyEntry.policyWeight;
+    }
+
+    if (!Number.isFinite(worstRobust)) {
+      worstRobust = evaluateBattleState(state);
+      likely = worstRobust;
     }
 
     return {
@@ -415,6 +480,9 @@ function buildTranspositionKey(
   extensionsRemaining: number,
   context: SearchContext,
 ) {
+  // The TT key only hashes public engine state plus static search context. This remains sound
+  // because hidden-information beliefs are treated as immutable during a single search call.
+  // If future search work mutates beliefs inside the tree, the belief state must also join this key.
   return [
     context.budget.searchMode,
     context.budget.objectiveMode,
@@ -657,6 +725,24 @@ function scoreRootPlans(
   context.diagnostics.generatedJointPlans += allyPlans.length + enemyPlans.length;
   if (allyPlans.length === 0) {
     return [];
+  }
+
+  if (enemyPlans.length === 0) {
+    const scalar = evaluateBattleState(state);
+    return orderPlans(allyPlans, "ally", 0, context).map((plan) => ({
+      plan,
+      score: scalar,
+      robustScore: scalar,
+      likelyScore: scalar,
+      hybridScore: scalar,
+      enemyBestResponse: null,
+      predictedEnemyResponse: null,
+      preview: null,
+      pv: [],
+      predictedPv: [],
+      enemyPolicyWeight: 0,
+      dependsOnInferredMoves: planDependsOnInference(state, plan),
+    }));
   }
 
   allyPlans = selectDeepSearchCandidates(state, orderPlans(allyPlans, "ally", 0, context), context);
