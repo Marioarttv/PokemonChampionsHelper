@@ -48,6 +48,18 @@ function dedupeCandidateMoves(candidateMoves: CandidateMove[]) {
   return [...byKey.values()];
 }
 
+function normalizeCandidateWeights(candidateMoves: CandidateMove[]) {
+  if (candidateMoves.length === 0) {
+    return [];
+  }
+
+  const total = candidateMoves.reduce((sum, candidate) => sum + Math.max(0.05, candidate.weight), 0) || 1;
+  return candidateMoves.map((candidate) => ({
+    ...candidate,
+    weight: Math.max(0.05, candidate.weight) / total,
+  }));
+}
+
 export function buildEnemyMoveKnowledge(input: BuildEnemyMoveKnowledgeInput): EnemyMoveKnowledge {
   const knownMoveNames = dedupeMoveNames(input.knownMoveNames);
   const knownMoveKeys = new Set(knownMoveNames.map((moveName) => normalizeMoveKey(moveName)));
@@ -85,7 +97,7 @@ export function buildEnemyMoveKnowledge(input: BuildEnemyMoveKnowledgeInput): En
       confidence: "candidate" as const,
     }));
 
-  const candidateMoves = dedupeCandidateMoves([...presetCandidates, ...inferredCandidates]);
+  const candidateMoves = normalizeCandidateWeights(dedupeCandidateMoves([...presetCandidates, ...inferredCandidates]));
 
   return {
     knowledge: input.movesetSource === "preset" ? "partial" : "unknown",

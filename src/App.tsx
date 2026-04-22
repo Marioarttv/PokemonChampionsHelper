@@ -97,10 +97,11 @@ import {
 } from "./lib/damageItems";
 import {
   createBattleState,
-  recommendBestPlan,
   type BattleStatusCondition,
   type BattleStateMemberInput,
+  type ObjectiveMode,
   type SearchPlanScore,
+  type SearchMode,
   type SearchRecommendation,
 } from "./lib/engine";
 import { buildBattleEngineInputSignature } from "./lib/engine/signature";
@@ -5211,7 +5212,13 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const [doublesRuntime, setDoublesRuntime] = useState<Record<string, DoublesMemberRuntime>>({});
   const [battleSimulatorState, setBattleSimulatorState] = useState<Record<string, BattleSimulatorMemberState>>({});
   const [battleEngineRecommendation, setBattleEngineRecommendation] = useState<SearchRecommendation | null>(null);
+  const [battleEngineSearchMode, setBattleEngineSearchMode] = useState<SearchMode>("balanced");
+  const [battleEngineObjectiveMode, setBattleEngineObjectiveMode] = useState<ObjectiveMode>("robust");
+  const [battleEngineSearching, setBattleEngineSearching] = useState(false);
+  const [battleEngineError, setBattleEngineError] = useState<string | null>(null);
   const [battleEngineAnalysisSignature, setBattleEngineAnalysisSignature] = useState("");
+  const battleEngineWorkerRef = useRef<Worker | null>(null);
+  const battleEngineSearchRequestIdRef = useRef(0);
 
   const getDoublesRuntime = (side: "ally" | "enemy", slotIndex: number): DoublesMemberRuntime =>
     doublesRuntime[`${side}-${slotIndex}`] ?? DEFAULT_DOUBLES_RUNTIME;
@@ -5272,6 +5279,10 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   };
 
   const resetBattleSimulatorState = () => {
+    battleEngineWorkerRef.current?.terminate();
+    battleEngineWorkerRef.current = null;
+    setBattleEngineSearching(false);
+    setBattleEngineError(null);
     setBattleSimulatorState({});
     resetDoublesTurn();
   };
@@ -6806,10 +6817,14 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         allyTailwind: doublesAllyTailwind,
         enemyTailwind: doublesEnemyTailwind,
         trickRoom: doublesTrickRoom,
+        searchMode: battleEngineSearchMode,
+        objectiveMode: battleEngineObjectiveMode,
       }),
     [
       battleEngineAllyMembers,
       battleEngineEnemyMembers,
+      battleEngineObjectiveMode,
+      battleEngineSearchMode,
       damageTerrain,
       damageWeather,
       doublesAllySelection,
@@ -6822,11 +6837,31 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const battleEngineIsStale =
     battleEngineRecommendation !== null && battleEngineAnalysisSignature !== battleEngineInputSignature;
   useEffect(() => {
+    return () => {
+      battleEngineWorkerRef.current?.terminate();
+      battleEngineWorkerRef.current = null;
+    };
+  }, []);
+  useEffect(() => {
     if (!canRunBattleEngine && battleEngineRecommendation) {
       setBattleEngineRecommendation(null);
       setBattleEngineAnalysisSignature("");
     }
-  }, [battleEngineRecommendation, canRunBattleEngine]);
+    if (!canRunBattleEngine && battleEngineSearching) {
+      battleEngineWorkerRef.current?.terminate();
+      battleEngineWorkerRef.current = null;
+      setBattleEngineSearching(false);
+    }
+  }, [battleEngineRecommendation, battleEngineSearching, canRunBattleEngine]);
+  useEffect(() => {
+    if (!battleEngineSearching) {
+      return;
+    }
+
+    battleEngineWorkerRef.current?.terminate();
+    battleEngineWorkerRef.current = null;
+    setBattleEngineSearching(false);
+  }, [battleEngineInputSignature]);
   const opponentCoverageMap = useMemo(
     () =>
       new Map(
@@ -7252,14 +7287,58 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       universalProtect: true,
     });
 
-    setBattleEngineRecommendation(
-      recommendBestPlan(state, {
-        depth: 2,
-        maxJointPlansPerSide: 8,
-        maxIndividualActionsPerActor: 5,
-      }),
-    );
-    setBattleEngineAnalysisSignature(battleEngineInputSignature);
+    const limitsByMode: Record<SearchMode, { maxJointPlansPerSide: number; maxIndividualActionsPerActor: number }> = {
+      fast: { maxJointPlansPerSide: 5, maxIndividualActionsPerActor: 4 },
+      balanced: { maxJointPlansPerSide: 8, maxIndividualActionsPerActor: 5 },
+      deep: { maxJointPlansPerSide: 10, maxIndividualActionsPerActor: 6 },
+    };
+    const nextRequestId = battleEngineSearchRequestIdRef.current + 1;
+    battleEngineSearchRequestIdRef.current = nextRequestId;
+    battleEngineWorkerRef.current?.terminate();
+
+    const worker = new Worker(new URL("./lib/engine/search.worker.ts", import.meta.url), { type: "module" });
+    battleEngineWorkerRef.current = worker;
+    setBattleEngineSearching(true);
+    setBattleEngineError(null);
+
+    worker.onmessage = (event: MessageEvent<{ id: number; recommendation?: SearchRecommendation; error?: string }>) => {
+      if (event.data.id !== battleEngineSearchRequestIdRef.current) {
+        return;
+      }
+
+      battleEngineWorkerRef.current?.terminate();
+      battleEngineWorkerRef.current = null;
+      setBattleEngineSearching(false);
+
+      if (event.data.error || !event.data.recommendation) {
+        setBattleEngineError(event.data.error ?? "Battle engine search failed.");
+        return;
+      }
+
+      setBattleEngineRecommendation(event.data.recommendation);
+      setBattleEngineAnalysisSignature(battleEngineInputSignature);
+    };
+
+    worker.onerror = () => {
+      if (nextRequestId !== battleEngineSearchRequestIdRef.current) {
+        return;
+      }
+
+      battleEngineWorkerRef.current?.terminate();
+      battleEngineWorkerRef.current = null;
+      setBattleEngineSearching(false);
+      setBattleEngineError("Battle engine worker failed.");
+    };
+
+    worker.postMessage({
+      id: nextRequestId,
+      state,
+      options: {
+        searchMode: battleEngineSearchMode,
+        objectiveMode: battleEngineObjectiveMode,
+        ...limitsByMode[battleEngineSearchMode],
+      },
+    });
   };
 
   const updateDamageMoveConfig = (
@@ -7300,6 +7379,10 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   };
 
   const clearOpponentTeam = () => {
+    battleEngineWorkerRef.current?.terminate();
+    battleEngineWorkerRef.current = null;
+    setBattleEngineSearching(false);
+    setBattleEngineError(null);
     setOpponentQueries(createEmptyOpponentSlots());
     setAnalyzedOpponentEntries([]);
     resetBattleSimulatorState();
@@ -9897,9 +9980,15 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                 <div className="coverage-preview-header">
                   <div>
                     <p className="eyebrow">Battle Engine</p>
-                    <h3>Worst-case doubles recommendation</h3>
+                    <h3>Selective doubles recommendation</h3>
                   </div>
-                  <span>{battleEngineRecommendation ? `Depth ${battleEngineRecommendation.depth} search` : "Manual run"}</span>
+                  <span>
+                    {battleEngineSearching
+                      ? "Searching..."
+                      : battleEngineRecommendation
+                        ? `Depth ${battleEngineRecommendation.depthReached} search`
+                        : "Manual run"}
+                  </span>
                 </div>
 
                 <p className="selector-note battle-engine-note">
@@ -9907,20 +9996,51 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                   Room, Safeguard, Ally Switch, Feint, Encore, Disable, Helping Hand, redirection, screens, guards,
                   common status moves, speed control, and simple self setup / healing lines. The simulator state
                   above is used as the starting board, then the search mixes conservative / expected / optimistic
-                  branches for misses and secondary effects. It runs only when you press the button below.
+                  branches for misses and secondary effects, belief-aware enemy move assumptions, and iterative
+                  deepening. It runs only when you press the button below.
                 </p>
 
                 <div className="damage-assumption-row">
+                  <label className="team-slot-field" style={{ minWidth: 180 }}>
+                    <span>Search mode</span>
+                    <select
+                      value={battleEngineSearchMode}
+                      onChange={(event) => setBattleEngineSearchMode(event.target.value as SearchMode)}
+                      disabled={battleEngineSearching}
+                    >
+                      <option value="fast">Fast</option>
+                      <option value="balanced">Balanced</option>
+                      <option value="deep">Deep</option>
+                    </select>
+                  </label>
+                  <label className="team-slot-field" style={{ minWidth: 180 }}>
+                    <span>Objective</span>
+                    <select
+                      value={battleEngineObjectiveMode}
+                      onChange={(event) => setBattleEngineObjectiveMode(event.target.value as ObjectiveMode)}
+                      disabled={battleEngineSearching}
+                    >
+                      <option value="robust">Robust</option>
+                      <option value="likely">Likely</option>
+                      <option value="hybrid">Hybrid</option>
+                    </select>
+                  </label>
                   <button
                     type="button"
                     className="primary-button"
                     onClick={runBattleEngineAnalysis}
-                    disabled={!canRunBattleEngine}
+                    disabled={!canRunBattleEngine || battleEngineSearching}
                   >
-                    {battleEngineRecommendation ? "Recalculate Battle Engine" : "Run Battle Engine"}
+                    {battleEngineSearching
+                      ? "Searching..."
+                      : battleEngineRecommendation
+                        ? "Recalculate Battle Engine"
+                        : "Run Battle Engine"}
                   </button>
                   <span className="damage-assumption-pill">
-                    {battleEngineRecommendation
+                    {battleEngineSearching
+                      ? "Worker search running off the main UI thread"
+                      : battleEngineRecommendation
                       ? battleEngineIsStale
                         ? "Current board changed after the last run"
                         : "Results match the current board"
@@ -9928,17 +10048,29 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                   </span>
                 </div>
 
+                {battleEngineError ? (
+                  <p className="selector-note" style={{ color: "var(--status-bad)" }}>
+                    {battleEngineError}
+                  </p>
+                ) : null}
+
                 {battleEngineRecommendation ? (
                   <>
                     <div className="damage-assumption-row">
                       <span className="damage-assumption-pill">
-                        Worst-case score {Math.round(battleEngineRecommendation.rootScore)}
+                        Chosen score {Math.round(battleEngineRecommendation.rootScore)}
                       </span>
                       <span className="damage-assumption-pill">
-                        {battleEngineRecommendation.consideredPlans.length} ally plans evaluated
+                        Robust {Math.round(battleEngineRecommendation.robustScore)}
                       </span>
                       <span className="damage-assumption-pill">
-                        {battleEngineRecommendation.enemyBestResponse ? "Enemy best response modeled" : "No enemy reply"}
+                        Likely {Math.round(battleEngineRecommendation.likelyScore)}
+                      </span>
+                      <span className="damage-assumption-pill">
+                        Hybrid {Math.round(battleEngineRecommendation.hybridScore)}
+                      </span>
+                      <span className="damage-assumption-pill">
+                        Depth {battleEngineRecommendation.depthReached} · {Math.round(battleEngineRecommendation.diagnostics.elapsedMs)}ms
                       </span>
                     </div>
 
@@ -9952,7 +10084,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                             </strong>
                           </div>
                           <span className="mini-type-pill neutral-pill">
-                            Score {Math.round(battleEngineRecommendation.rootScore)}
+                            {battleEngineObjectiveMode} {Math.round(battleEngineRecommendation.rootScore)}
                           </span>
                         </div>
 
@@ -9976,18 +10108,18 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                       <article className="battle-engine-card enemy">
                         <div className="battle-engine-card-head">
                           <div>
-                            <p className="eyebrow">Expected Enemy Reply</p>
+                            <p className="eyebrow">Predicted Enemy Reply</p>
                             <strong>
-                              {battleEngineRecommendation.enemyBestResponse
-                                ? battleEngineRecommendation.enemyBestResponse.summary
+                              {battleEngineRecommendation.predictedEnemyResponse
+                                ? battleEngineRecommendation.predictedEnemyResponse.summary
                                 : "No enemy action available"}
                             </strong>
                           </div>
                         </div>
 
-                        {battleEngineRecommendation.enemyBestResponse ? (
+                        {battleEngineRecommendation.predictedEnemyResponse ? (
                           <div className="battle-engine-action-list">
-                            {battleEngineRecommendation.enemyBestResponse.actions.map((plannedAction) => (
+                            {battleEngineRecommendation.predictedEnemyResponse.actions.map((plannedAction) => (
                               <div
                                 key={`battle-engine-enemy-${plannedAction.actorId}-${plannedAction.summary}`}
                                 className="battle-engine-action"
@@ -10002,6 +10134,57 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                         )}
                       </article>
                     </div>
+
+                    <details className="battle-engine-preview" open>
+                      <summary>Explain recommendation</summary>
+                      <div className="battle-engine-preview-list">
+                        <p>
+                          Worst-case reply:{" "}
+                          {battleEngineRecommendation.enemyBestResponse?.summary ?? "No robust enemy counterline found."}
+                        </p>
+                        <p>
+                          Search mode <strong>{battleEngineRecommendation.budget.searchMode}</strong>, objective{" "}
+                          <strong>{battleEngineRecommendation.budget.objectiveMode}</strong>, branch model{" "}
+                          <strong>{battleEngineRecommendation.diagnostics.branchModelUsed}</strong>.
+                        </p>
+                        {battleEngineRecommendation.pv.length > 0 ? (
+                          <>
+                            <p>
+                              Principal variation:
+                            </p>
+                            {battleEngineRecommendation.pv.slice(0, 3).map((step) => (
+                              <p key={`battle-engine-pv-${step.ply}`}>
+                                Turn {step.turn}: {step.allyPlan?.summary ?? "No ally plan"} |{" "}
+                                {step.enemyPlan?.summary ?? "No enemy reply"} | robust {Math.round(step.robustScore)} | likely{" "}
+                                {Math.round(step.likelyScore)}
+                              </p>
+                            ))}
+                          </>
+                        ) : null}
+                        {battleEngineRecommendation.diagnostics.enemyBeliefs.length > 0 ? (
+                          <>
+                            <p>Enemy assumptions:</p>
+                            {battleEngineRecommendation.diagnostics.enemyBeliefs.map((entry) => (
+                              <p key={`battle-engine-beliefs-${entry.combatantId}`}>
+                                {entry.label}: {entry.moves.map((move) =>
+                                  `${move.moveName} ${Math.round(move.policyWeight * 100)}%${move.inferred ? " inferred" : ""}`,
+                                ).join(", ")} ({entry.confidenceSummary})
+                              </p>
+                            ))}
+                          </>
+                        ) : null}
+                        <p>
+                          Diagnostics: nodes {battleEngineRecommendation.diagnostics.searchNodes}, turn resolves{" "}
+                          {battleEngineRecommendation.diagnostics.resolveTurnCalls}, joint plans{" "}
+                          {battleEngineRecommendation.diagnostics.generatedJointPlans}, plan pairs{" "}
+                          {battleEngineRecommendation.diagnostics.planPairEvaluations}, TT hits{" "}
+                          {battleEngineRecommendation.diagnostics.ttHits}, TT stores{" "}
+                          {battleEngineRecommendation.diagnostics.ttStores}, cutoffs{" "}
+                          {battleEngineRecommendation.diagnostics.cutoffs}.
+                        </p>
+                      </div>
+                    </details>
+
                     {battleEngineRecommendation.preview?.events.length ? (
                       <details className="battle-engine-preview">
                         <summary>Average-roll turn preview</summary>
@@ -10028,11 +10211,17 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                             >
                               <div className="battle-engine-alt-head">
                                 <strong>{scoreEntry.plan.summary}</strong>
-                                <span className="mini-type-pill neutral-pill">Score {Math.round(scoreEntry.score)}</span>
+                                <span className="mini-type-pill neutral-pill">
+                                  {battleEngineObjectiveMode} {Math.round(scoreEntry.score)}
+                                </span>
                               </div>
                               <p>
-                                Worst-case enemy reply:{" "}
-                                {scoreEntry.enemyBestResponse?.summary ?? "No legal enemy counterplay from this state."}
+                                Robust {Math.round(scoreEntry.robustScore)} · likely {Math.round(scoreEntry.likelyScore)} ·{" "}
+                                hybrid {Math.round(scoreEntry.hybridScore)}
+                              </p>
+                              <p>
+                                Predicted enemy reply:{" "}
+                                {scoreEntry.predictedEnemyResponse?.summary ?? "No legal enemy counterplay from this state."}
                               </p>
                             </article>
                           ))}

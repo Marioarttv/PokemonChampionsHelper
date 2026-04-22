@@ -11,6 +11,7 @@ import {
 import { doesDefenderItemReduceDamage, isResistBerryItem, normalizeDamageItemId } from "../damageItems";
 import { getEffectiveSpeedForBattleState } from "./rules/speed";
 import { canApplyStatusCondition } from "./rules/status";
+import { getBelievedMoves } from "./beliefs";
 import { getSpecialMoveDefinition, hasProtectFamilyMove, normalizeMoveKey } from "./moveRegistry";
 import type {
   BattleAction,
@@ -788,6 +789,15 @@ function sumProjectedDamage(state: BattleState, actorId: string, move: BattleMov
   }, 0);
 }
 
+function getBelievedDamagingMoves(state: BattleState, actorId: string) {
+  const actor = state.combatants[actorId];
+  if (!actor) {
+    return [];
+  }
+
+  return getBelievedMoves(actor, { topN: 6 }).filter((entry) => entry.move.category !== null);
+}
+
 function isTargetImmuneByTyping(
   state: BattleState,
   _actorId: string,
@@ -817,8 +827,11 @@ function getIncomingThreatsAgainst(state: BattleState, targetIds: string[]) {
     }
 
     return getActiveIds(state, getOpponentSide(target.side)).flatMap((enemyId) => {
-      const enemy = state.combatants[enemyId];
-      return enemy.knownMoves.map((move) => getDamagePreview(state, enemyId, targetId, move)?.estimate.averagePercent ?? 0);
+      return getBelievedDamagingMoves(state, enemyId).map(
+        (entry) =>
+          (getDamagePreview(state, enemyId, targetId, entry.move)?.estimate.averagePercent ?? 0) *
+          (0.55 + entry.certainty * 0.45),
+      );
     });
   });
 }
@@ -894,14 +907,21 @@ function scoreSwitchAction(state: BattleState, actorId: string, switchInId: stri
   const maxIncoming = Math.max(
     0,
     ...getActiveIds(state, enemySide).flatMap((enemyId) => {
-      const enemy = state.combatants[enemyId];
-      return enemy.knownMoves.map((move) => getDamagePreview(state, enemyId, switchInId, move)?.estimate.averagePercent ?? 0);
+      return getBelievedDamagingMoves(state, enemyId).map(
+        (entry) =>
+          (getDamagePreview(state, enemyId, switchInId, entry.move)?.estimate.averagePercent ?? 0) *
+          (0.55 + entry.certainty * 0.45),
+      );
     }),
   );
   const bestOutgoing = Math.max(
     0,
-    ...incoming.knownMoves.flatMap((move) =>
-      getActiveIds(state, enemySide).map((targetId) => getDamagePreview(state, switchInId, targetId, move)?.estimate.averagePercent ?? 0),
+    ...getBelievedDamagingMoves(state, switchInId).flatMap((entry) =>
+      getActiveIds(state, enemySide).map(
+        (targetId) =>
+          (getDamagePreview(state, switchInId, targetId, entry.move)?.estimate.averagePercent ?? 0) *
+          (0.6 + entry.policyWeight * 0.4),
+      ),
     ),
   );
   return bestOutgoing - maxIncoming * 0.85;
@@ -920,9 +940,13 @@ function scoreHelpingHandAction(state: BattleState, actorId: string, targetId: s
   const enemyIds = getActiveIds(state, getOpponentSide(ally.side));
   const bestDamage = Math.max(
     0,
-    ...ally.knownMoves
-      .filter((move) => move.category !== null)
-      .flatMap((move) => enemyIds.map((enemyId) => getDamagePreview(state, targetId, enemyId, move)?.estimate.averagePercent ?? 0)),
+    ...getBelievedDamagingMoves(state, targetId).flatMap((entry) =>
+      enemyIds.map(
+        (enemyId) =>
+          (getDamagePreview(state, targetId, enemyId, entry.move)?.estimate.averagePercent ?? 0) *
+          (0.6 + entry.policyWeight * 0.4),
+      ),
+    ),
   );
   return bestDamage * 0.55 + 35;
 }
@@ -943,15 +967,21 @@ function scoreScreenAction(state: BattleState, actorId: string, screen: BattleSc
   const allyIds = getActiveIds(state, actor.side);
   const enemyIds = getActiveIds(state, getOpponentSide(actor.side));
   const relevantThreats = enemyIds.flatMap((enemyId) =>
-    state.combatants[enemyId].knownMoves
+    getBelievedDamagingMoves(state, enemyId)
       .filter((move) =>
         screen === "auroraVeil"
-          ? move.category !== null
+          ? move.move.category !== null
           : screen === "reflect"
-            ? move.category === "physical"
-            : move.category === "special",
+            ? move.move.category === "physical"
+            : move.move.category === "special",
       )
-      .flatMap((move) => allyIds.map((allyId) => getDamagePreview(state, enemyId, allyId, move)?.estimate.averagePercent ?? 0)),
+      .flatMap((entry) =>
+        allyIds.map(
+          (allyId) =>
+            (getDamagePreview(state, enemyId, allyId, entry.move)?.estimate.averagePercent ?? 0) *
+            (0.55 + entry.certainty * 0.45),
+        ),
+      ),
   );
 
   return Math.max(0, ...relevantThreats) * 0.85 + 45;
@@ -966,13 +996,14 @@ function scoreGuardAction(state: BattleState, actorId: string, guard: BattleMove
   const enemyIds = getActiveIds(state, getOpponentSide(actor.side));
   let guardedThreat = 0;
   for (const enemyId of enemyIds) {
-    for (const move of state.combatants[enemyId].knownMoves) {
+    for (const { move, certainty } of getBelievedMoves(state.combatants[enemyId], { topN: 6 })) {
       if (guard === "quickGuard" && move.priority > 0) {
-        guardedThreat += 40;
+        guardedThreat += 40 * certainty;
       }
       if (guard === "wideGuard" && move.isSpreadMove) {
         guardedThreat += getActiveIds(state, actor.side).reduce(
-          (sum, allyId) => sum + (getDamagePreview(state, enemyId, allyId, move)?.estimate.averagePercent ?? 0),
+          (sum, allyId) =>
+            sum + (getDamagePreview(state, enemyId, allyId, move)?.estimate.averagePercent ?? 0) * (0.55 + certainty * 0.45),
           0,
         );
       }
@@ -990,10 +1021,11 @@ function scoreSafeguardAction(state: BattleState, actorId: string) {
   const statusThreats = enemyIds.reduce((sum, enemyId) => {
     return (
       sum +
-      state.combatants[enemyId].knownMoves.filter(
-        (move) =>
-          move.effectKind === "status" ||
-          (move.effectKind === "damage" && Boolean(move.effectData?.statusCondition || move.effectData?.flinchChance)),
+      getBelievedMoves(state.combatants[enemyId], { topN: 6 }).filter(
+        ({ move, certainty }) =>
+          certainty >= 0.2 &&
+          (move.effectKind === "status" ||
+            (move.effectKind === "damage" && Boolean(move.effectData?.statusCondition || move.effectData?.flinchChance))),
       ).length
     );
   }, 0);
@@ -1016,7 +1048,7 @@ function scoreEncoreAction(state: BattleState, targetId: string | null) {
     return 8;
   }
 
-  const lastMove = target.knownMoves.find((move) => move.id === target.lastMoveId);
+  const lastMove = [...target.knownMoves, ...target.candidateMoves].find((move) => move.id === target.lastMoveId);
   if (!lastMove) {
     return 10;
   }
@@ -1033,7 +1065,7 @@ function scoreDisableAction(state: BattleState, targetId: string | null) {
     return 8;
   }
 
-  const lastMove = target.knownMoves.find((move) => move.id === target.lastMoveId);
+  const lastMove = [...target.knownMoves, ...target.candidateMoves].find((move) => move.id === target.lastMoveId);
   if (!lastMove) {
     return 10;
   }
@@ -1056,7 +1088,7 @@ function scoreTauntAction(state: BattleState, targetId: string | null) {
     return 5;
   }
 
-  const supportCount = target.knownMoves.filter((move) => isNonDamagingMove(move)).length;
+  const supportCount = getBelievedMoves(target, { topN: 6 }).filter(({ move, certainty }) => isNonDamagingMove(move) && certainty >= 0.2).length;
   return 40 + supportCount * 18;
 }
 
@@ -1092,11 +1124,11 @@ function scoreBoostAction(state: BattleState, actorId: string, effectData: Battl
 
   const pressure = Math.max(
     0,
-    ...actor.knownMoves
-      .filter((move) => move.category !== null)
-      .flatMap((move) =>
+    ...getBelievedDamagingMoves(state, actorId).flatMap((entry) =>
         getActiveIds(state, getOpponentSide(actor.side)).map(
-          (targetId) => getDamagePreview(state, actorId, targetId, move)?.estimate.averagePercent ?? 0,
+          (targetId) =>
+            (getDamagePreview(state, actorId, targetId, entry.move)?.estimate.averagePercent ?? 0) *
+            (0.6 + entry.policyWeight * 0.4),
         ),
       ),
   );

@@ -214,17 +214,85 @@ export type TurnResult = {
 export type SearchPlanScore = {
   plan: JointActionPlan;
   score: number;
+  robustScore: number;
+  likelyScore: number;
+  hybridScore: number;
   enemyBestResponse: JointActionPlan | null;
+  predictedEnemyResponse: JointActionPlan | null;
   preview: TurnResult | null;
+  pv: SearchPvStep[];
+  enemyPolicyWeight: number;
+  dependsOnInferredMoves: boolean;
+};
+
+export type SearchMode = "fast" | "balanced" | "deep";
+export type ObjectiveMode = "robust" | "likely" | "hybrid";
+
+export type SearchPvStep = {
+  ply: number;
+  turn: number;
+  allyPlan: JointActionPlan | null;
+  enemyPlan: JointActionPlan | null;
+  robustScore: number;
+  likelyScore: number;
+  hybridScore: number;
+  preview: TurnResult | null;
+  extensionReasons: string[];
+};
+
+export type EnemyMoveAssumption = {
+  moveName: string;
+  certainty: number;
+  policyWeight: number;
+  source: BattleMoveSource;
+  inferred: boolean;
+};
+
+export type EnemyAssumptionSummary = {
+  combatantId: string;
+  label: string;
+  dependsOnInferredMoves: boolean;
+  confidenceSummary: string;
+  moves: EnemyMoveAssumption[];
+};
+
+export type SearchBudget = {
+  maxDepth?: number;
+  maxNodes?: number;
+  maxMs?: number;
+  signal?: AbortSignal | null;
+  searchMode?: SearchMode;
+  objectiveMode?: ObjectiveMode;
+  hybridLambda?: number;
+  stageTopK?: number;
+  maxSelectiveExtensions?: number;
+};
+
+export type SearchBudgetSnapshot = {
+  maxDepth: number;
+  maxNodes: number;
+  maxMs: number;
+  searchMode: SearchMode;
+  objectiveMode: ObjectiveMode;
+  hybridLambda: number;
+  stageTopK: number;
+  maxSelectiveExtensions: number;
 };
 
 export type SearchRecommendation = {
   rootScore: number;
   depth: number;
+  depthReached: number;
+  robustScore: number;
+  likelyScore: number;
+  hybridScore: number;
   bestPlan: JointActionPlan | null;
   enemyBestResponse: JointActionPlan | null;
+  predictedEnemyResponse: JointActionPlan | null;
   preview: TurnResult | null;
+  pv: SearchPvStep[];
   consideredPlans: SearchPlanScore[];
+  budget: SearchBudgetSnapshot;
   diagnostics: SearchDiagnostics;
 };
 
@@ -285,11 +353,22 @@ export type CreateBattleStateInput = {
 export type SearchBranchModel = "full" | "expectedOnly" | "expectedPlusRisk";
 
 export type SearchDiagnostics = {
+  elapsedMs: number;
+  depthReached: number;
   searchNodes: number;
   resolveTurnCalls: number;
   generatedJointPlans: number;
   planPairEvaluations: number;
+  ttHits: number;
+  ttStores: number;
+  cutoffs: number;
+  branchModelUsed: string;
+  objectiveMode: ObjectiveMode;
+  searchMode: SearchMode;
+  completedIterations: number;
   enemyAssumptions: string[];
+  enemyBeliefs: EnemyAssumptionSummary[];
+  pv: SearchPvStep[];
 };
 
 export type SearchOptions = {
@@ -298,6 +377,15 @@ export type SearchOptions = {
   maxIndividualActionsPerActor?: number;
   branchModel?: SearchBranchModel;
   branchPolicy?: BranchPolicy;
+  maxDepth?: number;
+  maxNodes?: number;
+  maxMs?: number;
+  signal?: AbortSignal | null;
+  searchMode?: SearchMode;
+  objectiveMode?: ObjectiveMode;
+  hybridLambda?: number;
+  stageTopK?: number;
+  maxSelectiveExtensions?: number;
 };
 
 export type TurnBranch = {

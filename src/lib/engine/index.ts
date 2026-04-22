@@ -8,10 +8,13 @@ export {
   inferEngineMoveNames,
   resolveStoredOrPresetMoveset,
 } from "./adapters/fromUiState";
-export { recommendBestPlan } from "./search";
+export { getBelievedMoves, summarizeEnemyBeliefs } from "./beliefs";
+export { recommendBestPlan, recommendBestPlanAsync } from "./search";
 export type {
   BattleAction,
   BattleCombatantState,
+  SearchBudget,
+  SearchBudgetSnapshot,
   BranchPolicy,
   BattleMoveOption,
   BattleSide,
@@ -27,7 +30,10 @@ export type {
   SearchOptions,
   SearchBranchModel,
   SearchDiagnostics,
+  SearchMode,
+  ObjectiveMode,
   SearchPlanScore,
+  SearchPvStep,
   SearchRecommendation,
   TurnBranch,
   TurnEvent,

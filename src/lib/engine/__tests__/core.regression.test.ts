@@ -5,6 +5,7 @@ import {
   buildPassPlan,
   buildSwitchPlan,
   createTestBattleState,
+  makeCandidateMove,
   makeMember,
   makeMove,
   makePokemon,
@@ -696,5 +697,143 @@ describe("engine regression coverage", () => {
 
     expect(result.state.combatants["ally-0"].currentHp).toBeGreaterThan(allyStartingHp);
     expect(result.state.combatants["enemy-0"].currentHp).toBeLessThan(enemyStartingHp);
+  });
+
+  it("reaches depth 3 in deep mode on low-branch positions and returns PV diagnostics", () => {
+    const ally = makePokemon("Closer", { baseStats: { atk: 120, spe: 105 } });
+    const enemy = makePokemon("Wall", { baseStats: { hp: 110, def: 110, spe: 70 } });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 60, target: "normal" });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: ally, moveNames: ["Tackle"] })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: enemy, moveNames: ["Tackle"] })],
+      moves: [tackle],
+    });
+
+    const recommendation = recommendBestPlan(state, {
+      searchMode: "deep",
+      objectiveMode: "robust",
+      maxJointPlansPerSide: 3,
+      maxIndividualActionsPerActor: 2,
+    });
+
+    expect(recommendation.depthReached).toBe(3);
+    expect(recommendation.diagnostics.depthReached).toBe(3);
+    expect(recommendation.diagnostics.pv.length).toBeGreaterThan(0);
+    expect(recommendation.diagnostics.ttStores).toBeGreaterThan(0);
+  });
+
+  it("uses candidate enemy beliefs when likely mode values Trick Room denial", () => {
+    const sneasler = makePokemon("Sneasler", { baseStats: { atk: 130, spe: 120 } });
+    const partner = makePokemon("Partner", { baseStats: { spa: 100, spe: 100 } });
+    const oranguru = makePokemon("Oranguru", { baseStats: { hp: 110, def: 110, spd: 110, spe: 60 } });
+    const meowstic = makePokemon("Meowstic", { baseStats: { spa: 95, spe: 104 } });
+    const fakeOut = makeMove("Fake Out", {
+      type: "Normal",
+      category: "Physical",
+      basePower: 40,
+      priority: 3,
+      target: "normal",
+    });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 60, target: "normal" });
+    const trickRoom = makeMove("Trick Room", { type: "Psychic", category: "Status", basePower: 0, target: "all" });
+    const protect = makeMove("Protect", { type: "Normal", category: "Status", basePower: 0, target: "self", priority: 4 });
+
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: sneasler, moveNames: ["Fake Out"] }),
+        makeMember({ side: "ally", slot: 1, pokemon: partner, moveNames: ["Tackle"] }),
+      ],
+      enemy: [
+        makeMember({
+          side: "enemy",
+          slot: 0,
+          pokemon: oranguru,
+          moveNames: ["Protect"],
+          candidateMoves: [makeCandidateMove("Trick Room", 0.8, "preset")],
+          knowledge: "partial",
+        }),
+        makeMember({ side: "enemy", slot: 1, pokemon: meowstic, moveNames: ["Tackle"] }),
+      ],
+      moves: [fakeOut, tackle, trickRoom, protect],
+    });
+
+    const recommendation = recommendBestPlan(state, {
+      searchMode: "balanced",
+      objectiveMode: "likely",
+      maxJointPlansPerSide: 8,
+      maxIndividualActionsPerActor: 5,
+    });
+
+    expect(recommendation.bestPlan?.summary).toContain("Fake Out");
+    expect(
+      recommendation.diagnostics.enemyBeliefs.some(
+        (entry) => entry.moves.some((move) => move.moveName === "Trick Room" && move.policyWeight > 0.3),
+      ),
+    ).toBe(true);
+  });
+
+  it("prefers Wide Guard into double spread pressure", () => {
+    const wideGuardUser = makePokemon("Hariyama", { baseStats: { hp: 120, atk: 120, spe: 50 } });
+    const allyPartner = makePokemon("Fragile Partner", { baseStats: { hp: 70, def: 70, spd: 70, spe: 90 } });
+    const rockSlider = makePokemon("Tyranitar", { baseStats: { atk: 134, spe: 61 } });
+    const heatWaver = makePokemon("Charizard", { baseStats: { spa: 130, spe: 100 } });
+    const wideGuard = makeMove("Wide Guard", { type: "Rock", category: "Status", basePower: 0, target: "self", priority: 3 });
+    const closeCombat = makeMove("Close Combat", { type: "Fighting", category: "Physical", basePower: 120, target: "normal" });
+    const rockSlide = makeMove("Rock Slide", { type: "Rock", category: "Physical", basePower: 75, target: "allAdjacentFoes" });
+    const heatWave = makeMove("Heat Wave", { type: "Fire", category: "Special", basePower: 95, target: "allAdjacentFoes" });
+
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: wideGuardUser, moveNames: ["Wide Guard", "Close Combat"] }),
+        makeMember({ side: "ally", slot: 1, pokemon: allyPartner, moveNames: ["Close Combat"] }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: rockSlider, moveNames: ["Rock Slide"] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: heatWaver, moveNames: ["Heat Wave"] }),
+      ],
+      moves: [wideGuard, closeCombat, rockSlide, heatWave],
+    });
+
+    const recommendation = recommendBestPlan(state, {
+      searchMode: "balanced",
+      objectiveMode: "robust",
+      maxJointPlansPerSide: 8,
+      maxIndividualActionsPerActor: 5,
+    });
+
+    expect(recommendation.bestPlan?.summary).toContain("Wide Guard");
+  });
+
+  it("can recommend a defensive switch when the current active is in immediate danger", () => {
+    const threatened = makePokemon("Gyarados", { types: ["Water", "Flying"], baseStats: { hp: 95, def: 79, spd: 100, spe: 81 } });
+    const partner = makePokemon("Partner", { baseStats: { hp: 100, def: 100, spd: 100, spe: 80 } });
+    const groundSwitch = makePokemon("Clodsire", { types: ["Poison", "Ground"], baseStats: { hp: 130, def: 75, spd: 100, spe: 20 } });
+    const electricEnemy = makePokemon("Miraidon", { types: ["Electric", "Dragon"], baseStats: { spa: 135, spe: 135 } });
+    const enemyPartner = makePokemon("Enemy Partner", { baseStats: { atk: 100, spe: 70 } });
+    const earthPower = makeMove("Earth Power", { type: "Ground", category: "Special", basePower: 90, target: "normal" });
+    const thunderbolt = makeMove("Thunderbolt", { type: "Electric", category: "Special", basePower: 90, target: "normal" });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 60, target: "normal" });
+
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: threatened, moveNames: [], currentHpPercent: 12 }),
+        makeMember({ side: "ally", slot: 1, pokemon: partner, moveNames: ["Tackle"] }),
+        makeMember({ side: "ally", slot: 2, pokemon: groundSwitch, moveNames: ["Earth Power"], isActive: false }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: electricEnemy, moveNames: ["Thunderbolt"] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: enemyPartner, moveNames: ["Tackle"] }),
+      ],
+      moves: [earthPower, thunderbolt, tackle],
+    });
+
+    const recommendation = recommendBestPlan(state, {
+      searchMode: "balanced",
+      objectiveMode: "robust",
+      maxJointPlansPerSide: 8,
+      maxIndividualActionsPerActor: 5,
+    });
+
+    expect(recommendation.bestPlan?.summary).toContain("switch to Clodsire");
   });
 });

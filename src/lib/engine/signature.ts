@@ -1,5 +1,5 @@
 import type { DamageTerrain, DamageWeather } from "../damage";
-import type { BattleStateMemberInput } from "./types";
+import type { BattleStateMemberInput, ObjectiveMode, SearchMode } from "./types";
 
 type BattleEngineInputSignatureOptions = {
   allySelection: ReadonlyArray<number | null>;
@@ -11,6 +11,8 @@ type BattleEngineInputSignatureOptions = {
   allyTailwind: boolean;
   enemyTailwind: boolean;
   trickRoom: boolean;
+  searchMode?: SearchMode;
+  objectiveMode?: ObjectiveMode;
 };
 
 export function buildBattleEngineInputSignature(options: BattleEngineInputSignatureOptions) {
@@ -66,5 +68,7 @@ export function buildBattleEngineInputSignature(options: BattleEngineInputSignat
     allyTailwind: options.allyTailwind,
     enemyTailwind: options.enemyTailwind,
     trickRoom: options.trickRoom,
+    searchMode: options.searchMode ?? "balanced",
+    objectiveMode: options.objectiveMode ?? "robust",
   });
 }

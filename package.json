@@ -8,6 +8,7 @@
     "prebuild": "npm run generate:data",
     "dev": "vite",
     "test": "vitest run",
+    "bench:engine": "vitest bench src/lib/engine/__tests__/search.bench.ts",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },

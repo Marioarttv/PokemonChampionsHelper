@@ -1,7 +1,9 @@
 import type { PokemonType } from "../../../data/typeChart";
 import type { MoveRecord } from "../../battleData";
 import { createBattleState, type BattleSide, type BattleState, type BattleStateMemberInput, type JointActionPlan } from "..";
+import type { CandidateMove } from "..";
 import type { PokemonRecord } from "../../pokemonDb";
+import type { PersistedKnownMove } from "../../savedTeams";
 
 type FixturePokemonOptions = {
   id?: string;
@@ -31,9 +33,19 @@ type FixtureMemberOptions = {
   moveNames?: string[];
   abilityName?: string | null;
   currentHpPercent?: number;
+  currentHp?: number;
   itemName?: string | null;
   statusCondition?: BattleStateMemberInput["statusCondition"];
   sleepTurns?: number;
+  knownMoves?: PersistedKnownMove[];
+  candidateMoves?: CandidateMove[];
+  knowledge?: BattleStateMemberInput["knowledge"];
+  stages?: BattleStateMemberInput["stages"];
+  isProtected?: boolean;
+  tauntTurns?: number;
+  encoreTurns?: number;
+  disableTurns?: number;
+  lastMoveId?: string | null;
   turnsActive?: number;
   isActive?: boolean;
 };
@@ -107,11 +119,21 @@ export function makeMember(options: FixtureMemberOptions): BattleStateMemberInpu
     pokemon: options.pokemon,
     teamIndex: options.slot,
     moveNames: options.moveNames ?? [],
+    knownMoves: options.knownMoves,
+    candidateMoves: options.candidateMoves,
+    knowledge: options.knowledge,
     abilityName: options.abilityName ?? null,
+    currentHp: options.currentHp,
     currentHpPercent: options.currentHpPercent ?? 100,
     itemName: options.itemName ?? null,
+    stages: options.stages,
     statusCondition: options.statusCondition ?? "none",
     sleepTurns: options.sleepTurns ?? 0,
+    isProtected: options.isProtected ?? false,
+    tauntTurns: options.tauntTurns ?? 0,
+    encoreTurns: options.encoreTurns ?? 0,
+    disableTurns: options.disableTurns ?? 0,
+    lastMoveId: options.lastMoveId ?? null,
     turnsActive: options.turnsActive ?? 0,
     isActive: options.isActive ?? true,
   };
@@ -216,5 +238,14 @@ export function makeSavedAttack(name: string, type: PokemonType, category: "phys
     category,
     basePower,
     isSpreadMove: false,
+  };
+}
+
+export function makeCandidateMove(name: string, weight: number, source: CandidateMove["source"] = "preset") {
+  return {
+    name,
+    source,
+    weight,
+    confidence: "candidate" as const,
   };
 }

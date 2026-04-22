@@ -1,186 +1,255 @@
-# Battle Engine Progress
+# Battle Engine
 
 ## Overview
 
-The project has moved beyond a pure calculator. It now includes an in-app doubles battle engine that can:
+The battle engine in `src/lib/engine/` is a client-side, TypeScript-first VGC tactical searcher. It is still intentionally approximate rather than cartridge-faithful, but it now has three operating goals:
 
-- construct a real board state from your team, the enemy team, and selected active leads
-- generate legal actions for both sides
-- simulate a simplified turn
-- search multiple candidate lines
-- recommend the ally line that looks best against the enemy's strongest modeled response
+- preserve the previous shallow worst-case recommendation path as a robust baseline
+- add a selective deep mode that can reach depth 3 in lower-branch tactical positions
+- explain what it searched, what it assumed about hidden information, and why it chose the line it did
 
-This is intentionally a tactical engine first. The current goal is to produce useful, explainable recommendations inside the app before chasing full cartridge accuracy.
+The engine remains synchronous at its core for testability and determinism. The UI runs the heavier battle-engine search in a web worker so deeper searches do not block the browser thread.
 
-## Current Architecture
+## Module Layout
 
-The engine lives in `src/lib/engine/`.
-
-- `types.ts`
-  Defines the canonical battle state, actions, move metadata, side conditions, volatile statuses, and search result types.
 - `core.ts`
-  Handles state construction, move normalization, action generation, turn resolution, and battle utility helpers.
-- `moveRegistry.ts`
-  Centralizes special-move families, protect-family checks, and shared move-role tagging used by both the engine and team preview.
-- `rules/`
-  Contains curated non-damage rules for speed and status applicability.
-- `adapters/fromUiState.ts`
-  Converts UI-facing team / scouting state into engine-ready members and hidden-information inputs.
-- `knowledge.ts`
-  Builds weighted enemy move candidates for partial / unknown information.
+  Builds battle states, generates legal actions, resolves turns, and scores action heuristics.
+- `beliefs.ts`
+  Central belief helper for known plus candidate move modeling.
 - `evaluate.ts`
-  Scores non-terminal states with handcrafted heuristics.
+  Belief-aware positional evaluator.
 - `search.ts`
-  Runs the shallow adversarial search and produces the recommendation shown in the UI.
+  Iterative deepening, selective search, pruning, PV tracking, and diagnostics.
+- `hash.ts`
+  Lightweight canonical state key for search caching.
+- `transposition.ts`
+  Exact-value transposition table used by iterative deepening.
+- `knowledge.ts`
+  Produces enemy move candidates and normalized weights from preset/inferred knowledge.
+- `adapters/fromUiState.ts`
+  Converts UI state into engine members and enemy knowledge inputs.
+- `signature.ts`
+  Builds stable UI signatures for stale-result detection.
+- `benchmark.ts`
+  Small benchmark harness for comparing search modes over fixed tactical fixtures.
 
-## What Is Implemented
+## Search Modes
 
-### 1. Canonical Battle State
+### Fast
 
-The engine tracks:
+- tuned for quick UI feedback
+- default depth target: 1
+- smaller node/time budgets
+- cheaper branch model by default
 
-- active and bench Pokemon for each side
-- current HP and max HP
-- attack, defense, special attack, special defense, and speed stages
-- status conditions: burn, paralysis, sleep
-- volatile state such as Protect, flinch, Helping Hand, Taunt, Encore, and Disable
-- side conditions such as Tailwind, Reflect, Light Screen, Aurora Veil, Safeguard, Quick Guard, Wide Guard, redirection, and Ally Switch pairing
-- field conditions such as weather, terrain, and Trick Room
+### Balanced
 
-### 2. Legal Action Generation
+- default general-purpose mode
+- default depth target: 2
+- preserves the previous robust maximin semantics
+- adds iterative deepening, PV tracking, pruning, and transposition caching
 
-For each active Pokemon, the engine can currently generate:
+### Deep
 
-- damaging moves with targets
-- spread attacks
-- ally-targeted support actions
-- self-targeted support actions
-- field-wide support actions
-- switching into bench slots
-- pass, when no better legal action exists
+- default depth target: 3
+- larger node/time budgets
+- staged search:
+  a cheap ordering pass narrows the ally plans
+  then the top `K` ally plans are re-searched with the full branch model
+- selective extensions can push one more turn in tactical positions such as KO races or expiring speed control
+- intended to run from the worker-backed UI path
 
-It also respects some action restrictions already modeled in state:
+## Objective Modes
 
-- Taunt blocks non-damaging moves
-- Encore locks a Pokemon into a previous move
-- Disable blocks the disabled move
-- sleep countdown resolves at turn start, so sleepers can wake even if they would otherwise pass or switch
+### Robust
 
-### 3. Turn Resolution
+- original worst-case style objective
+- for each ally line, the engine keeps the enemy response that minimizes the ally outcome
+- alpha-style cutoffs preserve this semantics:
+  if an ally line is already worse than the current best robust line, the remaining enemy replies for that ally line can be skipped
 
-The turn resolver currently models:
+### Likely
 
-- switches before normal move execution
-- move order using priority, speed, Tailwind, and Trick Room
-- Protect-like blocking
-- Fake Out first-turn behavior
-- Helping Hand damage support
-- screens and Aurora Veil damage reduction
-- Quick Guard and Wide Guard
-- Safeguard blocking new status
-- baseline terrain / type / powder status immunities
-- redirection through Follow Me / Rage Powder
-- Ally Switch target swapping
-- Encore and Disable application
-- burn/paralysis/sleep state handling
-- basic recoil from Life Orb
-- `allAdjacent` collateral such as Bulldoze hitting the ally partner
-- automatic replacement from the bench after a faint
+- expected-value objective over enemy policy weights
+- enemy move beliefs and action heuristics combine into plan likelihood weights
+- still uses the same legal-action generation and branch model
 
-### 4. Search
+### Hybrid
 
-The search is still shallow, but it is no longer deterministic in just one line.
+- blends robust and likely:
+  `hybrid = lambda * robust + (1 - lambda) * likely`
+- current default lambda is conservative, biasing toward safety while still rewarding likely tactical lines
 
-It now evaluates multiple outcome branches per turn:
+## Search Foundation
 
-- conservative branch
-  Lower damage expectation, stricter hit assumptions, no secondary-effect upside
-- expected branch
-  Normal average-damage branch with expected hit/proc assumptions
-- optimistic branch
-  Higher damage expectation, more favorable hit assumptions, secondary effects enabled
+The search now uses:
 
-For each ally plan, the engine checks enemy responses and keeps the score from the enemy reply that hurts the ally plan the most. The recommendation shown in the UI is therefore worst-case oriented rather than greedy.
+- explicit search budgets:
+  `maxDepth`, `maxNodes`, `maxMs`, `searchMode`, `objectiveMode`
+- iterative deepening:
+  the engine searches depth `1..N` and always returns the best fully completed iteration
+- principal variation tracking:
+  recommendation includes the chosen ally line, predicted enemy reply, and deeper continuation
+- transposition caching:
+  exact scores are cached by a compact state key plus search context
+- move ordering:
+  prior PV, heuristic action scores, and lightweight history reuse improve cutoff quality
 
-### 5. Hidden Information Handling
+## Branch Model Staging
 
-Enemy move knowledge is now split conceptually into:
+The existing turn-branch support remains intact:
 
-- known
-  Custom user-entered moves
-- partial
-  Imported preset moves
-- unknown
-  No reliable move data
+- `expectedOnly`
+- `expectedPlusRisk`
+- `full`
 
-When the enemy set is partial or unknown, the engine can add a few inferred utility moves such as Protect, Taunt, Feint, Safeguard, Ally Switch, Disable, Encore, Icy Wind, Electroweb, or Trick Room based on rough heuristics. This is still lightweight, but it is better than pretending an unknown Pokemon has no support options.
+Deep mode stages the search:
 
-Preset and unknown enemy sets are now modeled as weighted candidate moves rather than always being treated as fully known. The search diagnostics expose those candidate assumptions so recommendation output can be audited.
+1. use a cheaper ordering model to score ally plans quickly
+2. keep only the strongest few ally plans
+3. re-search those plans with the full branch model
 
-## Supported Move Families
+This keeps the current engine structure intact instead of rewriting it into a different paradigm.
 
-The engine currently has explicit or semi-explicit support for:
+## Hidden Information and Beliefs
 
-- direct damage moves
-- Fake Out
-- Protect-like moves
-- Tailwind
-- Trick Room
-- Safeguard
-- Ally Switch
-- Feint
-- Encore
-- Disable
-- Helping Hand
-- Follow Me / Rage Powder
-- Reflect / Light Screen / Aurora Veil
-- Quick Guard / Wide Guard
-- Taunt
-- status moves such as Thunder Wave, Will-O-Wisp, Spore, Sleep Powder, Hypnosis, Glare, and Stun Spore
-- speed-control / debuff moves such as Icy Wind, Electroweb, Bulldoze, Rock Tomb, Scary Face, Cotton Spore, Snarl, Breaking Swipe, and Chilling Water
-- common setup / recovery moves such as Swords Dance, Nasty Plot, Calm Mind, Dragon Dance, Agility, Iron Defense, Bulk Up, Recover, Roost, Slack Off, Soft-Boiled, Moonlight, Morning Sun, Synthesis, and Life Dew
+Enemy move handling is now belief-aware.
 
-## What Is Still Simplified
+`getBelievedMoves(combatant, options)`:
 
-The engine is not yet a full competitive simulator. Important limitations still include:
+- treats known moves as certainty
+- includes candidate moves with normalized weights
+- supports top-`N` truncation
+- returns policy weights and confidence summaries usable by both evaluation and diagnostics
 
-- no exact accuracy math, evasion, or full probability trees
-- secondary effects are coarse branches, not exact per-move distributions
-- no full status-resolution rules for every edge case
-- only a curated subset of terrain / type / powder immunity rules
-- no exact cartridge handling for repeated Protect odds, priority-blocking subtleties, or every special-case move interaction
-- no full belief-state search over complete enemy move-set combinations
-- no deep multi-turn planning with transposition tables or advanced pruning
-- no exact move PP, choice lock, item consumption, hazard layers, or weather chip loops yet
+This belief helper is now used in:
 
-## Testing
+- pressure scoring
+- incoming threat estimation
+- protect scoring
+- switch scoring
+- Helping Hand scoring
+- screen / guard / safeguard scoring
+- taunt / disable / encore support heuristics
+- evaluator pressure, bench-quality, and tempo terms
 
-The engine now has a small Vitest regression harness covering core mechanics such as Fake Out, sleep wake-up, protect-family handling, `allAdjacent` collateral, stage correctness for setup / debuff moves, baseline status immunities, and the App-side engine-input signature.
+For fully known custom enemy sets, the behavior remains deterministic because there are no candidate moves to blend in.
 
-## Near-Term Goals
+## Evaluator
 
-The next milestones are:
+The evaluator still uses a handcrafted positional structure, but it now values more than raw HP:
 
-1. Improve probability modeling.
-   Move from coarse conservative/expected/optimistic turn branches toward more explicit branching for hit chance, misses, and important secondaries.
+- alive-count and HP advantage
+- immediate KO pressure
+- speed-control ownership and expiry timing
+- side-positioning value:
+  redirection, screens, guards, Ally Switch state
+- tempo:
+  Fake Out, priority, Protect pressure, Helping Hand/redirection threat
+- bench quality and switch safety
+- trap states:
+  Taunt, Encore, Disable, Protect loops
+- endgame conversion pressure
 
-2. Broaden move support.
-   Add more high-impact doubles support moves and edge-case interactions, especially around protection-breaking, disruption, redirection exceptions, and field control.
+The feature magnitudes were kept intentionally moderate so no single heuristic term dominates by accident.
 
-3. Improve hidden-information reasoning.
-   Replace the current inferred utility-move heuristics with better enemy archetype modeling, preset weighting, and uncertainty-aware search.
+## Selective Extensions
 
-4. Strengthen the evaluator.
-   Make the heuristic more position-aware so it better values tempo, board safety, support sequencing, and future switch quality.
+Deep mode can extend one more turn when explicit tactical triggers fire. The logic is intentionally simple and debuggable.
 
-5. Refactor UI integration.
-   Move more battle-engine-specific shaping logic out of `src/App.tsx` into dedicated engine adapters or view-model helpers.
+Current extension triggers:
 
-## Longer-Term Goals
+- imminent KO race
+- Tailwind / Trick Room about to expire
+- lock/trap pressure:
+  Encore, Disable, Protect states
+- positioning tricks:
+  redirection, Ally Switch
+- low-count endgames
 
-Longer-term, the project can evolve in one of two directions:
+Each extension reason is recorded in the PV diagnostics instead of being hidden.
 
-- a stronger tactical recommendation engine that remains approximate but fast and explainable
-- a much more faithful simulator with richer rules, deeper search, and eventually optional learned components for evaluation or opponent modeling
+## Diagnostics
 
-The current direction favors the first path first, then uses that stronger foundation to decide how much simulator fidelity is worth the added complexity.
+Each recommendation now exposes:
+
+- `elapsedMs`
+- `depthReached`
+- `searchNodes`
+- `resolveTurnCalls`
+- `generatedJointPlans`
+- `planPairEvaluations`
+- `ttHits`
+- `ttStores`
+- `cutoffs`
+- `branchModelUsed`
+- `objectiveMode`
+- `searchMode`
+- `enemyBeliefs`
+- `pv`
+
+The UI explanation panel surfaces:
+
+- recommended ally line
+- predicted enemy reply
+- worst-case reply
+- 2-3 turn PV
+- robust / likely / hybrid scores
+- enemy assumption summaries
+- search telemetry
+
+## UI Integration
+
+The battle-engine panel now exposes:
+
+- search mode:
+  `Fast`, `Balanced`, `Deep`
+- objective mode:
+  `Robust`, `Likely`, `Hybrid`
+- an explanation panel with PV and enemy assumptions
+
+The heavier search path is executed inside `search.worker.ts`. The UI terminates stale workers when the board or search settings change.
+
+## Testing and Benchmarking
+
+Regression coverage in `src/lib/engine/__tests__/core.regression.test.ts` now includes:
+
+- Trick Room setup/deny
+- Protect / Fake Out interactions
+- Wide Guard against spread pressure
+- belief-aware hidden-information denial
+- switching under immediate threat
+- deterministic deep-mode diagnostics shape
+
+Benchmarking:
+
+- `src/lib/engine/benchmark.ts` provides a small harness for comparing modes
+- `src/lib/engine/__tests__/search.bench.ts` provides a baseline benchmark case
+- run with:
+
+```bash
+npm run bench:engine
+```
+
+## Known Limitations
+
+The engine is stronger than before, but it is still approximate.
+
+Still simplified:
+
+- exact cartridge probability trees are not modeled
+- secondaries remain coarse branch policies rather than full distributions
+- there is no full hidden-information search over complete moveset combinations
+- transposition caching stores exact values only, not alpha/beta bounds
+- action likelihoods are heuristic, not learned policies
+- repeated Protect success odds, PP, hazards, item micro-rules, and many move-specific edge cases remain simplified
+- the evaluator is still handcrafted and local rather than trained
+
+## Recommended Next Steps
+
+1. Improve move fidelity for high-impact VGC mechanics:
+   repeated Protect odds, more redirection exceptions, Encore/Disable edge cases, item activation details.
+2. Add richer hidden-information modeling:
+   moveset-combination sampling, archetype-conditioned beliefs, and better enemy policy weighting.
+3. Add bound-aware TT entries and more selective ordering heuristics once current diagnostics stabilize.
+4. Expand benchmark fixtures so speed and strength can be compared on a broader tactical suite over time.
