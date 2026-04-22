@@ -1,3 +1,5 @@
+import type { SeededRngSnapshot } from "../rng/seededRng";
+
 export type BattleSideId = "p1" | "p2";
 
 export type ClauseSet = {
@@ -141,6 +143,7 @@ export type BattlePatch =
 export type BattleState = {
   format: FormatRules;
   seed: number;
+  rng: SeededRngSnapshot;
   phase: BattlePhase;
   field: FieldState;
   sides: Record<BattleSideId, SideState>;
@@ -197,12 +200,26 @@ export function createEmptyStatStages(): StatStageState {
   };
 }
 
+function cloneValue<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function createInitialRngSnapshot(seed: number): SeededRngSnapshot {
+  const normalizedSeed = seed >>> 0 || 0x6d2b79f5;
+  return {
+    seed: normalizedSeed,
+    state: normalizedSeed,
+    history: [],
+  };
+}
+
 export function createAuthoritativeBattleState(input: CreateAuthoritativeBattleStateInput): BattleState {
   const combatants = Object.fromEntries(
     Object.values(input.sides)
       .flatMap((side) => side.combatants)
-      .map((combatant) => [combatant.id, combatant]),
+      .map((combatant) => [combatant.id, cloneValue(combatant)]),
   );
+  const normalizedSeed = input.seed >>> 0;
 
   return {
     format: {
@@ -213,14 +230,15 @@ export function createAuthoritativeBattleState(input: CreateAuthoritativeBattleS
         ...input.format?.clauses,
       },
     },
-    seed: input.seed >>> 0,
+    seed: normalizedSeed,
+    rng: createInitialRngSnapshot(normalizedSeed),
     phase: "teamPreview",
     field: {
       turn: input.field?.turn ?? 0,
       weather: input.field?.weather ?? "none",
       terrain: input.field?.terrain ?? "none",
       trickRoomTurns: input.field?.trickRoomTurns ?? 0,
-      tailwindTurnsBySide: input.field?.tailwindTurnsBySide ?? {},
+      tailwindTurnsBySide: cloneValue(input.field?.tailwindTurnsBySide ?? {}),
     },
     sides: {
       p1: {
@@ -247,16 +265,16 @@ export function createAuthoritativeBattleState(input: CreateAuthoritativeBattleS
       p1: {
         sideId: "p1",
         teamOrder: [...(input.sides.p1.teamOrder ?? [...input.sides.p1.activeCombatantIds, ...input.sides.p1.benchCombatantIds])],
-        hiddenMoveIdsByCombatant: input.sides.p1.hiddenMoveIdsByCombatant ?? {},
-        hiddenAbilityIdsByCombatant: input.sides.p1.hiddenAbilityIdsByCombatant ?? {},
-        hiddenItemIdsByCombatant: input.sides.p1.hiddenItemIdsByCombatant ?? {},
+        hiddenMoveIdsByCombatant: cloneValue(input.sides.p1.hiddenMoveIdsByCombatant ?? {}),
+        hiddenAbilityIdsByCombatant: cloneValue(input.sides.p1.hiddenAbilityIdsByCombatant ?? {}),
+        hiddenItemIdsByCombatant: cloneValue(input.sides.p1.hiddenItemIdsByCombatant ?? {}),
       },
       p2: {
         sideId: "p2",
         teamOrder: [...(input.sides.p2.teamOrder ?? [...input.sides.p2.activeCombatantIds, ...input.sides.p2.benchCombatantIds])],
-        hiddenMoveIdsByCombatant: input.sides.p2.hiddenMoveIdsByCombatant ?? {},
-        hiddenAbilityIdsByCombatant: input.sides.p2.hiddenAbilityIdsByCombatant ?? {},
-        hiddenItemIdsByCombatant: input.sides.p2.hiddenItemIdsByCombatant ?? {},
+        hiddenMoveIdsByCombatant: cloneValue(input.sides.p2.hiddenMoveIdsByCombatant ?? {}),
+        hiddenAbilityIdsByCombatant: cloneValue(input.sides.p2.hiddenAbilityIdsByCombatant ?? {}),
+        hiddenItemIdsByCombatant: cloneValue(input.sides.p2.hiddenItemIdsByCombatant ?? {}),
       },
     },
     winnerSideId: null,
@@ -288,9 +306,9 @@ export function getPublicBattleState(state: BattleState, viewerSideId: BattleSid
   );
 
   return {
-    format: state.format,
+    format: cloneValue(state.format),
     phase: state.phase,
-    field: state.field,
+    field: cloneValue(state.field),
     sides: {
       p1: {
         id: state.sides.p1.id,

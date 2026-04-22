@@ -31,9 +31,9 @@ export class AuthoritativeKernelAdapter
       this.kernel.getChoiceRequests(state).find((request) => request.sideId === side) ?? {
         requestId: `${side}:${state.phase}:${state.field.turn}`,
         sideId: side,
-        kind: state.phase === "teamPreview" ? "teamPreview" : "turn",
+        kind: state.phase === "teamPreview" ? "teamPreview" : state.phase === "forcedReplacement" ? "forcedReplacement" : "turn",
         actorIds: [],
-        forced: false,
+        forced: state.phase === "forcedReplacement",
         options: [],
         source: "authoritative",
       }

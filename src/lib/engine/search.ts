@@ -456,6 +456,8 @@ function selectDeepSearchCandidates(
 
     return {
       plan,
+      // TODO: stage ordering is intentionally objective-agnostic for now. If deep-mode pruning starts
+      // dropping true robust-best lines in practice, switch this to an objective-aware staging score.
       orderingScore: context.budget.hybridLambda * worstRobust + (1 - context.budget.hybridLambda) * likely,
     };
   });

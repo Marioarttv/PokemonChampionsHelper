@@ -65,6 +65,154 @@ function appendReplayEvent(replay: ReplayLog, event: BattleEvent) {
   replay.events.push(event);
 }
 
+function getLeadCount(state: BattleState, sideId: BattleSideId) {
+  return Math.max(1, Math.min(2, state.privateState[sideId].teamOrder.length));
+}
+
+function buildCombinationOptions(values: string[], size: number) {
+  if (size <= 0 || values.length < size) {
+    return [];
+  }
+
+  const results: string[][] = [];
+  const current: string[] = [];
+
+  const walk = (startIndex: number) => {
+    if (current.length === size) {
+      results.push([...current]);
+      return;
+    }
+
+    for (let index = startIndex; index < values.length; index += 1) {
+      current.push(values[index]!);
+      walk(index + 1);
+      current.pop();
+    }
+  };
+
+  walk(0);
+  return results;
+}
+
+function getTeamPreviewOptions(state: BattleState, sideId: BattleSideId): ChoiceRequest["options"] {
+  const teamOrder = state.privateState[sideId].teamOrder.filter((combatantId) => {
+    const combatant = state.combatants[combatantId];
+    return Boolean(combatant && !combatant.fainted && combatant.currentHp > 0);
+  });
+  const leadCount = getLeadCount(state, sideId);
+
+  return buildCombinationOptions(teamOrder, leadCount).map((leadIds) => ({
+    id: `${sideId}:teamPreview:${leadIds.join(",")}`,
+    label: `Lead ${leadIds.join(" / ")}`,
+    disabledReason: null,
+    action: {
+      type: "teamPreview",
+      leadIds,
+    },
+  }));
+}
+
+function getForcedReplacementActorIds(state: BattleState, sideId: BattleSideId) {
+  return state.sides[sideId].activeCombatantIds.filter((combatantId) => {
+    const combatant = state.combatants[combatantId];
+    return Boolean(combatant && (combatant.fainted || combatant.currentHp <= 0));
+  });
+}
+
+function getForcedReplacementOptions(state: BattleState, sideId: BattleSideId): ChoiceRequest["options"] {
+  const actorIds = getForcedReplacementActorIds(state, sideId);
+  const activeIds = new Set(state.sides[sideId].activeCombatantIds);
+  const benchIds = state.sides[sideId].benchCombatantIds.filter((combatantId) => {
+    const combatant = state.combatants[combatantId];
+    return Boolean(combatant && !combatant.fainted && combatant.currentHp > 0 && !activeIds.has(combatantId));
+  });
+
+  return actorIds.flatMap((actorId) =>
+    benchIds.map((switchInId) => ({
+      id: `${sideId}:forcedReplacement:${actorId}:${switchInId}`,
+      label: `${actorId} -> ${switchInId}`,
+      disabledReason: null,
+      action: {
+        type: "switch",
+        actorId,
+        switchInId,
+      },
+    })),
+  );
+}
+
+function getChoiceRequestKind(state: BattleState): ChoiceRequest["kind"] {
+  if (state.phase === "teamPreview") {
+    return "teamPreview";
+  }
+  if (state.phase === "forcedReplacement") {
+    return "forcedReplacement";
+  }
+  return "turn";
+}
+
+function validateTeamPreviewChoice(state: BattleState, sideId: BattleSideId, action: ChosenAction | undefined) {
+  if (!action || action.type !== "teamPreview") {
+    throw new Error(`Expected a teamPreview action for ${sideId}.`);
+  }
+
+  const leadIds = [...action.leadIds];
+  const teamOrder = state.privateState[sideId].teamOrder;
+  const leadCount = getLeadCount(state, sideId);
+  if (leadIds.length !== leadCount) {
+    throw new Error(`Expected exactly ${leadCount} lead ids for ${sideId}, received ${leadIds.length}.`);
+  }
+  if (new Set(leadIds).size !== leadIds.length) {
+    throw new Error(`Duplicate lead ids are not legal for ${sideId}.`);
+  }
+
+  for (const leadId of leadIds) {
+    const combatant = state.combatants[leadId];
+    if (!teamOrder.includes(leadId)) {
+      throw new Error(`${leadId} is not on ${sideId}'s team preview roster.`);
+    }
+    if (!combatant || combatant.sideId !== sideId || combatant.fainted || combatant.currentHp <= 0) {
+      throw new Error(`${leadId} is not a legal living lead for ${sideId}.`);
+    }
+  }
+
+  return leadIds;
+}
+
+function applyTeamPreviewChoice(
+  state: BattleState,
+  sideId: BattleSideId,
+  leadIds: string[],
+  patches: BattlePatch[],
+) {
+  const sideState = state.sides[sideId];
+  const teamOrder = state.privateState[sideId].teamOrder;
+  const benchIds = teamOrder.filter((combatantId) => !leadIds.includes(combatantId));
+
+  sideState.activeCombatantIds = [...leadIds];
+  sideState.benchCombatantIds = [...benchIds];
+  patches.push({
+    op: "replace",
+    path: `/sides/${sideId}/activeCombatantIds`,
+    value: [...sideState.activeCombatantIds],
+  });
+  patches.push({
+    op: "replace",
+    path: `/sides/${sideId}/benchCombatantIds`,
+    value: [...sideState.benchCombatantIds],
+  });
+
+  for (const combatantId of teamOrder) {
+    const nextPosition = leadIds.indexOf(combatantId);
+    state.combatants[combatantId]!.position = nextPosition >= 0 ? nextPosition : null;
+    patches.push({
+      op: "replace",
+      path: `/combatants/${combatantId}/position`,
+      value: state.combatants[combatantId]!.position,
+    });
+  }
+}
+
 export function createAuthoritativeKernel(): AuthoritativeKernel {
   return {
     createBattle(input) {
@@ -77,18 +225,33 @@ export function createAuthoritativeKernel(): AuthoritativeKernel {
       return getPublicBattleState(state, viewerSideId);
     },
     getChoiceRequests(state) {
-      return state.pendingRequestIds.map((requestId) => ({
-        requestId,
-        sideId: requestId.startsWith("p2") ? "p2" : "p1",
-        kind: state.phase === "teamPreview" ? "teamPreview" : "turn",
-        actorIds: [],
-        forced: state.phase === "forcedReplacement",
-        options: [],
-        source: "authoritative",
-      }));
+      return state.pendingRequestIds.map((requestId) => {
+        const sideId = requestId.startsWith("p2") ? "p2" : "p1";
+        const kind = getChoiceRequestKind(state);
+        return {
+          requestId,
+          sideId,
+          kind,
+          actorIds:
+            kind === "teamPreview"
+              ? [...state.privateState[sideId].teamOrder]
+              : kind === "forcedReplacement"
+                ? getForcedReplacementActorIds(state, sideId)
+                : [...state.sides[sideId].activeCombatantIds],
+          forced: kind === "forcedReplacement",
+          options:
+            kind === "teamPreview"
+              ? getTeamPreviewOptions(state, sideId)
+              : kind === "forcedReplacement"
+                ? getForcedReplacementOptions(state, sideId)
+                : [],
+          source: "authoritative",
+        } satisfies ChoiceRequest;
+      });
     },
-    applyChoices(state, choices, rng = new SeededRNG(state.seed)) {
+    applyChoices(state, choices, rng) {
       const nextState = cloneState(state);
+      const localRng = rng ? rng.clone() : SeededRNG.fromSnapshot(state.rng);
       const replay = createReplayLog(nextState.format.id, nextState.seed, JSON.stringify(state));
       const patches: BattlePatch[] = [];
       const events: BattleEvent[] = [];
@@ -102,17 +265,19 @@ export function createAuthoritativeKernel(): AuthoritativeKernel {
         text: `Kernel step at ${nextState.phase}`,
         payload: {
           choiceSides: Object.keys(choices),
-          rng: rng.snapshot(),
+          rng: localRng.snapshot(),
         },
       });
 
       if (nextState.phase === "teamPreview") {
-        const bothSidesLocked =
-          choices.p1?.type === "teamPreview" &&
-          choices.p2?.type === "teamPreview";
-        if (bothSidesLocked) {
+        const p1Leads = validateTeamPreviewChoice(nextState, "p1", choices.p1);
+        const p2Leads = validateTeamPreviewChoice(nextState, "p2", choices.p2);
+
+        applyTeamPreviewChoice(nextState, "p1", p1Leads, patches);
+        applyTeamPreviewChoice(nextState, "p2", p2Leads, patches);
+        if (p1Leads.length > 0 && p2Leads.length > 0) {
           nextState.phase = "switchIn";
-          nextState.pendingRequestIds = ["p1:switchIn", "p2:switchIn"];
+          nextState.pendingRequestIds = [];
           patches.push({
             op: "replace",
             path: "/phase",
@@ -128,7 +293,11 @@ export function createAuthoritativeKernel(): AuthoritativeKernel {
             turn: nextState.field.turn,
             phase: "teamPreview",
             type: "teamPreview.locked",
-            text: "Team preview choices locked.",
+            text: "Team preview choices validated and applied.",
+            payload: {
+              p1Leads,
+              p2Leads,
+            },
           });
         }
       } else {
@@ -140,6 +309,13 @@ export function createAuthoritativeKernel(): AuthoritativeKernel {
             "Authoritative move resolution is scaffolded but not implemented yet; use the approximate adapter for live turn simulation.",
         });
       }
+
+      nextState.rng = localRng.snapshot();
+      patches.push({
+        op: "replace",
+        path: "/rng",
+        value: nextState.rng,
+      });
 
       replay.events.push(...events);
       replay.patches.push(...patches);

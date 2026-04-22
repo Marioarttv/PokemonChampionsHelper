@@ -44,15 +44,18 @@ Implemented now:
 - Gen 9 Doubles/VGC-oriented state containers
 - explicit public/private state separation
 - deterministic seed handling
+- persisted RNG snapshot in `BattleState`
 - replay/event/patch structures
 - named phase and hook vocabulary
-- team-preview state creation
+- team-preview request generation plus lead validation/application
+- dedicated `forcedReplacement` request kind generation
 - explicit unsupported-mechanic markers for unimplemented turn resolution
 
 Not implemented yet:
 
 - exact move execution
 - switch-in timing/effects
+- non-skeletal turn legality generation
 - target redirection and legality rewrites
 - priority ordering
 - damage/status/stat pipelines
@@ -66,7 +69,7 @@ Not implemented yet:
 Today:
 
 - `src/lib/engine/` is still the only working turn resolver for the browser helper UI.
-- `src/lib/sim/` is architecture and determinism scaffolding, not a full move-accurate resolver yet.
+- `src/lib/sim/` now has isolated state creation, cloned public projections, persisted RNG state, and validated team-preview application, but it is not a full move-accurate resolver yet.
 
 The authoritative path must never silently fake unsupported cartridge logic. Until a mechanic is implemented there, the kernel should emit an explicit unsupported marker.
 

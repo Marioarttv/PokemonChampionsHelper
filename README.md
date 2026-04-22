@@ -79,9 +79,10 @@ The engine is still a tactical approximation, not a full cartridge-accurate simu
 The new authoritative simulator scaffold under `src/lib/sim/` currently provides:
 
 - deterministic seeded RNG
-- serializable battle/public/private state types
+- serializable battle/public/private state types with isolated cloning
 - replay/event/patch structures
 - adapter boundaries for approximate and authoritative backends
+- validated team-preview lead application and dedicated forced-replacement request typing
 - explicit unsupported-mechanic markers instead of silent approximation on unimplemented authoritative turn resolution
 
 ## Near-Term Roadmap

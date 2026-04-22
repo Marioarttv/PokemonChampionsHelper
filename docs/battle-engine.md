@@ -118,6 +118,7 @@ Deep mode stages the search:
 3. re-search those plans with the full branch model
 
 The staging pass now computes enemy plans once per state instead of regenerating them per ally candidate.
+The staging score is still intentionally objective-agnostic, so deep-mode candidate pruning may eventually need an objective-aware refinement for edge-case robust lines.
 
 ## Hidden Information and Beliefs
 
