@@ -13,6 +13,7 @@ function serializeCombatant(combatant: BattleCombatantState) {
     combatant.disableTurns,
     combatant.disabledMoveId ?? "",
     combatant.helpingHandTurns,
+    combatant.protectStreak,
     combatant.lastMoveId ?? "",
     combatant.isProtected ? 1 : 0,
     combatant.isFlinched ? 1 : 0,

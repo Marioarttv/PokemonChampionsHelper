@@ -1,90 +1,60 @@
-import { getTypeFromLabel, type PokemonType } from "../data/typeChart";
+import type { PokemonType } from "../data/typeChart";
 import { getMultiplier } from "./effectiveness";
 import type { MoveRecord } from "./battleData";
 import type { DamageTerrain, DamageWeather } from "./damage";
 import {
   createBattleState,
   getDamagePreview,
-  getEffectiveSpeed,
   recommendBestPlan,
-  type BattleCombatantState,
-  type BattleMoveOption,
   type BattleState,
   type BattleStateMemberInput,
   type SearchBranchModel,
   type SearchDiagnostics,
 } from "./engine";
-import { getMoveRoleTags } from "./engine/moveRegistry";
-
-type PreviewRoleTag =
-  | "physical"
-  | "special"
-  | "priority"
-  | "spread"
-  | "tailwind"
-  | "trickRoom"
-  | "speedControl"
-  | "redirection"
-  | "wideGuard"
-  | "quickGuard"
-  | "fakeOut"
-  | "protect"
-  | "setup"
-  | "healing"
-  | "taunt"
-  | "encore"
-  | "disable"
-  | "helpingHand"
-  | "status"
-  | "weatherRain"
-  | "weatherSun"
-  | "weatherSand"
-  | "weatherSnow"
-  | "weatherRainAbuser"
-  | "weatherSunAbuser"
-  | "weatherSandAbuser"
-  | "weatherSnowAbuser"
-  | "intimidate"
-  | "statDropPunisher"
-  | "statDropPressure"
-  | "slowBreaker"
-  | "fastPressure";
+import {
+  buildCoverageDangerNotes,
+  buildCoverageReasons,
+  buildObjectiveBreakdown,
+  buildPredictedEnemyFoursSummary,
+} from "./teamPreview/explain";
+import {
+  collectThreatCentrality,
+  inferFourLikelihoodReasons,
+  predictEnemyBringDistribution,
+  predictEnemyLeadDistribution,
+  type EnemyFourLikelihoodInput,
+  type EnemyLeadLikelihoodInput,
+} from "./teamPreview/likelihood";
+import {
+  applyThreatLikelihoods,
+  buildEnemyThreats,
+  buildPreviewCombatantMetas,
+  buildPreviewDamageMatrix,
+  buildPreviewThreatProfile,
+  getWeakTypes,
+  getWeatherSetterKinds,
+  hasWeatherAbuser,
+  hasWeatherSetter,
+} from "./teamPreview/threats";
+import { buildThreatAnswerMatrix, evaluateFourThreatCoverage, evaluateLeadAlignment } from "./teamPreview/answers";
+import type {
+  AnswerScore,
+  CoverageSummaryEntry,
+  EnemyThreat,
+  FourCoverageEvaluation,
+  LeadAlignmentEvaluation,
+  MustAnswerThreatExplanation,
+  PredictedEnemyFour,
+  PreviewCombatantMeta,
+  PreviewDamageSnapshot,
+  PreviewObjectiveBreakdown,
+  PreviewRoleTag,
+  PreviewThreatProfile,
+  TeamPreviewObjectiveMode,
+  UncoveredThreatExplanation,
+} from "./teamPreview/types";
 
 type StrategyScoreBreakdown = Record<string, number>;
-
-type PreviewWeather = "rain" | "sun" | "sand" | "snow";
-
-type PreviewDamageSnapshot = {
-  averagePercent: number;
-  maxPercent: number;
-  move: BattleMoveOption | null;
-};
-
-type PreviewCombatantMeta = {
-  member: BattleStateMemberInput;
-  combatant: BattleCombatantState;
-  roleTags: Set<PreviewRoleTag>;
-  abilityKey: string;
-  itemKey: string;
-  speed: number;
-  damagingMoves: BattleMoveOption[];
-  primaryType: PokemonType | null;
-  secondaryType: PokemonType | null;
-  bulkyScore: number;
-};
-
-type PreviewThreatProfile = {
-  physicalShare: number;
-  specialShare: number;
-  spreadShare: number;
-  singleTargetShare: number;
-  priorityShare: number;
-  tailwindModeStrength: number;
-  trickRoomModeStrength: number;
-  weatherStrength: Record<PreviewWeather, number>;
-  statDropPressure: number;
-  statDropPunisherRisk: number;
-};
 
 type PreviewStrategy = {
   key: string;
@@ -116,6 +86,8 @@ type PreviewThreatLine = {
   sourceFour: ScoredPreviewFourChoice;
   threatScore: number;
   vector: number[];
+  probability: number;
+  threatIds: string[];
 };
 
 type PreviewStrategyCandidate = {
@@ -132,8 +104,22 @@ type RankedPreviewStrategy = {
 
 type MatrixSummary = {
   robustScore: number;
-  averageScore: number;
+  likelyScore: number;
+  hybridScore: number;
   previewValue: number;
+};
+
+type PreviewPreparation = {
+  rankedAllyFours: ScoredPreviewFourChoice[];
+  rankedEnemyFours: ScoredPreviewFourChoice[];
+  enemyPredictions: PredictedEnemyFour[];
+  enemyThreats: EnemyThreat[];
+  answerMap: Map<string, AnswerScore>;
+  coverageByFourKey: Map<string, FourCoverageEvaluation>;
+  objectiveMode: TeamPreviewObjectiveMode;
+  coarseStageMs: number;
+  allyFourChoiceCount: number;
+  enemyFourChoiceCount: number;
 };
 
 type TacticalCellEvaluation = {
@@ -191,6 +177,11 @@ export type TeamPreviewRecommendation = {
   reasons: TeamPreviewReason[];
   dangerNotes: string[];
   alternatives: TeamPreviewAlternative[];
+  predictedEnemyFours?: Array<{ four: number[]; lead?: [number, number] | null; probability: number; reasons: string[] }>;
+  mustAnswerThreats?: MustAnswerThreatExplanation[];
+  uncoveredThreats?: UncoveredThreatExplanation[];
+  coverageSummary?: CoverageSummaryEntry[];
+  objectiveBreakdown?: PreviewObjectiveBreakdown;
   candidateCounts: {
     allyStrategies: number;
     enemyStrategies: number;
@@ -226,6 +217,13 @@ export type TeamPreviewOptions = {
   tacticalDepth?: number;
   maxJointPlansPerSide?: number;
   maxIndividualActionsPerActor?: number;
+  previewObjectiveMode?: TeamPreviewObjectiveMode;
+  enemyBringTemperature?: number;
+  enemyBringProbabilityFloor?: number;
+  enemyLeadTemperature?: number;
+  enemyTopMassRetention?: number;
+  mustAnswerThreatWeight?: number;
+  overloadPenaltyWeight?: number;
 };
 
 const DEFAULT_SOLVER_MODE: TeamPreviewSolverMode = "sparse";
@@ -239,6 +237,11 @@ const DEFAULT_MAX_CANDIDATES = 8;
 const DEFAULT_TACTICAL_DEPTH = 2;
 const DEFAULT_MAX_JOINT_PLANS = 6;
 const DEFAULT_MAX_INDIVIDUAL_ACTIONS = 4;
+const DEFAULT_PREVIEW_OBJECTIVE_MODE: TeamPreviewObjectiveMode = "hybrid";
+const DEFAULT_ENEMY_BRING_TEMPERATURE = 650;
+const DEFAULT_ENEMY_LEAD_TEMPERATURE = 320;
+const DEFAULT_ENEMY_PROBABILITY_FLOOR = 0.03;
+const DEFAULT_ENEMY_TOP_MASS_RETENTION = 0.88;
 
 const PREVIEW_FAST_PROFILE: PreviewTacticalProfile = {
   key: "preview-fast",
@@ -255,27 +258,6 @@ const PREVIEW_REFINE_PROFILE: PreviewTacticalProfile = {
   maxIndividualActionsPerActor: 3,
   branchModel: "expectedOnly",
 };
-
-const WEATHER_SETTER_ABILITIES: Record<PreviewWeather, string[]> = {
-  rain: ["drizzle"],
-  sun: ["drought"],
-  sand: ["sandstream"],
-  snow: ["snowwarning"],
-};
-
-const WEATHER_ABUSER_ABILITIES: Record<PreviewWeather, string[]> = {
-  rain: ["swiftswim", "raindish", "hydration"],
-  sun: ["chlorophyll", "solarpower"],
-  sand: ["sandrush", "sandforce", "sandveil"],
-  snow: ["slushrush", "icebody", "snowcloak"],
-};
-
-const STAT_DROP_PUNISH_ABILITIES = new Set([
-  "defiant",
-  "competitive",
-  "contrary",
-  "mirrorarmor",
-]);
 
 const FEATURE_LABELS: Record<string, string> = {
   offensive_pressure: "Offensive pressure",
@@ -298,6 +280,9 @@ const FEATURE_LABELS: Record<string, string> = {
   stat_drop_punish_risk: "Stat-drop punish risk",
   speed_trigger_value: "Triggered speed swing",
   anti_speed_synergy: "Speed-mode conflict",
+  must_answer_coverage: "Must-answer threat coverage",
+  answer_overload: "Overloaded answer tax",
+  lead_alignment: "Lead alignment into likely enemy leads",
 };
 
 function normalizeKey(value: string | null | undefined) {
@@ -373,252 +358,12 @@ function createReferenceState(options: TeamPreviewOptions) {
   });
 }
 
-function getRoleTags(combatant: BattleCombatantState) {
-  const tags = new Set<PreviewRoleTag>();
-  const abilityKey = normalizeKey(combatant.abilityName ?? combatant.abilityId);
-
-  if (abilityKey === "intimidate") {
-    tags.add("intimidate");
-    tags.add("statDropPressure");
-  }
-  if (STAT_DROP_PUNISH_ABILITIES.has(abilityKey)) {
-    tags.add("statDropPunisher");
-  }
-
-  for (const [weather, abilities] of Object.entries(WEATHER_SETTER_ABILITIES) as Array<[PreviewWeather, string[]]>) {
-    if (abilities.includes(abilityKey)) {
-      tags.add(
-        weather === "rain"
-          ? "weatherRain"
-          : weather === "sun"
-            ? "weatherSun"
-            : weather === "sand"
-              ? "weatherSand"
-              : "weatherSnow",
-      );
-    }
-  }
-
-  for (const [weather, abilities] of Object.entries(WEATHER_ABUSER_ABILITIES) as Array<[PreviewWeather, string[]]>) {
-    if (abilities.includes(abilityKey)) {
-      tags.add(
-        weather === "rain"
-          ? "weatherRainAbuser"
-          : weather === "sun"
-            ? "weatherSunAbuser"
-            : weather === "sand"
-              ? "weatherSandAbuser"
-              : "weatherSnowAbuser",
-      );
-    }
-  }
-
-  for (const move of combatant.knownMoves) {
-    for (const roleTag of getMoveRoleTags(move)) {
-      tags.add(roleTag as PreviewRoleTag);
-    }
-  }
-
-  return tags;
-}
-
-function buildMeta(state: BattleState, members: BattleStateMemberInput[]) {
-  return members
-    .map<PreviewCombatantMeta | null>((member) => {
-      const combatant = state.combatants[member.id];
-      if (!combatant) {
-        return null;
-      }
-
-      const primaryType = getTypeFromLabel(combatant.pokemon.types[0]) ?? null;
-      const secondaryType = getTypeFromLabel(combatant.pokemon.types[1] ?? "") ?? null;
-      const speed = getEffectiveSpeed(state, combatant.id);
-      const bulkyScore =
-        combatant.maxHp *
-        ((combatant.pokemon.baseStats.def + combatant.pokemon.baseStats.spd) / 2);
-      const roleTags = getRoleTags(combatant);
-
-      if (speed <= 95 && combatant.knownMoves.some((move) => move.category !== null)) {
-        roleTags.add("slowBreaker");
-      }
-      if (speed >= 140 && combatant.knownMoves.some((move) => move.category !== null)) {
-        roleTags.add("fastPressure");
-      }
-
-      return {
-        member,
-        combatant,
-        roleTags,
-        abilityKey: normalizeKey(combatant.abilityName ?? combatant.abilityId),
-        itemKey: normalizeKey(combatant.itemName ?? combatant.itemId),
-        speed,
-        damagingMoves: combatant.knownMoves.filter((move) => move.category !== null),
-        primaryType,
-        secondaryType,
-        bulkyScore,
-      } satisfies PreviewCombatantMeta;
-    })
-    .filter((entry): entry is PreviewCombatantMeta => Boolean(entry));
-}
-
-function getBestDamageSnapshot(state: BattleState, attacker: PreviewCombatantMeta, defender: PreviewCombatantMeta) {
-  return attacker.damagingMoves.reduce<PreviewDamageSnapshot>(
-    (best, move) => {
-      const preview = getDamagePreview(state, attacker.combatant.id, defender.combatant.id, move);
-      if (!preview) {
-        return best;
-      }
-
-      if (preview.estimate.averagePercent > best.averagePercent) {
-        return {
-          averagePercent: preview.estimate.averagePercent,
-          maxPercent: preview.estimate.maxPercent,
-          move,
-        };
-      }
-
-      if (
-        preview.estimate.averagePercent === best.averagePercent &&
-        preview.estimate.maxPercent > best.maxPercent
-      ) {
-        return {
-          averagePercent: preview.estimate.averagePercent,
-          maxPercent: preview.estimate.maxPercent,
-          move,
-        };
-      }
-
-      return best;
-    },
-    { averagePercent: 0, maxPercent: 0, move: null },
-  );
-}
-
-function buildDamageMatrix(
-  state: BattleState,
-  attackers: PreviewCombatantMeta[],
-  defenders: PreviewCombatantMeta[],
-) {
-  const matrix = new Map<string, PreviewDamageSnapshot>();
-
-  for (const attacker of attackers) {
-    for (const defender of defenders) {
-      matrix.set(
-        `${attacker.combatant.id}->${defender.combatant.id}`,
-        getBestDamageSnapshot(state, attacker, defender),
-      );
-    }
-  }
-
-  return matrix;
-}
-
 function getMatrixEntry(
   matrix: Map<string, PreviewDamageSnapshot>,
   attackerId: string,
   defenderId: string,
 ) {
   return matrix.get(`${attackerId}->${defenderId}`) ?? { averagePercent: 0, maxPercent: 0, move: null };
-}
-
-function buildThreatProfile(team: PreviewCombatantMeta[]) {
-  const damagingMoves = team.flatMap((meta) => meta.damagingMoves);
-  const damageWeight = Math.max(
-    1,
-    damagingMoves.reduce((sum, move) => sum + Math.max(1, move.basePower ?? 0), 0),
-  );
-
-  const physicalWeight = damagingMoves
-    .filter((move) => move.category === "physical")
-    .reduce((sum, move) => sum + Math.max(1, move.basePower ?? 0), 0);
-  const specialWeight = damagingMoves
-    .filter((move) => move.category === "special")
-    .reduce((sum, move) => sum + Math.max(1, move.basePower ?? 0), 0);
-  const spreadWeight = damagingMoves
-    .filter((move) => move.isSpreadMove)
-    .reduce((sum, move) => sum + Math.max(1, move.basePower ?? 0), 0);
-  const priorityMoves = damagingMoves.filter((move) => move.priority > 0).length;
-
-  const weatherStrength = {
-    rain: 0,
-    sun: 0,
-    sand: 0,
-    snow: 0,
-  };
-
-  for (const meta of team) {
-    if (meta.roleTags.has("weatherRain")) {
-      weatherStrength.rain += 0.7;
-    }
-    if (meta.roleTags.has("weatherRainAbuser")) {
-      weatherStrength.rain += 0.5;
-    }
-    if (meta.roleTags.has("weatherSun")) {
-      weatherStrength.sun += 0.7;
-    }
-    if (meta.roleTags.has("weatherSunAbuser")) {
-      weatherStrength.sun += 0.5;
-    }
-    if (meta.roleTags.has("weatherSand")) {
-      weatherStrength.sand += 0.7;
-    }
-    if (meta.roleTags.has("weatherSandAbuser")) {
-      weatherStrength.sand += 0.5;
-    }
-    if (meta.roleTags.has("weatherSnow")) {
-      weatherStrength.snow += 0.7;
-    }
-    if (meta.roleTags.has("weatherSnowAbuser")) {
-      weatherStrength.snow += 0.5;
-    }
-  }
-
-  return {
-    physicalShare: physicalWeight / damageWeight,
-    specialShare: specialWeight / damageWeight,
-    spreadShare: spreadWeight / damageWeight,
-    singleTargetShare: clamp(1 - spreadWeight / damageWeight, 0, 1),
-    priorityShare: damagingMoves.length > 0 ? priorityMoves / damagingMoves.length : 0,
-    tailwindModeStrength: clamp(
-      team.reduce(
-        (sum, meta) =>
-          sum +
-          (meta.roleTags.has("tailwind") ? 0.8 : 0) +
-          (meta.roleTags.has("speedControl") ? 0.25 : 0) +
-          (meta.roleTags.has("fastPressure") ? 0.2 : 0),
-        0,
-      ) / Math.max(1, team.length),
-      0,
-      1,
-    ),
-    trickRoomModeStrength: clamp(
-      team.reduce(
-        (sum, meta) =>
-          sum +
-          (meta.roleTags.has("trickRoom") ? 0.9 : 0) +
-          (meta.roleTags.has("slowBreaker") ? 0.3 : 0),
-        0,
-      ) / Math.max(1, team.length),
-      0,
-      1,
-    ),
-    weatherStrength: {
-      rain: clamp(weatherStrength.rain / Math.max(1, team.length), 0, 1),
-      sun: clamp(weatherStrength.sun / Math.max(1, team.length), 0, 1),
-      sand: clamp(weatherStrength.sand / Math.max(1, team.length), 0, 1),
-      snow: clamp(weatherStrength.snow / Math.max(1, team.length), 0, 1),
-    },
-    statDropPressure: clamp(
-      team.filter((meta) => meta.roleTags.has("statDropPressure")).length / Math.max(1, team.length),
-      0,
-      1,
-    ),
-    statDropPunisherRisk: clamp(
-      team.filter((meta) => meta.roleTags.has("statDropPunisher")).length / Math.max(1, team.length),
-      0,
-      1,
-    ),
-  } satisfies PreviewThreatProfile;
 }
 
 function addScore(breakdown: StrategyScoreBreakdown, feature: string, value: number) {
@@ -703,23 +448,6 @@ function getDamagingMoveTypeShare(team: PreviewCombatantMeta[], type: PokemonTyp
 
 function hasDamagingMoveType(meta: PreviewCombatantMeta, type: PokemonType) {
   return meta.damagingMoves.some((move) => normalizeKey(move.type) === type);
-}
-
-function getWeatherSetterKinds(meta: PreviewCombatantMeta) {
-  const weather: PreviewWeather[] = [];
-  if (meta.roleTags.has("weatherRain")) {
-    weather.push("rain");
-  }
-  if (meta.roleTags.has("weatherSun")) {
-    weather.push("sun");
-  }
-  if (meta.roleTags.has("weatherSand")) {
-    weather.push("sand");
-  }
-  if (meta.roleTags.has("weatherSnow")) {
-    weather.push("snow");
-  }
-  return weather;
 }
 
 function getWeatherControlValue(
@@ -924,36 +652,6 @@ function scoreCombatant(
   }
 
   return breakdown;
-}
-
-function hasWeatherSetter(meta: PreviewCombatantMeta, weather: PreviewWeather) {
-  return (
-    (weather === "rain" && meta.roleTags.has("weatherRain")) ||
-    (weather === "sun" && meta.roleTags.has("weatherSun")) ||
-    (weather === "sand" && meta.roleTags.has("weatherSand")) ||
-    (weather === "snow" && meta.roleTags.has("weatherSnow"))
-  );
-}
-
-function hasWeatherAbuser(meta: PreviewCombatantMeta, weather: PreviewWeather) {
-  return (
-    (weather === "rain" && meta.roleTags.has("weatherRainAbuser")) ||
-    (weather === "sun" && meta.roleTags.has("weatherSunAbuser")) ||
-    (weather === "sand" && meta.roleTags.has("weatherSandAbuser")) ||
-    (weather === "snow" && meta.roleTags.has("weatherSnowAbuser"))
-  );
-}
-
-function getWeakTypes(meta: PreviewCombatantMeta) {
-  const primaryType = meta.primaryType;
-  const secondaryType = meta.secondaryType;
-
-  if (!primaryType) {
-    return [] as PokemonType[];
-  }
-
-  return (["normal", "fire", "water", "electric", "grass", "ice", "fighting", "poison", "ground", "flying", "psychic", "bug", "rock", "ghost", "dragon", "dark", "steel", "fairy"] as PokemonType[])
-    .filter((attackType) => getMultiplier(attackType, primaryType, secondaryType) > 1);
 }
 
 function estimatePairSpreadThreat(
@@ -1177,7 +875,7 @@ function scoreFourChoice(
 ) {
   const metaByIndex = getMetaByTeamIndex(metas);
   const chosen = getChosenMetas(choice, metaByIndex);
-  const chosenProfile = buildThreatProfile(chosen);
+  const chosenProfile = buildPreviewThreatProfile(chosen);
   const breakdown: StrategyScoreBreakdown = {};
 
   for (const meta of chosen) {
@@ -1312,7 +1010,7 @@ function scoreStrategy(
   }
 
   const weatherSetters = ["rain", "sun", "sand", "snow"].reduce(
-    (count, weather) => count + chosen.filter((meta) => hasWeatherSetter(meta, weather as PreviewWeather)).length,
+    (count, weather) => count + chosen.filter((meta) => hasWeatherSetter(meta, weather as "rain" | "sun" | "sand" | "snow")).length,
     0,
   );
   if (weatherSetters > 1) {
@@ -1421,6 +1119,332 @@ function rankLeadStrategies(
     .sort((left, right) => right.coarseScore - left.coarseScore);
 }
 
+function getObjectiveMode(options: TeamPreviewOptions) {
+  return options.previewObjectiveMode ?? DEFAULT_PREVIEW_OBJECTIVE_MODE;
+}
+
+function getObjectiveScore(summary: MatrixSummary, objectiveMode: TeamPreviewObjectiveMode) {
+  if (objectiveMode === "robust") {
+    return summary.robustScore;
+  }
+  if (objectiveMode === "likely") {
+    return summary.likelyScore;
+  }
+  return summary.hybridScore;
+}
+
+function sortRowsByObjective(rows: RankedPreviewStrategy[], objectiveMode: TeamPreviewObjectiveMode) {
+  return [...rows].sort((left, right) => {
+    const objectiveDelta = getObjectiveScore(right.summary, objectiveMode) - getObjectiveScore(left.summary, objectiveMode);
+    if (objectiveDelta !== 0) {
+      return objectiveDelta;
+    }
+    if (left.summary.robustScore !== right.summary.robustScore) {
+      return right.summary.robustScore - left.summary.robustScore;
+    }
+    return right.summary.likelyScore - left.summary.likelyScore;
+  });
+}
+
+function applyCoverageToFours(
+  rankedFours: ScoredPreviewFourChoice[],
+  threats: EnemyThreat[],
+  answerMap: Map<string, AnswerScore>,
+  options: TeamPreviewOptions,
+) {
+  const coverageByFourKey = new Map<string, FourCoverageEvaluation>();
+  const reranked = rankedFours
+    .map((choice) => {
+      const coverage = evaluateFourThreatCoverage({
+        chosenFour: choice.choice.four,
+        threats,
+        answerMap,
+        mustAnswerThreatWeight: options.mustAnswerThreatWeight,
+        overloadPenaltyWeight: options.overloadPenaltyWeight,
+      });
+      coverageByFourKey.set(choice.choice.key, coverage);
+
+      const breakdown = cloneBreakdown(choice.breakdown);
+      addScore(breakdown, "must_answer_coverage", coverage.totalScore);
+      if (coverage.overloadPenalty > 0) {
+        addScore(breakdown, "answer_overload", -coverage.overloadPenalty);
+      }
+      return {
+        ...choice,
+        coarseScore: choice.coarseScore + coverage.totalScore,
+        breakdown,
+      } satisfies ScoredPreviewFourChoice;
+    })
+    .sort((left, right) => right.coarseScore - left.coarseScore);
+
+  return { reranked, coverageByFourKey };
+}
+
+function computeEnemyPredictions(options: {
+  rankedEnemyFours: ScoredPreviewFourChoice[];
+  enemyMetas: PreviewCombatantMeta[];
+  allyMetas: PreviewCombatantMeta[];
+  referenceState: BattleState;
+  enemyOutgoingMatrix: Map<string, PreviewDamageSnapshot>;
+  enemyIncomingMatrix: Map<string, PreviewDamageSnapshot>;
+  enemyProfile: PreviewThreatProfile;
+  allyProfile: PreviewThreatProfile;
+  threats: EnemyThreat[];
+  previewOptions: TeamPreviewOptions;
+  allyFocusFours?: number[][];
+}) {
+  const inputs: EnemyFourLikelihoodInput[] = options.rankedEnemyFours.map((choice) => {
+    const rankedLeads = rankLeadStrategies(
+      choice,
+      options.enemyMetas,
+      options.allyMetas,
+      options.referenceState,
+      options.enemyOutgoingMatrix,
+      options.enemyIncomingMatrix,
+      options.enemyProfile,
+      options.allyProfile,
+    );
+    const leadFlexibility = rankedLeads.filter((entry) => entry.coarseScore >= rankedLeads[0]?.coarseScore - 60).length;
+    const threatCentrality = collectThreatCentrality(options.threats, choice.choice.four);
+    let antiLikelyCoreScore = 0;
+    if (options.allyFocusFours?.length) {
+      antiLikelyCoreScore =
+        options.allyFocusFours.reduce((sum, allyFour) => {
+          const overlapPressure = allyFour.filter((teamIndex) => choice.choice.four.includes(teamIndex)).length;
+          return sum - overlapPressure * 12;
+        }, 0) / options.allyFocusFours.length;
+    }
+
+    return {
+      four: choice.choice.four,
+      coarseScore: choice.coarseScore,
+      members: choice.members,
+      threatCentrality,
+      leadFlexibility,
+      bestLeadScore: rankedLeads[0]?.coarseScore ?? choice.coarseScore,
+      antiLikelyCoreScore,
+      reasons: inferFourLikelihoodReasons(choice.members),
+    };
+  });
+
+  const predictions = predictEnemyBringDistribution({
+    choices: inputs,
+    temperature: options.previewOptions.enemyBringTemperature ?? DEFAULT_ENEMY_BRING_TEMPERATURE,
+    floor: options.previewOptions.enemyBringProbabilityFloor ?? DEFAULT_ENEMY_PROBABILITY_FLOOR,
+    topMassRetention: options.previewOptions.enemyTopMassRetention ?? DEFAULT_ENEMY_TOP_MASS_RETENTION,
+  });
+
+  return predictions.map((prediction) => {
+    const sourceFour = options.rankedEnemyFours.find((entry) => entry.choice.four.join(",") === prediction.four.join(","));
+    if (!sourceFour) {
+      return prediction;
+    }
+    const rankedLeads = rankLeadStrategies(
+      sourceFour,
+      options.enemyMetas,
+      options.allyMetas,
+      options.referenceState,
+      options.enemyOutgoingMatrix,
+      options.enemyIncomingMatrix,
+      options.enemyProfile,
+      options.allyProfile,
+    );
+    const leadInputs: EnemyLeadLikelihoodInput[] = rankedLeads.slice(0, options.previewOptions.maxLeadsPerFour ?? DEFAULT_MAX_LEADS_PER_FOUR).map((lead) => {
+      const leadSet = new Set(lead.strategy.lead);
+      const threatIds = options.threats
+        .filter((threat) => threat.memberTeamIndices.some((teamIndex) => leadSet.has(teamIndex)))
+        .sort((left, right) => right.importance - left.importance)
+        .slice(0, 3)
+        .map((threat) => threat.id);
+      const modePressure = options.threats.reduce((sum, threat) => {
+        const memberHits = threat.memberTeamIndices.filter((teamIndex) => leadSet.has(teamIndex)).length;
+        if (memberHits === 0) {
+          return sum;
+        }
+        return sum + threat.importance * (threat.kind === "package" ? (memberHits === threat.memberTeamIndices.length ? 0.012 : 0.005) : 0.008);
+      }, 0);
+
+      return {
+        four: prediction.four,
+        lead: lead.strategy.lead,
+        coarseScore: lead.coarseScore,
+        threatIds,
+        modePressure,
+        reasons: threatIds.length > 0 ? [`lead threatens ${threatIds.length} top mode(s)`] : ["lead keeps their plan flexible"],
+      };
+    });
+    const leads = predictEnemyLeadDistribution({
+      candidates: leadInputs,
+      temperature: options.previewOptions.enemyLeadTemperature ?? DEFAULT_ENEMY_LEAD_TEMPERATURE,
+      floor: Math.max(0.04, (options.previewOptions.enemyBringProbabilityFloor ?? DEFAULT_ENEMY_PROBABILITY_FLOOR) * 1.5),
+    });
+
+    return {
+      ...prediction,
+      leads,
+      lead: leads[0]?.lead ?? null,
+    };
+  });
+}
+
+function buildThreatWeightsFromPredictions(predictions: PredictedEnemyFour[]) {
+  const bringWeights = new Map<number, number>();
+  const leadWeights = new Map<number, number>();
+  for (const prediction of predictions) {
+    for (const member of prediction.four) {
+      bringWeights.set(member, (bringWeights.get(member) ?? 0) + prediction.probability);
+    }
+    for (const lead of prediction.leads) {
+      for (const member of lead.lead) {
+        leadWeights.set(member, (leadWeights.get(member) ?? 0) + prediction.probability * lead.probability);
+      }
+    }
+  }
+  return { bringWeights, leadWeights };
+}
+
+function flattenEnemyLeads(predictions: PredictedEnemyFour[]) {
+  return predictions.flatMap((prediction) =>
+    prediction.leads.map((lead) => ({
+      ...lead,
+      probability: prediction.probability * lead.probability,
+    })),
+  );
+}
+
+function buildAllyStrategyCandidates(options: {
+  sourceFours: ScoredPreviewFourChoice[];
+  allyMetas: PreviewCombatantMeta[];
+  enemyMetas: PreviewCombatantMeta[];
+  referenceState: BattleState;
+  allyOutgoingMatrix: Map<string, PreviewDamageSnapshot>;
+  allyIncomingMatrix: Map<string, PreviewDamageSnapshot>;
+  allyProfile: PreviewThreatProfile;
+  enemyProfile: PreviewThreatProfile;
+  flattenedEnemyLeads: ReturnType<typeof flattenEnemyLeads>;
+  threats: EnemyThreat[];
+  answerMap: Map<string, AnswerScore>;
+  maxLeadsPerFour: number;
+}) {
+  return options.sourceFours
+    .flatMap((sourceFour) =>
+      rankLeadStrategies(
+        sourceFour,
+        options.allyMetas,
+        options.enemyMetas,
+        options.referenceState,
+        options.allyOutgoingMatrix,
+        options.allyIncomingMatrix,
+        options.allyProfile,
+        options.enemyProfile,
+      )
+        .map((candidate) => {
+          const leadAlignment = evaluateLeadAlignment({
+            allyLead: candidate.strategy.lead,
+            chosenFour: candidate.strategy.four,
+            threats: options.threats,
+            answerMap: options.answerMap,
+            predictedEnemyLeads: options.flattenedEnemyLeads,
+          });
+          const breakdown = cloneBreakdown(candidate.breakdown);
+          addScore(breakdown, "lead_alignment", leadAlignment.score);
+          return {
+            candidate: {
+              ...candidate,
+              coarseScore: candidate.coarseScore + leadAlignment.score,
+              breakdown,
+            },
+            sourceFour,
+            cheapRobustScore: candidate.coarseScore + leadAlignment.score,
+            cheapAverageScore: candidate.coarseScore + leadAlignment.score,
+          } satisfies PreviewStrategyCandidate;
+        })
+        .sort((left, right) => right.candidate.coarseScore - left.candidate.coarseScore)
+        .slice(0, options.maxLeadsPerFour),
+    )
+    .sort((left, right) => right.candidate.coarseScore - left.candidate.coarseScore);
+}
+
+function buildThreatLinesFromPredictions(options: {
+  predictions: PredictedEnemyFour[];
+  rankedEnemyFours: ScoredPreviewFourChoice[];
+  enemyMetas: PreviewCombatantMeta[];
+  allyMetas: PreviewCombatantMeta[];
+  referenceState: BattleState;
+  enemyOutgoingMatrix: Map<string, PreviewDamageSnapshot>;
+  enemyIncomingMatrix: Map<string, PreviewDamageSnapshot>;
+  enemyProfile: PreviewThreatProfile;
+  allyProfile: PreviewThreatProfile;
+  enemyMetaByIndex: Map<number, PreviewCombatantMeta>;
+  threats: EnemyThreat[];
+  coverageByFourKey: Map<string, FourCoverageEvaluation>;
+  allyFourBeam: ScoredPreviewFourChoice[];
+  maxThreatLines: number;
+}) {
+  const raw = options.predictions.flatMap((prediction) => {
+    const sourceFour = options.rankedEnemyFours.find((entry) => entry.choice.four.join(",") === prediction.four.join(","));
+    if (!sourceFour) {
+      return [];
+    }
+    return prediction.leads.map((leadPrediction) => {
+      const strategy = createStrategy(prediction.four, leadPrediction.lead);
+      const candidate = scoreStrategy(
+        strategy,
+        options.enemyMetas,
+        options.allyMetas,
+        options.referenceState,
+        options.enemyOutgoingMatrix,
+        options.enemyIncomingMatrix,
+        options.enemyProfile,
+        options.allyProfile,
+      );
+      const leadSet = new Set(leadPrediction.lead);
+      const representedThreats = options.threats
+        .filter((threat) => threat.memberTeamIndices.some((teamIndex) => leadSet.has(teamIndex)))
+        .sort((left, right) => right.importance - left.importance)
+        .slice(0, 3);
+      const uncoveredPressure = options.allyFourBeam.reduce((sum, allyFour) => {
+        const coverage = options.coverageByFourKey.get(allyFour.choice.key);
+        return sum + (coverage?.uncoveredThreats.some((entry) => representedThreats.some((threat) => threat.id === entry.threatId)) ? 1 : 0);
+      }, 0);
+      const threatScore =
+        candidate.coarseScore * 0.55 +
+        representedThreats.reduce((sum, threat) => sum + threat.importance * 0.18, 0) +
+        leadPrediction.probability * prediction.probability * 850 +
+        uncoveredPressure * 42;
+      return {
+        candidate,
+        sourceFour,
+        threatScore,
+        vector: buildThreatVector(candidate, sourceFour, options.enemyMetaByIndex),
+        probability: prediction.probability * leadPrediction.probability,
+        threatIds: representedThreats.map((threat) => threat.id),
+      } satisfies PreviewThreatLine;
+    });
+  });
+
+  const selected = selectDiverseThreatLines(raw, options.maxThreatLines);
+  const majorUncoveredThreatIds = options.allyFourBeam
+    .flatMap((four) => options.coverageByFourKey.get(four.choice.key)?.uncoveredThreats ?? [])
+    .sort((left, right) => right.severity - left.severity)
+    .slice(0, 3)
+    .map((threat) => threat.threatId);
+
+  for (const threatId of majorUncoveredThreatIds) {
+    if (selected.some((line) => line.threatIds.includes(threatId))) {
+      continue;
+    }
+    const candidate = raw
+      .filter((line) => line.threatIds.includes(threatId))
+      .sort((left, right) => right.probability - left.probability || right.threatScore - left.threatScore)[0];
+    if (candidate) {
+      selected.push(candidate);
+    }
+  }
+
+  return selectDiverseThreatLines(selected, options.maxThreatLines);
+}
+
 function scoreCheapLeadMatchup(
   allyCandidate: PreviewStrategyCandidate,
   enemyThreat: PreviewThreatLine,
@@ -1520,27 +1544,37 @@ function summarizeCandidateAgainstThreats(
   refineCells: Map<string, TacticalCellEvaluation>,
 ) {
   if (threatLines.length === 0) {
+    const robustScore = entry.cheapRobustScore;
+    const likelyScore = entry.cheapAverageScore;
+    const hybridScore = robustScore * 0.6 + likelyScore * 0.4;
     return {
-      robustScore: entry.cheapRobustScore,
-      averageScore: entry.cheapAverageScore,
-      previewValue: sigmoid(entry.cheapRobustScore / 14_000),
+      robustScore,
+      likelyScore,
+      hybridScore,
+      previewValue: sigmoid(hybridScore / 14_000),
     } satisfies MatrixSummary;
   }
 
-  const scores = threatLines.map((threat) => {
+  const scoredThreats = threatLines.map((threat) => {
     const refineCell = refineCells.get(`${PREVIEW_REFINE_PROFILE.key}::${entry.candidate.strategy.key}__${threat.candidate.strategy.key}`);
     if (refineCell) {
-      return refineCell.score;
+      return { score: refineCell.score, probability: threat.probability };
     }
-    return fastCells.get(`${PREVIEW_FAST_PROFILE.key}::${entry.candidate.strategy.key}__${threat.candidate.strategy.key}`)?.score ?? Number.NEGATIVE_INFINITY;
+    return {
+      score: fastCells.get(`${PREVIEW_FAST_PROFILE.key}::${entry.candidate.strategy.key}__${threat.candidate.strategy.key}`)?.score ?? Number.NEGATIVE_INFINITY,
+      probability: threat.probability,
+    };
   });
 
-  const robustScore = Math.min(...scores);
-  const averageScore = scores.reduce((sum, score) => sum + score, 0) / Math.max(1, scores.length);
+  const robustScore = Math.min(...scoredThreats.map((entry) => entry.score));
+  const probabilityMass = scoredThreats.reduce((sum, entry) => sum + entry.probability, 0) || 1;
+  const likelyScore = scoredThreats.reduce((sum, threat) => sum + threat.score * threat.probability, 0) / probabilityMass;
+  const hybridScore = robustScore * 0.6 + likelyScore * 0.4;
   return {
     robustScore,
-    averageScore,
-    previewValue: sigmoid(robustScore / 14_000),
+    likelyScore,
+    hybridScore,
+    previewValue: sigmoid(hybridScore / 14_000),
   } satisfies MatrixSummary;
 }
 
@@ -1549,25 +1583,27 @@ function rankCandidatesAgainstThreats(
   threatLines: PreviewThreatLine[],
   fastCells: Map<string, TacticalCellEvaluation>,
   refineCells: Map<string, TacticalCellEvaluation>,
+  objectiveMode: TeamPreviewObjectiveMode,
 ) {
-  return allyCandidates
+  return sortRowsByObjective(
+    allyCandidates
     .map((entry) => ({
       entry,
       summary: summarizeCandidateAgainstThreats(entry, threatLines, fastCells, refineCells),
-    }))
-    .sort((left, right) => {
-      if (left.summary.robustScore !== right.summary.robustScore) {
-        return right.summary.robustScore - left.summary.robustScore;
-      }
-      return right.summary.averageScore - left.summary.averageScore;
-    });
+    })),
+    objectiveMode,
+  );
 }
 
-function areTopCandidatesClose(rows: RankedPreviewStrategy[], refinementMargin: number) {
+function areTopCandidatesClose(
+  rows: RankedPreviewStrategy[],
+  refinementMargin: number,
+  objectiveMode: TeamPreviewObjectiveMode,
+) {
   if (rows.length < 2) {
     return false;
   }
-  return rows[0].summary.robustScore - rows[1].summary.robustScore <= refinementMargin;
+  return getObjectiveScore(rows[0].summary, objectiveMode) - getObjectiveScore(rows[1].summary, objectiveMode) <= refinementMargin;
 }
 
 function evaluateTacticalCell(
@@ -1739,10 +1775,125 @@ function buildReasons(breakdown: StrategyScoreBreakdown) {
     .slice(0, 5);
 }
 
+function buildPriorityReason(feature: string, delta: number): TeamPreviewReason {
+  return {
+    feature,
+    label: FEATURE_LABELS[feature] ?? feature,
+    delta,
+  };
+}
+
+function preparePreviewContext(
+  options: TeamPreviewOptions,
+  referenceState: BattleState,
+  allyMetas: PreviewCombatantMeta[],
+  enemyMetas: PreviewCombatantMeta[],
+  allyProfile: PreviewThreatProfile,
+  enemyProfile: PreviewThreatProfile,
+  allyOutgoingMatrix: Map<string, PreviewDamageSnapshot>,
+  allyIncomingMatrix: Map<string, PreviewDamageSnapshot>,
+  enemyOutgoingMatrix: Map<string, PreviewDamageSnapshot>,
+  enemyIncomingMatrix: Map<string, PreviewDamageSnapshot>,
+) {
+  const coarseStarted = nowMs();
+  const objectiveMode = getObjectiveMode(options);
+  const allyFourChoices = enumerateFourChoices(allyMetas);
+  const enemyFourChoices = enumerateFourChoices(enemyMetas);
+
+  const rankedAllyFoursStructural = allyFourChoices
+    .map((choice) =>
+      scoreFourChoice(
+        choice,
+        allyMetas,
+        enemyMetas,
+        referenceState,
+        allyOutgoingMatrix,
+        allyIncomingMatrix,
+        allyProfile,
+        enemyProfile,
+      ),
+    )
+    .sort((left, right) => right.coarseScore - left.coarseScore);
+
+  const rankedEnemyFours = enemyFourChoices
+    .map((choice) =>
+      scoreFourChoice(
+        choice,
+        enemyMetas,
+        allyMetas,
+        referenceState,
+        enemyOutgoingMatrix,
+        enemyIncomingMatrix,
+        enemyProfile,
+        allyProfile,
+      ),
+    )
+    .sort((left, right) => right.coarseScore - left.coarseScore);
+
+  const initialThreats = buildEnemyThreats(referenceState, enemyMetas, allyMetas);
+  const initialPredictions = computeEnemyPredictions({
+    rankedEnemyFours,
+    enemyMetas,
+    allyMetas,
+    referenceState,
+    enemyOutgoingMatrix,
+    enemyIncomingMatrix,
+    enemyProfile,
+    allyProfile,
+    threats: initialThreats,
+    previewOptions: options,
+  });
+  const initialWeights = buildThreatWeightsFromPredictions(initialPredictions);
+  const weightedThreats = applyThreatLikelihoods(initialThreats, initialWeights.bringWeights, initialWeights.leadWeights);
+  const initialAnswerMap = buildThreatAnswerMatrix(referenceState, allyMetas, enemyMetas, weightedThreats);
+  const initialCoverage = applyCoverageToFours(rankedAllyFoursStructural, weightedThreats, initialAnswerMap, options);
+  const allyFocusFours = initialCoverage.reranked
+    .slice(0, options.allyFourCandidates ?? DEFAULT_ALLY_FOUR_CANDIDATES)
+    .map((entry) => entry.choice.four);
+
+  const refinedPredictions = computeEnemyPredictions({
+    rankedEnemyFours,
+    enemyMetas,
+    allyMetas,
+    referenceState,
+    enemyOutgoingMatrix,
+    enemyIncomingMatrix,
+    enemyProfile,
+    allyProfile,
+    threats: weightedThreats,
+    previewOptions: options,
+    allyFocusFours,
+  });
+  const refinedWeights = buildThreatWeightsFromPredictions(refinedPredictions);
+  const enemyThreats = applyThreatLikelihoods(initialThreats, refinedWeights.bringWeights, refinedWeights.leadWeights);
+  const answerMap = buildThreatAnswerMatrix(referenceState, allyMetas, enemyMetas, enemyThreats);
+  const { reranked: rankedAllyFours, coverageByFourKey } = applyCoverageToFours(
+    rankedAllyFoursStructural,
+    enemyThreats,
+    answerMap,
+    options,
+  );
+
+  return {
+    rankedAllyFours,
+    rankedEnemyFours,
+    enemyPredictions: refinedPredictions,
+    enemyThreats,
+    answerMap,
+    coverageByFourKey,
+    objectiveMode,
+    coarseStageMs: nowMs() - coarseStarted,
+    allyFourChoiceCount: allyFourChoices.length,
+    enemyFourChoiceCount: enemyFourChoices.length,
+  } satisfies PreviewPreparation;
+}
+
 function buildRecommendationFromRows(
   rows: RankedPreviewStrategy[],
+  objectiveMode: TeamPreviewObjectiveMode,
   allyMetas: PreviewCombatantMeta[],
   enemyProfile: PreviewThreatProfile,
+  preparation: PreviewPreparation,
   candidateCounts: TeamPreviewRecommendation["candidateCounts"],
   diagnostics: TeamPreviewDiagnostics,
 ) {
@@ -1772,20 +1923,61 @@ function buildRecommendationFromRows(
       four: entry.entry.candidate.strategy.four,
       lead: entry.entry.candidate.strategy.lead,
       robustScore: entry.summary.robustScore,
-      averageScore: entry.summary.averageScore,
+      averageScore: entry.summary.likelyScore,
       previewValue: entry.summary.previewValue,
     }));
+
+  const bestCoverage =
+    preparation.coverageByFourKey.get(`four:${best.entry.candidate.strategy.four.join(",")}`) ??
+    ({
+      totalScore: 0,
+      uncoveredPenalty: 0,
+      overloadPenalty: 0,
+      secondaryCoverageBonus: 0,
+      packageDenialBonus: 0,
+      leadAlignmentBase: 0,
+      mustAnswerThreats: [],
+      uncoveredThreats: [],
+      coverageSummary: [],
+      uniqueAnswerSlots: [],
+    } satisfies FourCoverageEvaluation);
+  const structuralReasons = buildReasons(best.entry.candidate.breakdown);
+  const priorityFeatures = ["wide_guard_value", "lead_alignment"] as const;
+  for (const feature of priorityFeatures) {
+    const delta = best.entry.candidate.breakdown[feature] ?? 0;
+    if (delta > 0 && !structuralReasons.some((reason) => reason.feature === feature)) {
+      structuralReasons.push(buildPriorityReason(feature, delta));
+    }
+  }
+  const reasons = [
+    ...buildCoverageReasons(bestCoverage),
+    ...structuralReasons,
+  ].slice(0, 7);
+  const dangerNotes = [
+    ...getDangerNotes(best.entry.candidate, allyMetas, enemyProfile),
+    ...buildCoverageDangerNotes(bestCoverage),
+  ].slice(0, 5);
+  const objectiveSummary = {
+    robustScore: best.summary.robustScore,
+    likelyScore: best.summary.likelyScore,
+    hybridScore: best.summary.hybridScore,
+  };
 
   return {
     bestFour: best.entry.candidate.strategy.four,
     primaryLead: best.entry.candidate.strategy.lead,
     altLead,
-    previewValue: best.summary.previewValue,
+    previewValue: sigmoid(getObjectiveScore(best.summary, objectiveMode) / 14_000),
     robustScore: best.summary.robustScore,
-    averageScore: best.summary.averageScore,
-    reasons: buildReasons(best.entry.candidate.breakdown),
-    dangerNotes: getDangerNotes(best.entry.candidate, allyMetas, enemyProfile),
+    averageScore: best.summary.likelyScore,
+    reasons,
+    dangerNotes,
     alternatives,
+    predictedEnemyFours: buildPredictedEnemyFoursSummary(preparation.enemyPredictions),
+    mustAnswerThreats: bestCoverage.mustAnswerThreats.slice(0, 5),
+    uncoveredThreats: bestCoverage.uncoveredThreats.slice(0, 5),
+    coverageSummary: bestCoverage.coverageSummary,
+    objectiveBreakdown: buildObjectiveBreakdown(objectiveSummary),
     candidateCounts,
     diagnostics,
   } satisfies TeamPreviewRecommendation;
@@ -1793,6 +1985,7 @@ function buildRecommendationFromRows(
 
 function recommendTeamPreviewDense(
   options: TeamPreviewOptions,
+  preparation: PreviewPreparation,
   referenceState: BattleState,
   allyMetas: PreviewCombatantMeta[],
   enemyMetas: PreviewCombatantMeta[],
@@ -1805,44 +1998,43 @@ function recommendTeamPreviewDense(
 ) {
   const diagnostics = createPreviewDiagnostics("dense", options.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS);
   const start = nowMs();
+  diagnostics.coarseStageMs = preparation.coarseStageMs;
 
   const allyStrategies = enumerateStrategies(allyMetas);
   const enemyStrategies = enumerateStrategies(enemyMetas);
-
-  const coarseStarted = nowMs();
-  const allyRanked = allyStrategies
-    .map((strategy) =>
-      scoreStrategy(
-        strategy,
-        allyMetas,
-        enemyMetas,
-        referenceState,
-        allyOutgoingMatrix,
-        allyIncomingMatrix,
-        allyProfile,
-        enemyProfile,
-      ),
-    )
-    .sort((left, right) => right.coarseScore - left.coarseScore);
-
-  const enemyRanked = enemyStrategies
-    .map((strategy) =>
-      scoreStrategy(
-        strategy,
-        enemyMetas,
-        allyMetas,
-        referenceState,
-        enemyOutgoingMatrix,
-        enemyIncomingMatrix,
-        enemyProfile,
-        allyProfile,
-      ),
-    )
-    .sort((left, right) => right.coarseScore - left.coarseScore);
-  diagnostics.coarseStageMs = nowMs() - coarseStarted;
-
-  const allyCandidates = allyRanked.slice(0, options.maxCandidatesPerSide ?? DEFAULT_MAX_CANDIDATES);
-  const enemyCandidates = enemyRanked.slice(0, options.maxCandidatesPerSide ?? DEFAULT_MAX_CANDIDATES);
+  const flattenedEnemyLeads = flattenEnemyLeads(preparation.enemyPredictions);
+  const allyFourBeam = preparation.rankedAllyFours.slice(0, options.allyFourCandidates ?? DEFAULT_ALLY_FOUR_CANDIDATES);
+  const allyCandidates = buildAllyStrategyCandidates({
+    sourceFours: allyFourBeam,
+    allyMetas,
+    enemyMetas,
+    referenceState,
+    allyOutgoingMatrix,
+    allyIncomingMatrix,
+    allyProfile,
+    enemyProfile,
+    flattenedEnemyLeads,
+    threats: preparation.enemyThreats,
+    answerMap: preparation.answerMap,
+    maxLeadsPerFour: options.maxLeadsPerFour ?? DEFAULT_MAX_LEADS_PER_FOUR,
+  }).slice(0, options.maxCandidatesPerSide ?? DEFAULT_MAX_CANDIDATES);
+  const enemyMetaByIndex = getMetaByTeamIndex(enemyMetas);
+  const enemyThreatLines = buildThreatLinesFromPredictions({
+    predictions: preparation.enemyPredictions,
+    rankedEnemyFours: preparation.rankedEnemyFours,
+    enemyMetas,
+    allyMetas,
+    referenceState,
+    enemyOutgoingMatrix,
+    enemyIncomingMatrix,
+    enemyProfile,
+    allyProfile,
+    enemyMetaByIndex,
+    threats: preparation.enemyThreats,
+    coverageByFourKey: preparation.coverageByFourKey,
+    allyFourBeam,
+    maxThreatLines: options.maxCandidatesPerSide ?? DEFAULT_MAX_CANDIDATES,
+  });
   const fastCells = new Map<string, TacticalCellEvaluation>();
   const tacticalStarted = nowMs();
   const denseProfile = {
@@ -1854,12 +2046,12 @@ function recommendTeamPreviewDense(
   };
 
   for (const allyCandidate of allyCandidates) {
-    for (const enemyCandidate of enemyCandidates) {
+    for (const enemyCandidate of enemyThreatLines) {
       evaluateTacticalCell(
         options.ally,
         options.enemy,
-        allyCandidate.strategy,
-        enemyCandidate.strategy,
+        allyCandidate.candidate.strategy,
+        enemyCandidate.candidate.strategy,
         options,
         denseProfile,
         fastCells,
@@ -1868,70 +2060,32 @@ function recommendTeamPreviewDense(
     }
   }
   diagnostics.tacticalStageMs = nowMs() - tacticalStarted;
-  diagnostics.threatLineCount = enemyCandidates.length;
+  diagnostics.threatLineCount = enemyThreatLines.length;
   diagnostics.elapsedMs = nowMs() - start;
 
-  const rows: RankedPreviewStrategy[] = allyCandidates
-    .map((candidate) => ({
-      entry: {
-        candidate,
-        sourceFour: {
-          choice: { key: `dense:${candidate.strategy.four.join(",")}`, four: candidate.strategy.four },
-          coarseScore: candidate.coarseScore,
-          breakdown: cloneBreakdown(candidate.breakdown),
-          members: allyMetas.filter((meta) => candidate.strategy.four.includes(meta.member.teamIndex)),
-          profile: allyProfile,
-        },
-        cheapRobustScore: candidate.coarseScore,
-        cheapAverageScore: candidate.coarseScore,
-      },
-      summary: {
-        robustScore: Math.min(
-          ...enemyCandidates.map(
-            (enemyCandidate) =>
-              fastCells.get(`${denseProfile.key}::${candidate.strategy.key}__${enemyCandidate.strategy.key}`)?.score ??
-              Number.NEGATIVE_INFINITY,
-          ),
-        ),
-        averageScore:
-          enemyCandidates.reduce(
-            (sum, enemyCandidate) =>
-              sum +
-              (fastCells.get(`${denseProfile.key}::${candidate.strategy.key}__${enemyCandidate.strategy.key}`)?.score ??
-                Number.NEGATIVE_INFINITY),
-            0,
-          ) / Math.max(1, enemyCandidates.length),
-        previewValue: 0,
-      },
-    }))
-    .map((row) => ({
-      ...row,
-      summary: {
-        ...row.summary,
-        previewValue: sigmoid(row.summary.robustScore / 14_000),
-      },
-    }))
-    .sort((left, right) => {
-      if (left.summary.robustScore !== right.summary.robustScore) {
-        return right.summary.robustScore - left.summary.robustScore;
-      }
-      return right.summary.averageScore - left.summary.averageScore;
-    });
+  const rows = rankCandidatesAgainstThreats(
+    allyCandidates,
+    enemyThreatLines,
+    fastCells,
+    new Map<string, TacticalCellEvaluation>(),
+    preparation.objectiveMode,
+  );
 
-  return buildRecommendationFromRows(rows, allyMetas, enemyProfile, {
+  return buildRecommendationFromRows(rows, preparation.objectiveMode, allyMetas, enemyProfile, preparation, {
     allyStrategies: allyStrategies.length,
     enemyStrategies: enemyStrategies.length,
     allyCandidates: allyCandidates.length,
-    enemyCandidates: enemyCandidates.length,
-    allyFourCandidates: allyCandidates.length,
-    enemyFourCandidates: enemyCandidates.length,
-    threatLines: enemyCandidates.length,
+    enemyCandidates: enemyThreatLines.length,
+    allyFourCandidates: allyFourBeam.length,
+    enemyFourCandidates: preparation.rankedEnemyFours.length,
+    threatLines: enemyThreatLines.length,
     matrixCells: diagnostics.verifiedCells,
   }, diagnostics);
 }
 
 function recommendTeamPreviewSparse(
   options: TeamPreviewOptions,
+  preparation: PreviewPreparation,
   referenceState: BattleState,
   allyMetas: PreviewCombatantMeta[],
   enemyMetas: PreviewCombatantMeta[],
@@ -1951,116 +2105,67 @@ function recommendTeamPreviewSparse(
 
   const allyStrategies = enumerateStrategies(allyMetas);
   const enemyStrategies = enumerateStrategies(enemyMetas);
-  const allyFourChoices = enumerateFourChoices(allyMetas);
-  const enemyFourChoices = enumerateFourChoices(enemyMetas);
+  diagnostics.coarseStageMs = preparation.coarseStageMs;
 
-  const coarseStarted = nowMs();
-  const rankedAllyFours = allyFourChoices
-    .map((choice) =>
-      scoreFourChoice(
-        choice,
-        allyMetas,
-        enemyMetas,
-        referenceState,
-        allyOutgoingMatrix,
-        allyIncomingMatrix,
-        allyProfile,
-        enemyProfile,
-      ),
-    )
-    .sort((left, right) => right.coarseScore - left.coarseScore);
-
-  const rankedEnemyFours = enemyFourChoices
-    .map((choice) =>
-      scoreFourChoice(
-        choice,
-        enemyMetas,
-        allyMetas,
-        referenceState,
-        enemyOutgoingMatrix,
-        enemyIncomingMatrix,
-        enemyProfile,
-        allyProfile,
-      ),
-    )
-    .sort((left, right) => right.coarseScore - left.coarseScore);
-  diagnostics.coarseStageMs = nowMs() - coarseStarted;
-
-  const allyFourBeam = rankedAllyFours.slice(0, options.allyFourCandidates ?? DEFAULT_ALLY_FOUR_CANDIDATES);
-  const enemyFourBeam = rankedEnemyFours.slice(0, options.enemyFourCandidates ?? DEFAULT_ENEMY_FOUR_CANDIDATES);
+  const allyFourBeam = preparation.rankedAllyFours.slice(0, options.allyFourCandidates ?? DEFAULT_ALLY_FOUR_CANDIDATES);
   const maxLeadsPerFour = options.maxLeadsPerFour ?? DEFAULT_MAX_LEADS_PER_FOUR;
   const maxThreatLines = options.maxThreatLines ?? DEFAULT_MAX_THREAT_LINES;
+  const flattenedEnemyLeads = flattenEnemyLeads(preparation.enemyPredictions);
+  const threatLines = buildThreatLinesFromPredictions({
+    predictions: preparation.enemyPredictions,
+    rankedEnemyFours: preparation.rankedEnemyFours,
+    enemyMetas,
+    allyMetas,
+    referenceState,
+    enemyOutgoingMatrix,
+    enemyIncomingMatrix,
+    enemyProfile,
+    allyProfile,
+    enemyMetaByIndex,
+    threats: preparation.enemyThreats,
+    coverageByFourKey: preparation.coverageByFourKey,
+    allyFourBeam,
+    maxThreatLines,
+  });
 
-  const rawThreatLines = enemyFourBeam.flatMap((sourceFour) =>
-    rankLeadStrategies(
-      sourceFour,
-      enemyMetas,
-      allyMetas,
-      referenceState,
-      enemyOutgoingMatrix,
-      enemyIncomingMatrix,
-      enemyProfile,
-      allyProfile,
-    )
-      .slice(0, maxLeadsPerFour)
-      .map((candidate) => ({
-        candidate,
-        sourceFour,
-        threatScore: candidate.coarseScore,
-        vector: buildThreatVector(candidate, sourceFour, enemyMetaByIndex),
-      })),
-  );
-  const threatLines = selectDiverseThreatLines(rawThreatLines, maxThreatLines);
-
-  const allyCandidates = allyFourBeam
-    .flatMap((sourceFour) =>
-      rankLeadStrategies(
-        sourceFour,
-        allyMetas,
-        enemyMetas,
+  const allyCandidates = buildAllyStrategyCandidates({
+    sourceFours: allyFourBeam,
+    allyMetas,
+    enemyMetas,
+    referenceState,
+    allyOutgoingMatrix,
+    allyIncomingMatrix,
+    allyProfile,
+    enemyProfile,
+    flattenedEnemyLeads,
+    threats: preparation.enemyThreats,
+    answerMap: preparation.answerMap,
+    maxLeadsPerFour,
+  }).map((entry) => {
+    const cheapScores = threatLines.map((threat) =>
+      scoreCheapLeadMatchup(
+        entry,
+        threat,
+        allyMetaByIndex,
+        enemyMetaByIndex,
         referenceState,
         allyOutgoingMatrix,
-        allyIncomingMatrix,
-        allyProfile,
-        enemyProfile,
-      )
-        .map((candidate) => {
-          const entry = {
-            candidate,
-            sourceFour,
-            cheapRobustScore: candidate.coarseScore,
-            cheapAverageScore: candidate.coarseScore,
-          } satisfies PreviewStrategyCandidate;
-          const cheapScores = threatLines.map((threat) =>
-            scoreCheapLeadMatchup(
-              entry,
-              threat,
-              allyMetaByIndex,
-              enemyMetaByIndex,
-              referenceState,
-              allyOutgoingMatrix,
-              enemyOutgoingMatrix,
-            ),
-          );
-          const cheapRobustScore = cheapScores.length > 0 ? Math.min(...cheapScores) : candidate.coarseScore;
-          const cheapAverageScore =
-            cheapScores.length > 0
-              ? cheapScores.reduce((sum, score) => sum + score, 0) / cheapScores.length
-              : candidate.coarseScore;
-          return {
-            candidate: {
-              ...candidate,
-              coarseScore: candidate.coarseScore * 0.45 + cheapRobustScore * 0.4 + cheapAverageScore * 0.15,
-            },
-            sourceFour,
-            cheapRobustScore,
-            cheapAverageScore,
-          } satisfies PreviewStrategyCandidate;
-        })
-        .sort((left, right) => right.candidate.coarseScore - left.candidate.coarseScore)
-        .slice(0, maxLeadsPerFour),
-    )
-    .sort((left, right) => right.candidate.coarseScore - left.candidate.coarseScore);
+        enemyOutgoingMatrix,
+      ),
+    );
+    const cheapRobustScore = cheapScores.length > 0 ? Math.min(...cheapScores) : entry.candidate.coarseScore;
+    const cheapAverageScore =
+      cheapScores.length > 0 ? cheapScores.reduce((sum, score) => sum + score, 0) / cheapScores.length : entry.candidate.coarseScore;
+    return {
+      ...entry,
+      candidate: {
+        ...entry.candidate,
+        coarseScore: entry.candidate.coarseScore * 0.42 + cheapRobustScore * 0.42 + cheapAverageScore * 0.16,
+      },
+      cheapRobustScore,
+      cheapAverageScore,
+    } satisfies PreviewStrategyCandidate;
+  }).sort((left, right) => right.candidate.coarseScore - left.candidate.coarseScore);
 
   const fastCells = new Map<string, TacticalCellEvaluation>();
   const refineCells = new Map<string, TacticalCellEvaluation>();
@@ -2074,7 +2179,13 @@ function recommendTeamPreviewSparse(
     activeThreats.push(threat);
   }
 
-  let rankedRows = rankCandidatesAgainstThreats(allyCandidates, activeThreats, fastCells, refineCells);
+  let rankedRows = rankCandidatesAgainstThreats(
+    allyCandidates,
+    activeThreats,
+    fastCells,
+    refineCells,
+    preparation.objectiveMode,
+  );
   const refinementMargin = options.refinementMargin ?? DEFAULT_REFINEMENT_MARGIN;
 
   while (nowMs() <= deadline && activeThreats.length < threatLines.length && rankedRows.length > 0) {
@@ -2094,7 +2205,7 @@ function recommendTeamPreviewSparse(
 
     const expandThreatPool =
       activeThreats.length < Math.min(3, threatLines.length) ||
-      areTopCandidatesClose(rankedRows, refinementMargin) ||
+      areTopCandidatesClose(rankedRows, refinementMargin, preparation.objectiveMode) ||
       scoreCheapLeadMatchup(
         rankedRows[0].entry,
         nextThreat,
@@ -2113,10 +2224,16 @@ function recommendTeamPreviewSparse(
       break;
     }
     activeThreats.push(nextThreat);
-    rankedRows = rankCandidatesAgainstThreats(allyCandidates, activeThreats, fastCells, refineCells);
+    rankedRows = rankCandidatesAgainstThreats(
+      allyCandidates,
+      activeThreats,
+      fastCells,
+      refineCells,
+      preparation.objectiveMode,
+    );
   }
 
-  if (nowMs() <= deadline && areTopCandidatesClose(rankedRows, refinementMargin) && activeThreats.length > 0) {
+  if (nowMs() <= deadline && areTopCandidatesClose(rankedRows, refinementMargin, preparation.objectiveMode) && activeThreats.length > 0) {
     const finalists = rankedRows.slice(0, 2).map((row) => row.entry);
     const criticalThreats = [...activeThreats]
       .map((threat) => ({
@@ -2140,20 +2257,26 @@ function recommendTeamPreviewSparse(
         break;
       }
     }
-    rankedRows = rankCandidatesAgainstThreats(allyCandidates, activeThreats, fastCells, refineCells);
+    rankedRows = rankCandidatesAgainstThreats(
+      allyCandidates,
+      activeThreats,
+      fastCells,
+      refineCells,
+      preparation.objectiveMode,
+    );
   }
 
   diagnostics.tacticalStageMs = nowMs() - tacticalStarted;
   diagnostics.threatLineCount = activeThreats.length;
   diagnostics.elapsedMs = nowMs() - startedAt;
 
-  return buildRecommendationFromRows(rankedRows, allyMetas, enemyProfile, {
+  return buildRecommendationFromRows(rankedRows, preparation.objectiveMode, allyMetas, enemyProfile, preparation, {
     allyStrategies: allyStrategies.length,
     enemyStrategies: enemyStrategies.length,
     allyCandidates: allyCandidates.length,
     enemyCandidates: activeThreats.length,
     allyFourCandidates: allyFourBeam.length,
-    enemyFourCandidates: enemyFourBeam.length,
+    enemyFourCandidates: preparation.rankedEnemyFours.length,
     threatLines: threatLines.length,
     matrixCells: diagnostics.verifiedCells,
   }, diagnostics);
@@ -2165,24 +2288,37 @@ export function recommendTeamPreview(options: TeamPreviewOptions): TeamPreviewRe
   }
 
   const referenceState = createReferenceState(options);
-  const allyMetas = buildMeta(referenceState, options.ally);
-  const enemyMetas = buildMeta(referenceState, options.enemy);
+  const allyMetas = buildPreviewCombatantMetas(referenceState, options.ally);
+  const enemyMetas = buildPreviewCombatantMetas(referenceState, options.enemy);
 
   if (allyMetas.length < 4 || enemyMetas.length < 4) {
     return null;
   }
 
-  const allyProfile = buildThreatProfile(allyMetas);
-  const enemyProfile = buildThreatProfile(enemyMetas);
-  const allyOutgoingMatrix = buildDamageMatrix(referenceState, allyMetas, enemyMetas);
-  const allyIncomingMatrix = buildDamageMatrix(referenceState, enemyMetas, allyMetas);
-  const enemyOutgoingMatrix = buildDamageMatrix(referenceState, enemyMetas, allyMetas);
-  const enemyIncomingMatrix = buildDamageMatrix(referenceState, allyMetas, enemyMetas);
+  const allyProfile = buildPreviewThreatProfile(allyMetas);
+  const enemyProfile = buildPreviewThreatProfile(enemyMetas);
+  const allyOutgoingMatrix = buildPreviewDamageMatrix(referenceState, allyMetas, enemyMetas);
+  const allyIncomingMatrix = buildPreviewDamageMatrix(referenceState, enemyMetas, allyMetas);
+  const enemyOutgoingMatrix = buildPreviewDamageMatrix(referenceState, enemyMetas, allyMetas);
+  const enemyIncomingMatrix = buildPreviewDamageMatrix(referenceState, allyMetas, enemyMetas);
+  const preparation = preparePreviewContext(
+    options,
+    referenceState,
+    allyMetas,
+    enemyMetas,
+    allyProfile,
+    enemyProfile,
+    allyOutgoingMatrix,
+    allyIncomingMatrix,
+    enemyOutgoingMatrix,
+    enemyIncomingMatrix,
+  );
 
   const solverMode = options.solverMode ?? DEFAULT_SOLVER_MODE;
   if (solverMode === "dense") {
     return recommendTeamPreviewDense(
       options,
+      preparation,
       referenceState,
       allyMetas,
       enemyMetas,
@@ -2197,6 +2333,7 @@ export function recommendTeamPreview(options: TeamPreviewOptions): TeamPreviewRe
 
   return recommendTeamPreviewSparse(
     options,
+    preparation,
     referenceState,
     allyMetas,
     enemyMetas,

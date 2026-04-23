@@ -12,7 +12,7 @@ import { doesDefenderItemReduceDamage, isResistBerryItem, normalizeDamageItemId 
 import { getEffectiveSpeedForBattleState } from "./rules/speed";
 import { canApplyStatusCondition } from "./rules/status";
 import { getBelievedMoves } from "./beliefs";
-import { getSpecialMoveDefinition, hasProtectFamilyMove, normalizeMoveKey } from "./moveRegistry";
+import { getSpecialMoveDefinition, hasProtectFamilyMove, isProtectFamilyMoveName, normalizeMoveKey } from "./moveRegistry";
 import type {
   BattleAction,
   BattleCombatantState,
@@ -346,6 +346,14 @@ function createCombatantState(
     member.candidateMoves,
     member.inferredMoveNames,
   );
+  const inferredProtectStreak =
+    typeof member.protectStreak === "number"
+      ? Math.max(0, Math.round(member.protectStreak))
+      : isProtectFamilyMoveName(
+            moves.knownMoves.concat(moves.candidateMoves).find((move) => move.id === (member.lastMoveId ?? ""))?.name,
+          )
+        ? 1
+        : 0;
 
   return {
     id: member.id,
@@ -378,6 +386,7 @@ function createCombatantState(
     disableTurns: Math.max(0, Math.round(member.disableTurns ?? 0)),
     disabledMoveId: member.disabledMoveId ?? null,
     helpingHandTurns: Math.max(0, Math.round(member.helpingHandTurns ?? 0)),
+    protectStreak: inferredProtectStreak,
     knownMoves: moves.knownMoves,
     candidateMoves: moves.candidateMoves,
     knowledge: member.knowledge ?? "known",
@@ -836,6 +845,53 @@ function getIncomingThreatsAgainst(state: BattleState, targetIds: string[]) {
   });
 }
 
+function getProtectSuccessChance(protectStreak: number) {
+  if (protectStreak <= 0) {
+    return 1;
+  }
+
+  return 1 / 3 ** protectStreak;
+}
+
+function doesProtectSucceed(protectStreak: number, accuracyMode: "conservative" | "expected" | "optimistic") {
+  const successChance = getProtectSuccessChance(protectStreak);
+  if (accuracyMode === "optimistic") {
+    return successChance >= 1 / 3;
+  }
+  if (accuracyMode === "expected") {
+    return successChance >= 2 / 3;
+  }
+  return successChance >= 1;
+}
+
+function getStateAfterPassiveTurn(state: BattleState) {
+  const projected = cloneBattleState(state);
+  decaySideConditions(projected.sides.ally);
+  decaySideConditions(projected.sides.enemy);
+  projected.field.trickRoomTurns = Math.max(0, projected.field.trickRoomTurns - 1);
+  return projected;
+}
+
+function getProtectStallScore(state: BattleState, side: BattleSide) {
+  const currentScore = getSpeedAdvantageScore(state, side, state.field.trickRoomTurns > 0);
+  const projectedState = getStateAfterPassiveTurn(state);
+  const projectedScore = getSpeedAdvantageScore(projectedState, side, projectedState.field.trickRoomTurns > 0);
+  const improvement = projectedScore - currentScore;
+  if (improvement <= 0) {
+    return 0;
+  }
+
+  let urgencyBonus = 0;
+  if (state.field.trickRoomTurns === 1) {
+    urgencyBonus += 28;
+  }
+  if (state.sides.ally.tailwindTurns === 1 || state.sides.enemy.tailwindTurns === 1) {
+    urgencyBonus += 18;
+  }
+
+  return improvement * 38 + urgencyBonus;
+}
+
 function scoreProtectAction(state: BattleState, actorId: string) {
   const actor = state.combatants[actorId];
   if (!actor) {
@@ -845,7 +901,8 @@ function scoreProtectAction(state: BattleState, actorId: string) {
   const threats = getIncomingThreatsAgainst(state, [actorId]);
   const highestThreat = threats.length > 0 ? Math.max(...threats) : 0;
   const hpPercent = actor.maxHp > 0 ? (actor.currentHp / actor.maxHp) * 100 : 0;
-  return highestThreat * 1.4 + (100 - hpPercent) * 0.45;
+  const baseScore = highestThreat * 1.4 + (100 - hpPercent) * 0.45 + getProtectStallScore(state, actor.side);
+  return baseScore * getProtectSuccessChance(actor.protectStreak) - actor.protectStreak * 22;
 }
 
 function getSpeedAdvantageScore(state: BattleState, side: BattleSide, trickRoomActive: boolean) {
@@ -1431,6 +1488,10 @@ function generateActionsForActor(
       continue;
     }
 
+    if (move.effectKind === "fakeOut" && actor.turnsActive > 0) {
+      continue;
+    }
+
     if (
       move.targetKind === "field" ||
       move.targetKind === "self" ||
@@ -1561,6 +1622,7 @@ function executeSwitch(state: BattleState, action: BattleAction & { type: "switc
   sideState.activeIds[activeIndex] = switchIn.id;
   removeBenchId(sideState, switchIn.id);
   addBenchId(sideState, actor.id);
+  actor.protectStreak = 0;
   maybeApplyRegenerator(state, actor, events);
   switchIn.wasSwitchedInThisTurn = true;
   actor.wasSwitchedInThisTurn = false;
@@ -2305,10 +2367,18 @@ function executeMove(
   actor.lastMoveId = move.id;
 
   if (move.effectKind === "protect") {
+    if (!doesProtectSucceed(actor.protectStreak, accuracyMode)) {
+      actor.protectStreak = 0;
+      events.push({ actorId: actor.id, text: `${actor.pokemon.name}'s ${move.name} fails.` });
+      return;
+    }
     actor.isProtected = true;
-    events.push({ actorId: actor.id, text: `${actor.pokemon.name} uses Protect.` });
+    actor.protectStreak += 1;
+    events.push({ actorId: actor.id, text: `${actor.pokemon.name} uses ${move.name}.` });
     return;
   }
+
+  actor.protectStreak = 0;
 
   if (move.effectKind === "guard") {
     const sideState = state.sides[actor.side];
@@ -2775,6 +2845,10 @@ export function resolveTurn(
 
   for (const action of moveActions) {
     if (action.action.type === "pass") {
+      const actor = state.combatants[action.actorId];
+      if (actor) {
+        actor.protectStreak = 0;
+      }
       actedIds.add(action.actorId);
       continue;
     }

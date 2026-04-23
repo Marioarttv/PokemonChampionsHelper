@@ -129,6 +129,7 @@ export type BattleCombatantState = {
   disableTurns: number;
   disabledMoveId: string | null;
   helpingHandTurns: number;
+  protectStreak: number;
   knownMoves: BattleMoveOption[];
   candidateMoves: BattleMoveOption[];
   knowledge: KnowledgeLevel;
@@ -321,6 +322,7 @@ export type BattleStateMemberInput = {
   disableTurns?: number;
   disabledMoveId?: string | null;
   helpingHandTurns?: number;
+  protectStreak?: number;
   lastMoveId?: string | null;
   turnsActive?: number;
   isProtected?: boolean;

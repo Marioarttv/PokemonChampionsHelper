@@ -97,10 +97,18 @@ import {
 } from "./lib/damageItems";
 import {
   createBattleState,
+  getEffectiveSpeed,
+  resolveTurn,
+  type BattleAction,
+  type BattleCombatantState,
+  type BattleMoveOption,
+  type BattleSide,
   type BattleState,
   type BattleStatusCondition,
   type BattleStateMemberInput,
+  type JointActionPlan,
   type ObjectiveMode,
+  type PlannedAction,
   type SearchPlanScore,
   type SearchMode,
   type SearchRecommendation,
@@ -1034,9 +1042,27 @@ type BattleSimulatorMemberState = {
   hpPercent: number;
   attackStage: number;
   defenseStage: number;
+  specialAttackStage: number;
+  specialDefenseStage: number;
   speedStage: number;
   statusCondition: BattleStatusCondition;
   sleepTurns: number;
+  tauntTurns: number;
+  encoreTurns: number;
+  encoredMoveId: string | null;
+  disableTurns: number;
+  disabledMoveId: string | null;
+  helpingHandTurns: number;
+  lastMoveId: string | null;
+  turnsActive: number;
+  protectStreak: number;
+};
+
+type BattleFieldRuntimeState = {
+  turn: number;
+  allyTailwindTurns: number;
+  enemyTailwindTurns: number;
+  trickRoomTurns: number;
 };
 
 const DEFAULT_DOUBLES_RUNTIME: DoublesMemberRuntime = {
@@ -1049,10 +1075,38 @@ const DEFAULT_BATTLE_SIMULATOR_MEMBER_STATE: BattleSimulatorMemberState = {
   hpPercent: 100,
   attackStage: 0,
   defenseStage: 0,
+  specialAttackStage: 0,
+  specialDefenseStage: 0,
   speedStage: 0,
   statusCondition: "none",
   sleepTurns: 0,
+  tauntTurns: 0,
+  encoreTurns: 0,
+  encoredMoveId: null,
+  disableTurns: 0,
+  disabledMoveId: null,
+  helpingHandTurns: 0,
+  lastMoveId: null,
+  turnsActive: 0,
+  protectStreak: 0,
 };
+
+const DEFAULT_BATTLE_FIELD_RUNTIME_STATE: BattleFieldRuntimeState = {
+  turn: 1,
+  allyTailwindTurns: 0,
+  enemyTailwindTurns: 0,
+  trickRoomTurns: 0,
+};
+
+const DEFAULT_ACTIVE_SPEED_CONTROL_TURNS = 2;
+
+const BATTLE_LAB_STAGE_CONTROLS = [
+  ["Atk", "attackStage"],
+  ["Def", "defenseStage"],
+  ["SpA", "specialAttackStage"],
+  ["SpD", "specialDefenseStage"],
+  ["Spe", "speedStage"],
+] as const;
 
 type DoublesSelectedMember = {
   side: "ally" | "enemy";
@@ -5172,6 +5226,801 @@ function TeamSlotCard({
   );
 }
 
+// === BATTLE LAB ===
+
+type ChosenAction =
+  | { kind: "move"; moveId: string; targetId: string | null }
+  | { kind: "switch"; switchInId: string }
+  | { kind: "pass" };
+
+type SimulationRun = {
+  startState: BattleState;
+  finalState: BattleState;
+  events: TurnEvent[];
+  allyPlan: JointActionPlan;
+  enemyPlan: JointActionPlan;
+};
+
+const STATUS_PALETTE: Record<BattleStatusCondition, { label: string; tint: string; color: string }> = {
+  none: { label: "", tint: "transparent", color: "" },
+  burn: { label: "BRN", tint: "rgba(239, 125, 87, 0.28)", color: "#ffb8a5" },
+  paralysis: { label: "PAR", tint: "rgba(246, 207, 77, 0.26)", color: "#ffe489" },
+  sleep: { label: "SLP", tint: "rgba(122, 160, 255, 0.28)", color: "#b9cfff" },
+};
+
+function getBattleLabAvailableMoves(combatant: BattleCombatantState) {
+  const seenIds = new Set<string>();
+  const moves: BattleMoveOption[] = [];
+
+  for (const move of [...combatant.knownMoves, ...combatant.candidateMoves]) {
+    if (seenIds.has(move.id)) {
+      continue;
+    }
+
+    seenIds.add(move.id);
+    moves.push(move);
+  }
+
+  return moves;
+}
+
+function getDefaultTargetForMove(
+  state: BattleState,
+  actor: BattleCombatantState,
+  move: BattleMoveOption,
+): string | null {
+  if (move.targetKind === "self") return actor.id;
+  if (move.targetKind === "singleAlly") {
+    const otherAllyId = state.sides[actor.side].activeIds.find(
+      (id): id is string => Boolean(id) && id !== actor.id,
+    );
+    return otherAllyId ?? actor.id;
+  }
+  if (
+    move.targetKind === "allAllies" ||
+    move.targetKind === "allAdjacent" ||
+    move.targetKind === "allOpponents" ||
+    move.targetKind === "field"
+  ) {
+    return null;
+  }
+  const opp: BattleSide = actor.side === "ally" ? "enemy" : "ally";
+  const myIdx = state.sides[actor.side].activeIds.findIndex((id) => id === actor.id);
+  const oppIds = state.sides[opp].activeIds;
+  const preferred = (myIdx >= 0 ? oppIds[myIdx] : null) ?? oppIds.find((id): id is string => Boolean(id));
+  return preferred ?? null;
+}
+
+function buildActorPlannedAction(
+  state: BattleState,
+  combatant: BattleCombatantState,
+  pick: ChosenAction | undefined,
+  fallback: PlannedAction | null,
+): PlannedAction {
+  const actorLabel = combatant.pokemon.name;
+
+  if (!pick) {
+    if (fallback) return fallback;
+    return {
+      actorId: combatant.id,
+      actorLabel,
+      action: { type: "pass", actorId: combatant.id },
+      summary: `${actorLabel}: pass`,
+      heuristicScore: 0,
+    };
+  }
+
+  if (pick.kind === "pass") {
+    return {
+      actorId: combatant.id,
+      actorLabel,
+      action: { type: "pass", actorId: combatant.id },
+      summary: `${actorLabel}: pass`,
+      heuristicScore: 0,
+    };
+  }
+
+  if (pick.kind === "switch") {
+    const switchIn = state.combatants[pick.switchInId];
+    return {
+      actorId: combatant.id,
+      actorLabel,
+      action: { type: "switch", actorId: combatant.id, switchInId: pick.switchInId },
+      summary: `${actorLabel}: switch to ${switchIn?.pokemon.name ?? "bench"}`,
+      heuristicScore: 0,
+    };
+  }
+
+  const moveOption =
+    [...combatant.knownMoves, ...combatant.candidateMoves].find((m) => m.id === pick.moveId) ?? null;
+  const moveName = moveOption?.name ?? "Move";
+  const target = pick.targetId ? state.combatants[pick.targetId] ?? null : null;
+  const targetLabel =
+    moveOption?.targetKind === "allOpponents"
+      ? "both foes"
+      : moveOption?.targetKind === "self"
+        ? ""
+        : target
+          ? target.pokemon.name
+          : "";
+
+  return {
+    actorId: combatant.id,
+    actorLabel,
+    action: { type: "move", actorId: combatant.id, moveId: pick.moveId, targetId: pick.targetId },
+    summary: `${actorLabel}: ${moveName}${targetLabel ? ` into ${targetLabel}` : ""}`,
+    heuristicScore: 0,
+  };
+}
+
+function buildJointPlanFromUserChoices(
+  state: BattleState,
+  side: BattleSide,
+  chosen: Record<string, ChosenAction>,
+  fallback: JointActionPlan | null,
+): JointActionPlan {
+  const activeIds = state.sides[side].activeIds.filter((id): id is string => Boolean(id));
+  const actions = activeIds
+    .map((id) => {
+      const combatant = state.combatants[id];
+      if (!combatant) return null;
+      const fallbackAction = fallback?.actions.find((a) => a.actorId === id) ?? null;
+      return buildActorPlannedAction(state, combatant, chosen[id], fallbackAction);
+    })
+    .filter((a): a is PlannedAction => a !== null);
+
+  return {
+    side,
+    actions,
+    summary: actions.length > 0 ? actions.map((a) => a.summary).join(" + ") : `${side} pass`,
+    heuristicScore: 0,
+  };
+}
+
+function classifyHpTone(hpPercent: number) {
+  if (hpPercent <= 25) return "danger" as const;
+  if (hpPercent <= 50) return "warn" as const;
+  return "healthy" as const;
+}
+
+function summarizeBattleLabEvent(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  let match = trimmed.match(/^(.+?) uses (.+?) on (.+?) for (\d+) HP/i);
+  if (match) {
+    return `${match[1]} -> ${match[3]}: ${match[2]} -${match[4]}`;
+  }
+
+  match = trimmed.match(/^(.+?) uses (Protect|Detect|Quick Guard|Wide Guard)\.$/i);
+  if (match) {
+    return `${match[1]}: ${match[2]}`;
+  }
+
+  match = trimmed.match(/^(.+?) sets Tailwind for (ally|enemy)\.$/i);
+  if (match) {
+    return `${match[1]}: Tailwind`;
+  }
+
+  match = trimmed.match(/^(.+?) twists the dimensions\.$/i);
+  if (match) {
+    return `${match[1]}: Trick Room`;
+  }
+
+  match = trimmed.match(/^(.+?) ends Trick Room\.$/i);
+  if (match) {
+    return `${match[1]}: end Trick Room`;
+  }
+
+  match = trimmed.match(/^(.+?) flinches from Fake Out\.$/i);
+  if (match) {
+    return `${match[1]} flinched`;
+  }
+
+  match = trimmed.match(/^(.+?) flinches after (.+?)'s (.+?)\.$/i);
+  if (match) {
+    return `${match[1]} flinched`;
+  }
+
+  match = trimmed.match(/^(.+?) blocks (.+?) with Protect\.$/i);
+  if (match) {
+    return `${match[1]} protected`;
+  }
+
+  match = trimmed.match(/^(.+?) blocks (.+?)'s (.+?) with Protect\.$/i);
+  if (match) {
+    return `${match[1]} protected`;
+  }
+
+  match = trimmed.match(/^(.+?) switches out for (.+?)\.$/i);
+  if (match) {
+    return `${match[1]} -> ${match[2]}`;
+  }
+
+  match = trimmed.match(/^(.+?) enters the battle for (ally|enemy)\.$/i);
+  if (match) {
+    return `${match[1]} entered`;
+  }
+
+  match = trimmed.match(/^(.+?) wakes? up\.$/i);
+  if (match) {
+    return `${match[1]} woke up`;
+  }
+
+  match = trimmed.match(/^(.+?) is asleep and cannot move\.$/i);
+  if (match) {
+    return `${match[1]} asleep`;
+  }
+
+  match = trimmed.match(/^(.+?)'s (.+?) fails\.$/i);
+  if (match) {
+    return `${match[1]}: ${match[2]} failed`;
+  }
+
+  match = trimmed.match(/^(.+?) faints\.$/i);
+  if (match) {
+    return `${match[1]} fainted`;
+  }
+
+  match = trimmed.match(/^(.+?) restores (\d+) HP with (.+?)\.$/i);
+  if (match) {
+    return `${match[1]} +${match[2]} ${match[3]}`;
+  }
+
+  match = trimmed.match(/^(.+?) takes (\d+) Life Orb recoil\.$/i);
+  if (match) {
+    return `${match[1]} recoil -${match[2]}`;
+  }
+
+  return trimmed;
+}
+
+function getBattleLabCombatantTone(combatantId: string | null | undefined) {
+  if (!combatantId) {
+    return "neutral" as const;
+  }
+
+  if (combatantId.startsWith("ally-")) {
+    return "ally" as const;
+  }
+
+  if (combatantId.startsWith("enemy-")) {
+    return "enemy" as const;
+  }
+
+  return "neutral" as const;
+}
+
+function getBattleLabCombatantName(
+  simulationRun: SimulationRun | null,
+  fallbackState: BattleState | null,
+  combatantId: string | null | undefined,
+) {
+  if (!combatantId) {
+    return null;
+  }
+
+  return (
+    simulationRun?.finalState.combatants[combatantId]?.pokemon.name ??
+    simulationRun?.startState.combatants[combatantId]?.pokemon.name ??
+    fallbackState?.combatants[combatantId]?.pokemon.name ??
+    combatantId
+  );
+}
+
+type BattleLabMoveButtonProps = {
+  move: BattleMoveOption;
+  selected: boolean;
+  onClick: () => void;
+  target: BattleCombatantState | null;
+  onCycleTarget?: () => void;
+  canCycleTarget: boolean;
+  lastMoveSelected?: boolean;
+  onSetLastMove?: () => void;
+  canSetLastMove?: boolean;
+  disabled?: boolean;
+};
+
+function BattleLabMoveButton({
+  move,
+  selected,
+  onClick,
+  target,
+  onCycleTarget,
+  canCycleTarget,
+  lastMoveSelected = false,
+  onSetLastMove,
+  canSetLastMove = false,
+  disabled,
+}: BattleLabMoveButtonProps) {
+  const typeColor = move.type ? TYPE_META[move.type].color : "#9aa3b8";
+  const accent = move.type ? TYPE_META[move.type].accent : "#4b5472";
+  const labelBp = move.basePower ? `${move.basePower}` : move.effectKind === "damage" ? "—" : "STA";
+  const labelAcc = move.accuracy >= 100 ? "—" : `${move.accuracy}`;
+  const tag =
+    move.source === "candidate" ? "?" : move.source === "inferred" ? "i" : null;
+
+  return (
+    <div
+      className={`bl-move-btn ${selected ? "selected" : ""} ${disabled ? "disabled" : ""}`}
+      style={{ ["--type-color" as never]: typeColor, ["--type-accent" as never]: accent }}
+    >
+      <button
+        type="button"
+        className="bl-move-btn-main"
+        onClick={onClick}
+        disabled={disabled}
+        title={move.shortDesc || move.name}
+      >
+        <span className="bl-move-name">{move.name}</span>
+        <span className="bl-move-meta">
+          <span className="bl-move-bp">BP {labelBp}</span>
+          <span className="bl-move-acc">Acc {labelAcc}</span>
+        </span>
+        {tag ? <span className="bl-move-tag">{tag}</span> : null}
+      </button>
+      {selected && target ? (
+        <button
+          type="button"
+          className="bl-move-target"
+          onClick={onCycleTarget}
+          disabled={!canCycleTarget}
+          title={canCycleTarget ? "Click to retarget" : "Target locked"}
+        >
+          ➜ {target.pokemon.name.slice(0, 8)}
+        </button>
+      ) : selected ? (
+        <span className="bl-move-target no-target">spread</span>
+      ) : null}
+      {canSetLastMove ? (
+        <button
+          type="button"
+          className={`bl-move-last ${lastMoveSelected ? "active" : ""}`}
+          onClick={onSetLastMove}
+          disabled={disabled}
+          title="Set as last used move for board rebuilds"
+        >
+          {lastMoveSelected ? "Last Move" : "Mark Last"}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+type BattleLabSlotProps = {
+  combatant: BattleCombatantState | null;
+  rankLabel: string;
+  side: BattleSide;
+  displayHp: number;
+  displayHpPercent: number;
+  projectedHp: number | null;
+  projectedHpDelta: number | null;
+  pulse: number;
+  effectFlash: "protect" | "status" | null;
+  editing: boolean;
+  quickEditing: boolean;
+  onToggleEdit: () => void;
+  onEditPatch: (patch: Partial<BattleSimulatorMemberState>) => void;
+  simulatorPatch: BattleSimulatorMemberState | null;
+};
+
+function BattleLabSlot({
+  combatant,
+  rankLabel,
+  side,
+  displayHp,
+  displayHpPercent,
+  projectedHp,
+  projectedHpDelta,
+  pulse,
+  effectFlash,
+  editing,
+  quickEditing,
+  onToggleEdit,
+  onEditPatch,
+  simulatorPatch,
+}: BattleLabSlotProps) {
+  if (!combatant) {
+    return (
+      <div className={`bl-slot ${side} empty`}>
+        <span className="bl-slot-rank">{rankLabel}</span>
+        <span className="bl-slot-empty">No Pokemon</span>
+      </div>
+    );
+  }
+
+  const hpTone = classifyHpTone(displayHpPercent);
+  const status = STATUS_PALETTE[combatant.statusCondition];
+  const availableMoves = getBattleLabAvailableMoves(combatant);
+  const lastMove = availableMoves.find((move) => move.id === simulatorPatch?.lastMoveId) ?? null;
+  const encoredMove = availableMoves.find((move) => move.id === simulatorPatch?.encoredMoveId) ?? null;
+  const disabledMove = availableMoves.find((move) => move.id === simulatorPatch?.disabledMoveId) ?? null;
+  const stageChips = (
+    [
+      ["Atk", combatant.stages.attack],
+      ["Def", combatant.stages.defense],
+      ["SpA", combatant.stages.specialAttack],
+      ["SpD", combatant.stages.specialDefense],
+      ["Spe", combatant.stages.speed],
+    ] as const
+  ).filter(([, v]) => v !== 0);
+
+  return (
+    <div
+      className={`bl-slot ${side} ${effectFlash ? `flash-${effectFlash}` : ""}`}
+      style={{ ["--status-tint" as never]: status.tint }}
+    >
+      <div className="bl-slot-head">
+        <span className={`bl-slot-rank ${side}`}>{rankLabel}</span>
+        <strong className="bl-slot-name">{combatant.pokemon.name}</strong>
+        <button
+          type="button"
+          className={`bl-slot-edit ${editing ? "active" : ""}`}
+          onClick={onToggleEdit}
+          title="Edit this slot"
+          aria-label="Edit slot"
+        >
+          ⚙
+        </button>
+      </div>
+
+      <div className="bl-slot-sprite-wrap">
+        <PokemonSprite pokemon={combatant.pokemon} className="bl-slot-sprite" />
+        {pulse !== 0 ? (
+          <span key={`dmg-${pulse}-${combatant.id}`} className={`bl-damage-pop ${pulse < 0 ? "heal" : "damage"}`}>
+            {pulse > 0 ? `-${pulse}` : `+${-pulse}`}
+          </span>
+        ) : null}
+        {effectFlash === "protect" ? <span className="bl-protect-shield">⛨</span> : null}
+      </div>
+
+      <div className="bl-slot-hp">
+        <div className="bl-slot-hp-bar">
+          <span
+            className={`bl-slot-hp-fill ${hpTone}`}
+            style={{ width: `${Math.max(0, displayHpPercent).toFixed(1)}%` }}
+          />
+        </div>
+        <div className="bl-slot-hp-row">
+          <small>
+            {Math.round(displayHp)}/{combatant.maxHp}
+          </small>
+          {status.label ? (
+            <small className="bl-slot-status" style={{ color: status.color }}>
+              {status.label}
+              {combatant.statusCondition === "sleep" && combatant.sleepTurns > 0 ? ` ${combatant.sleepTurns}` : ""}
+            </small>
+          ) : null}
+        </div>
+        {projectedHpDelta !== null && projectedHp !== null && projectedHpDelta !== 0 ? (
+          <div className={`bl-slot-hp-projection ${projectedHpDelta < 0 ? "damage" : "heal"}`}>
+            <small>
+              Proj {projectedHpDelta > 0 ? `+${projectedHpDelta}` : projectedHpDelta} -> {projectedHp}/{combatant.maxHp}
+            </small>
+          </div>
+        ) : null}
+      </div>
+
+      {quickEditing && simulatorPatch ? (
+        <div className="bl-slot-hp-quick">
+          {side === "ally" ? (
+            <>
+              <span>HP</span>
+              <input
+                type="number"
+                min={0}
+                max={combatant.maxHp}
+                step={1}
+                value={getLevel50CurrentHpFromPercent(combatant.maxHp, simulatorPatch.hpPercent)}
+                onChange={(e) => {
+                  const nextHp = Math.max(0, Math.min(combatant.maxHp, Math.round(Number(e.target.value) || 0)));
+                  const nextPercent = combatant.maxHp > 0 ? (nextHp / combatant.maxHp) * 100 : 0;
+                  onEditPatch({ hpPercent: clampPercent(nextPercent) });
+                }}
+              />
+              <strong>/ {combatant.maxHp}</strong>
+            </>
+          ) : (
+            <>
+              <span>HP</span>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                value={Math.round(simulatorPatch.hpPercent)}
+                onChange={(e) => onEditPatch({ hpPercent: clampPercent(Number(e.target.value) || 0) })}
+              />
+              <strong>%</strong>
+            </>
+          )}
+        </div>
+      ) : null}
+
+      {stageChips.length > 0 ? (
+        <div className="bl-slot-stages">
+          {stageChips.map(([label, v]) => (
+            <span key={`bl-stage-${combatant.id}-${label}`} className={`bl-stage-pill ${v > 0 ? "up" : "down"}`}>
+              {label}
+              {v > 0 ? `+${v}` : v}
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      {editing && simulatorPatch ? (
+        <div className={`bl-slot-editor ${side}`}>
+          <label>
+            <span>HP %</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={Math.round(simulatorPatch.hpPercent)}
+              onChange={(e) => onEditPatch({ hpPercent: clampPercent(Number(e.target.value)) })}
+            />
+            <strong>{Math.round(simulatorPatch.hpPercent)}%</strong>
+          </label>
+          {side === "ally" ? (
+            <label className="bl-slot-editor-hp-input">
+              <span>HP</span>
+              <input
+                type="number"
+                min={0}
+                max={combatant.maxHp}
+                step={1}
+                value={getLevel50CurrentHpFromPercent(combatant.maxHp, simulatorPatch.hpPercent)}
+                onChange={(e) => {
+                  const nextHp = Math.max(0, Math.min(combatant.maxHp, Math.round(Number(e.target.value) || 0)));
+                  const nextPercent = combatant.maxHp > 0 ? (nextHp / combatant.maxHp) * 100 : 0;
+                  onEditPatch({ hpPercent: clampPercent(nextPercent) });
+                }}
+              />
+              <strong>/ {combatant.maxHp}</strong>
+            </label>
+          ) : (
+            <label className="bl-slot-editor-hp-input">
+              <span>Range</span>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                value={Math.round(simulatorPatch.hpPercent)}
+                onChange={(e) => {
+                  onEditPatch({ hpPercent: clampPercent(Number(e.target.value) || 0) });
+                }}
+              />
+              <strong>%</strong>
+            </label>
+          )}
+          <label>
+            <span>Status</span>
+            <select
+              value={simulatorPatch.statusCondition}
+              onChange={(e) => {
+                const next = e.target.value as BattleStatusCondition;
+                onEditPatch({
+                  statusCondition: next,
+                  sleepTurns: next === "sleep" ? Math.max(1, simulatorPatch.sleepTurns || 2) : 0,
+                });
+              }}
+            >
+              {BATTLE_STATUS_OPTIONS.map((o) => (
+                <option key={`bl-ed-status-${o.value}`} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <details className="bl-slot-editor-stage-panel">
+            <summary>
+              <span>Stat Stages</span>
+              <span className="bl-slot-editor-stage-summary">
+                {BATTLE_LAB_STAGE_CONTROLS.some(([, key]) => simulatorPatch[key] !== 0) ? (
+                  BATTLE_LAB_STAGE_CONTROLS.filter(([, key]) => simulatorPatch[key] !== 0).map(([label, key]) => (
+                    <span
+                      key={`bl-ed-stage-pill-${combatant.id}-${key}`}
+                      className={`bl-stage-pill ${simulatorPatch[key] > 0 ? "up" : "down"}`}
+                    >
+                      {label}
+                      {simulatorPatch[key] > 0 ? `+${simulatorPatch[key]}` : simulatorPatch[key]}
+                    </span>
+                  ))
+                ) : (
+                  <span className="bl-slot-editor-stage-neutral">All neutral</span>
+                )}
+              </span>
+            </summary>
+            <div className="bl-slot-editor-stages">
+              {BATTLE_LAB_STAGE_CONTROLS.map(([label, key]) => (
+                <label key={`bl-ed-stage-${combatant.id}-${key}`}>
+                  <span>{label}</span>
+                  <div className="bl-stage-ctrl">
+                    <button
+                      type="button"
+                      onClick={() => onEditPatch({ [key]: clampStatStage(simulatorPatch[key] - 1) })}
+                    >
+                      −
+                    </button>
+                    <strong>{simulatorPatch[key] >= 0 ? `+${simulatorPatch[key]}` : simulatorPatch[key]}</strong>
+                    <button
+                      type="button"
+                      onClick={() => onEditPatch({ [key]: clampStatStage(simulatorPatch[key] + 1) })}
+                    >
+                      +
+                    </button>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </details>
+          <details className="bl-slot-editor-stage-panel">
+            <summary>
+              <span>Turn State</span>
+              <span className="bl-slot-editor-stage-summary">
+                {lastMove ? <span className="bl-stage-pill up">Last: {lastMove.name}</span> : null}
+                {simulatorPatch.turnsActive > 0 ? (
+                  <span className="bl-stage-pill up">Active {simulatorPatch.turnsActive}</span>
+                ) : null}
+                {simulatorPatch.protectStreak > 0 ? (
+                  <span className="bl-stage-pill down">Protect {simulatorPatch.protectStreak}</span>
+                ) : null}
+                {simulatorPatch.tauntTurns > 0 ? (
+                  <span className="bl-stage-pill down">Taunt {simulatorPatch.tauntTurns}</span>
+                ) : null}
+                {simulatorPatch.encoreTurns > 0 ? (
+                  <span className="bl-stage-pill down">
+                    Encore {simulatorPatch.encoreTurns}
+                    {encoredMove ? ` · ${encoredMove.name}` : ""}
+                  </span>
+                ) : null}
+                {simulatorPatch.disableTurns > 0 ? (
+                  <span className="bl-stage-pill down">
+                    Disable {simulatorPatch.disableTurns}
+                    {disabledMove ? ` · ${disabledMove.name}` : ""}
+                  </span>
+                ) : null}
+                {simulatorPatch.sleepTurns > 0 && simulatorPatch.statusCondition === "sleep" ? (
+                  <span className="bl-stage-pill up">Sleep {simulatorPatch.sleepTurns}</span>
+                ) : null}
+                {!lastMove &&
+                simulatorPatch.turnsActive === 0 &&
+                simulatorPatch.protectStreak === 0 &&
+                simulatorPatch.tauntTurns === 0 &&
+                simulatorPatch.encoreTurns === 0 &&
+                simulatorPatch.disableTurns === 0 &&
+                (simulatorPatch.statusCondition !== "sleep" || simulatorPatch.sleepTurns === 0) ? (
+                  <span className="bl-slot-editor-stage-neutral">No extra turn-state overrides</span>
+                ) : null}
+              </span>
+            </summary>
+            <div className="bl-slot-editor-meta">
+              <label>
+                <span>Turns Active</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={99}
+                  step={1}
+                  value={simulatorPatch.turnsActive}
+                  onChange={(e) => onEditPatch({ turnsActive: Math.max(0, Math.round(Number(e.target.value) || 0)) })}
+                />
+              </label>
+              <label>
+                <span>Protect Streak</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={9}
+                  step={1}
+                  value={simulatorPatch.protectStreak}
+                  onChange={(e) => onEditPatch({ protectStreak: Math.max(0, Math.round(Number(e.target.value) || 0)) })}
+                />
+              </label>
+              {simulatorPatch.statusCondition === "sleep" ? (
+                <label>
+                  <span>Sleep Turns</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={4}
+                    step={1}
+                    value={Math.max(1, simulatorPatch.sleepTurns || 1)}
+                    onChange={(e) => onEditPatch({ sleepTurns: Math.max(1, Math.round(Number(e.target.value) || 1)) })}
+                  />
+                </label>
+              ) : null}
+              <label>
+                <span>Taunt Turns</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={4}
+                  step={1}
+                  value={simulatorPatch.tauntTurns}
+                  onChange={(e) => onEditPatch({ tauntTurns: Math.max(0, Math.round(Number(e.target.value) || 0)) })}
+                />
+              </label>
+              <label>
+                <span>Encore Turns</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={4}
+                  step={1}
+                  value={simulatorPatch.encoreTurns}
+                  onChange={(e) => {
+                    const nextTurns = Math.max(0, Math.round(Number(e.target.value) || 0));
+                    onEditPatch({
+                      encoreTurns: nextTurns,
+                      encoredMoveId:
+                        nextTurns > 0 ? simulatorPatch.encoredMoveId ?? simulatorPatch.lastMoveId : null,
+                    });
+                  }}
+                />
+              </label>
+              {simulatorPatch.encoreTurns > 0 ? (
+                <label className="bl-slot-editor-full">
+                  <span>Encored Move</span>
+                  <select
+                    value={simulatorPatch.encoredMoveId ?? ""}
+                    onChange={(e) => onEditPatch({ encoredMoveId: e.target.value || null })}
+                  >
+                    <option value="">None</option>
+                    {availableMoves.map((move) => (
+                      <option key={`bl-ed-encore-move-${combatant.id}-${move.id}`} value={move.id}>
+                        {move.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              <label>
+                <span>Disable Turns</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={4}
+                  step={1}
+                  value={simulatorPatch.disableTurns}
+                  onChange={(e) => {
+                    const nextTurns = Math.max(0, Math.round(Number(e.target.value) || 0));
+                    onEditPatch({
+                      disableTurns: nextTurns,
+                      disabledMoveId:
+                        nextTurns > 0 ? simulatorPatch.disabledMoveId ?? simulatorPatch.lastMoveId : null,
+                    });
+                  }}
+                />
+              </label>
+              {simulatorPatch.disableTurns > 0 ? (
+                <label className="bl-slot-editor-full">
+                  <span>Disabled Move</span>
+                  <select
+                    value={simulatorPatch.disabledMoveId ?? ""}
+                    onChange={(e) => onEditPatch({ disabledMoveId: e.target.value || null })}
+                  >
+                    <option value="">None</option>
+                    {availableMoves.map((move) => (
+                      <option key={`bl-ed-disable-move-${combatant.id}-${move.id}`} value={move.id}>
+                        {move.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+            </div>
+          </details>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function CalculatorView() {
   const [mode, setMode] = useState<CalculatorMode>("defense");
   const [selectedTypes, setSelectedTypes] = useState<PokemonType[]>([DEFAULT_PRIMARY]);
@@ -5416,6 +6265,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const [doublesTrickRoom, setDoublesTrickRoom] = useState(false);
   const [doublesRuntime, setDoublesRuntime] = useState<Record<string, DoublesMemberRuntime>>({});
   const [battleSimulatorState, setBattleSimulatorState] = useState<Record<string, BattleSimulatorMemberState>>({});
+  const [battleFieldRuntime, setBattleFieldRuntime] = useState<BattleFieldRuntimeState>(DEFAULT_BATTLE_FIELD_RUNTIME_STATE);
   const [battleEngineRecommendation, setBattleEngineRecommendation] = useState<SearchRecommendation | null>(null);
   const [battleEngineSearchMode, setBattleEngineSearchMode] = useState<SearchMode>("balanced");
   const [battleEngineObjectiveMode, setBattleEngineObjectiveMode] = useState<ObjectiveMode>("robust");
@@ -5425,6 +6275,20 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const [selectedBattleScenarioId, setSelectedBattleScenarioId] = useState<string>("current-board");
   const battleEngineWorkerRef = useRef<Worker | null>(null);
   const battleEngineSearchRequestIdRef = useRef(0);
+
+  // Battle Lab: user-chosen actions per combatant id
+  const [userChosenActions, setUserChosenActions] = useState<Record<string, ChosenAction>>({});
+  // Battle Lab: simulation playback state
+  const [simulationRun, setSimulationRun] = useState<SimulationRun | null>(null);
+  const [simEventIndex, setSimEventIndex] = useState(0);
+  const [simPlaying, setSimPlaying] = useState(false);
+  const [simViewMode, setSimViewMode] = useState<"real" | "sim">("real");
+  const [editingSlotKey, setEditingSlotKey] = useState<string | null>(null);
+  const simPlayTimerRef = useRef<number | null>(null);
+  const prevDisplayHpRef = useRef<Record<string, number>>({});
+  const [damagePulses, setDamagePulses] = useState<Record<string, number>>({});
+  const [slotFlashes, setSlotFlashes] = useState<Record<string, "protect" | "status" | null>>({});
+  const pulseClearTimersRef = useRef<Record<string, number>>({});
 
   const getDoublesRuntime = (side: "ally" | "enemy", slotIndex: number): DoublesMemberRuntime =>
     doublesRuntime[`${side}-${slotIndex}`] ?? DEFAULT_DOUBLES_RUNTIME;
@@ -5443,6 +6307,30 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
 
   const resetDoublesTurn = () => {
     setDoublesRuntime({});
+  };
+
+  const setAllyTailwindActive = (active: boolean) => {
+    setDoublesAllyTailwind(active);
+    setBattleFieldRuntime((current) => ({
+      ...current,
+      allyTailwindTurns: active ? DEFAULT_ACTIVE_SPEED_CONTROL_TURNS : 0,
+    }));
+  };
+
+  const setEnemyTailwindActive = (active: boolean) => {
+    setDoublesEnemyTailwind(active);
+    setBattleFieldRuntime((current) => ({
+      ...current,
+      enemyTailwindTurns: active ? DEFAULT_ACTIVE_SPEED_CONTROL_TURNS : 0,
+    }));
+  };
+
+  const setTrickRoomActive = (active: boolean) => {
+    setDoublesTrickRoom(active);
+    setBattleFieldRuntime((current) => ({
+      ...current,
+      trickRoomTurns: active ? DEFAULT_ACTIVE_SPEED_CONTROL_TURNS : 0,
+    }));
   };
 
   const getBattleSimulatorMemberState = (
@@ -5467,6 +6355,12 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         nextStatusCondition === "sleep"
           ? Math.max(1, Math.round(patch.sleepTurns ?? existing.sleepTurns ?? 2))
           : 0;
+      const nextTauntTurns = Math.max(0, Math.round(patch.tauntTurns ?? existing.tauntTurns));
+      const nextEncoreTurns = Math.max(0, Math.round(patch.encoreTurns ?? existing.encoreTurns));
+      const nextDisableTurns = Math.max(0, Math.round(patch.disableTurns ?? existing.disableTurns));
+      const nextHelpingHandTurns = Math.max(0, Math.round(patch.helpingHandTurns ?? existing.helpingHandTurns));
+      const nextTurnsActive = Math.max(0, Math.round(patch.turnsActive ?? existing.turnsActive));
+      const nextProtectStreak = Math.max(0, Math.round(patch.protectStreak ?? existing.protectStreak));
 
       return {
         ...current,
@@ -5476,9 +6370,20 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           hpPercent: clampPercent(patch.hpPercent ?? existing.hpPercent),
           attackStage: clampStatStage(patch.attackStage ?? existing.attackStage),
           defenseStage: clampStatStage(patch.defenseStage ?? existing.defenseStage),
+          specialAttackStage: clampStatStage(patch.specialAttackStage ?? existing.specialAttackStage),
+          specialDefenseStage: clampStatStage(patch.specialDefenseStage ?? existing.specialDefenseStage),
           speedStage: clampStatStage(patch.speedStage ?? existing.speedStage),
           statusCondition: nextStatusCondition,
           sleepTurns: nextSleepTurns,
+          tauntTurns: nextTauntTurns,
+          encoreTurns: nextEncoreTurns,
+          encoredMoveId: nextEncoreTurns > 0 ? patch.encoredMoveId ?? existing.encoredMoveId : null,
+          disableTurns: nextDisableTurns,
+          disabledMoveId: nextDisableTurns > 0 ? patch.disabledMoveId ?? existing.disabledMoveId : null,
+          helpingHandTurns: nextHelpingHandTurns,
+          lastMoveId: patch.lastMoveId ?? existing.lastMoveId,
+          turnsActive: nextTurnsActive,
+          protectStreak: nextProtectStreak,
         },
       };
     });
@@ -5490,6 +6395,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     setBattleEngineSearching(false);
     setBattleEngineError(null);
     setBattleSimulatorState({});
+    setBattleFieldRuntime(DEFAULT_BATTLE_FIELD_RUNTIME_STATE);
     resetDoublesTurn();
   };
 
@@ -7009,6 +7915,9 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             allyTailwind: doublesAllyTailwind,
             enemyTailwind: doublesEnemyTailwind,
             trickRoom: doublesTrickRoom,
+            allySide: { tailwindTurns: battleFieldRuntime.allyTailwindTurns },
+            enemySide: { tailwindTurns: battleFieldRuntime.enemyTailwindTurns },
+            fieldState: { turn: battleFieldRuntime.turn, trickRoomTurns: battleFieldRuntime.trickRoomTurns },
             universalProtect: true,
           })
         : null,
@@ -7018,6 +7927,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       damageTerrain,
       damageWeather,
       doublesThreatReady,
+      battleFieldRuntime,
       doublesAllyTailwind,
       doublesEnemyTailwind,
       doublesTrickRoom,
@@ -7097,6 +8007,10 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         allyTailwind: doublesAllyTailwind,
         enemyTailwind: doublesEnemyTailwind,
         trickRoom: doublesTrickRoom,
+        allyTailwindTurns: battleFieldRuntime.allyTailwindTurns,
+        enemyTailwindTurns: battleFieldRuntime.enemyTailwindTurns,
+        trickRoomTurns: battleFieldRuntime.trickRoomTurns,
+        turn: battleFieldRuntime.turn,
         searchMode: battleEngineSearchMode,
         objectiveMode: battleEngineObjectiveMode,
       }),
@@ -7109,6 +8023,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       damageWeather,
       doublesAllySelection,
       doublesEnemySelection,
+      battleFieldRuntime,
       doublesAllyTailwind,
       doublesEnemyTailwind,
       doublesTrickRoom,
@@ -7136,23 +8051,30 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     );
   }, [battleScenarioOptions, selectedBattleScenarioId]);
 
-  const applyProjectedBattleScenario = () => {
-    if (!selectedBattleScenario) {
-      return;
-    }
-
+  const applyBattleStateToBoard = (nextState: BattleState) => {
     const nextBattleSimulatorState: Record<string, BattleSimulatorMemberState> = {};
     const nextDoublesRuntime: Record<string, DoublesMemberRuntime> = {};
 
-    for (const combatant of Object.values(selectedBattleScenario.state.combatants)) {
+    for (const combatant of Object.values(nextState.combatants)) {
       const hpPercent = combatant.maxHp > 0 ? clampPercent((combatant.currentHp / combatant.maxHp) * 100) : 0;
       nextBattleSimulatorState[getBattleSimulatorStateKey(combatant.side, combatant.teamIndex, combatant.pokemon.id)] = {
         hpPercent,
         attackStage: clampStatStage(combatant.stages.attack),
         defenseStage: clampStatStage(combatant.stages.defense),
+        specialAttackStage: clampStatStage(combatant.stages.specialAttack),
+        specialDefenseStage: clampStatStage(combatant.stages.specialDefense),
         speedStage: clampStatStage(combatant.stages.speed),
         statusCondition: combatant.statusCondition,
         sleepTurns: combatant.sleepTurns,
+        tauntTurns: combatant.tauntTurns,
+        encoreTurns: combatant.encoreTurns,
+        encoredMoveId: combatant.encoredMoveId,
+        disableTurns: combatant.disableTurns,
+        disabledMoveId: combatant.disabledMoveId,
+        helpingHandTurns: combatant.helpingHandTurns,
+        lastMoveId: combatant.lastMoveId,
+        turnsActive: combatant.turnsActive,
+        protectStreak: combatant.protectStreak,
       };
       nextDoublesRuntime[`${combatant.side}-${combatant.teamIndex}`] = {
         hpPercent,
@@ -7163,18 +8085,342 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
 
     setBattleSimulatorState(nextBattleSimulatorState);
     setDoublesRuntime(nextDoublesRuntime);
+    setBattleFieldRuntime({
+      turn: nextState.field.turn,
+      allyTailwindTurns: nextState.sides.ally.tailwindTurns,
+      enemyTailwindTurns: nextState.sides.enemy.tailwindTurns,
+      trickRoomTurns: nextState.field.trickRoomTurns,
+    });
     setDoublesAllySelection([
-      selectedBattleScenario.state.sides.ally.activeIds[0] ? selectedBattleScenario.state.combatants[selectedBattleScenario.state.sides.ally.activeIds[0]]?.teamIndex ?? null : null,
-      selectedBattleScenario.state.sides.ally.activeIds[1] ? selectedBattleScenario.state.combatants[selectedBattleScenario.state.sides.ally.activeIds[1]]?.teamIndex ?? null : null,
+      nextState.sides.ally.activeIds[0] ? nextState.combatants[nextState.sides.ally.activeIds[0]]?.teamIndex ?? null : null,
+      nextState.sides.ally.activeIds[1] ? nextState.combatants[nextState.sides.ally.activeIds[1]]?.teamIndex ?? null : null,
     ]);
     setDoublesEnemySelection([
-      selectedBattleScenario.state.sides.enemy.activeIds[0] ? selectedBattleScenario.state.combatants[selectedBattleScenario.state.sides.enemy.activeIds[0]]?.teamIndex ?? null : null,
-      selectedBattleScenario.state.sides.enemy.activeIds[1] ? selectedBattleScenario.state.combatants[selectedBattleScenario.state.sides.enemy.activeIds[1]]?.teamIndex ?? null : null,
+      nextState.sides.enemy.activeIds[0] ? nextState.combatants[nextState.sides.enemy.activeIds[0]]?.teamIndex ?? null : null,
+      nextState.sides.enemy.activeIds[1] ? nextState.combatants[nextState.sides.enemy.activeIds[1]]?.teamIndex ?? null : null,
     ]);
-    setDoublesAllyTailwind(selectedBattleScenario.state.sides.ally.tailwindTurns > 0);
-    setDoublesEnemyTailwind(selectedBattleScenario.state.sides.enemy.tailwindTurns > 0);
-    setDoublesTrickRoom(selectedBattleScenario.state.field.trickRoomTurns > 0);
+    setDoublesAllyTailwind(nextState.sides.ally.tailwindTurns > 0);
+    setDoublesEnemyTailwind(nextState.sides.enemy.tailwindTurns > 0);
+    setDoublesTrickRoom(nextState.field.trickRoomTurns > 0);
     setSelectedBattleScenarioId("current-board");
+  };
+
+  const applyProjectedBattleScenario = () => {
+    if (!selectedBattleScenario) return;
+    applyBattleStateToBoard(selectedBattleScenario.state);
+  };
+
+  // --- Battle Lab simulation ---
+  const runUserSimulation = () => {
+    if (!battleEngineCurrentState) return;
+    const state = battleEngineCurrentState;
+    const engineAllyPlan = battleEngineRecommendation?.bestPlan ?? null;
+    const enginePredictedEnemyPlan = battleEngineRecommendation?.predictedEnemyResponse ?? null;
+    const allyPlan = buildJointPlanFromUserChoices(state, "ally", userChosenActions, engineAllyPlan);
+    const enemyPlan = buildJointPlanFromUserChoices(state, "enemy", userChosenActions, enginePredictedEnemyPlan);
+    const result = resolveTurn(state, allyPlan, enemyPlan, "average");
+
+    if (simPlayTimerRef.current) {
+      window.clearInterval(simPlayTimerRef.current);
+      simPlayTimerRef.current = null;
+    }
+
+    setSimulationRun({
+      startState: state,
+      finalState: result.state,
+      events: result.events,
+      allyPlan,
+      enemyPlan,
+    });
+    setSimEventIndex(0);
+    setSimPlaying(true);
+    setSimViewMode("sim");
+  };
+
+  const pauseUserSimulation = () => {
+    if (simPlayTimerRef.current) {
+      window.clearInterval(simPlayTimerRef.current);
+      simPlayTimerRef.current = null;
+    }
+    setSimPlaying(false);
+  };
+
+  const resetUserSimulation = () => {
+    if (simPlayTimerRef.current) {
+      window.clearInterval(simPlayTimerRef.current);
+      simPlayTimerRef.current = null;
+    }
+    setSimPlaying(false);
+    setSimulationRun(null);
+    setSimEventIndex(0);
+    setSimViewMode("real");
+    setDamagePulses({});
+    setSlotFlashes({});
+  };
+
+  const stepUserSimulation = () => {
+    if (!simulationRun) return;
+    if (simPlayTimerRef.current) {
+      window.clearInterval(simPlayTimerRef.current);
+      simPlayTimerRef.current = null;
+    }
+    setSimPlaying(false);
+    setSimEventIndex((i) => Math.min(simulationRun.events.length, i + 1));
+  };
+
+  const applySimulationAsNextTurn = () => {
+    if (!simulationRun) return;
+    applyBattleStateToBoard(simulationRun.finalState);
+    resetUserSimulation();
+    setUserChosenActions({});
+  };
+
+  const advanceRealBoardToNextTurn = () => {
+    const nextFieldRuntime = {
+      turn: battleFieldRuntime.turn + 1,
+      allyTailwindTurns: Math.max(0, battleFieldRuntime.allyTailwindTurns - 1),
+      enemyTailwindTurns: Math.max(0, battleFieldRuntime.enemyTailwindTurns - 1),
+      trickRoomTurns: Math.max(0, battleFieldRuntime.trickRoomTurns - 1),
+    };
+
+    setBattleFieldRuntime(nextFieldRuntime);
+    setDoublesAllyTailwind(nextFieldRuntime.allyTailwindTurns > 0);
+    setDoublesEnemyTailwind(nextFieldRuntime.enemyTailwindTurns > 0);
+    setDoublesTrickRoom(nextFieldRuntime.trickRoomTurns > 0);
+    setEditingSlotKey(null);
+    setUserChosenActions({});
+    resetUserSimulation();
+  };
+
+  // Playback ticker
+  useEffect(() => {
+    if (!simPlaying || !simulationRun) return;
+    const timer = window.setInterval(() => {
+      setSimEventIndex((i) => {
+        const next = i + 1;
+        if (next >= simulationRun.events.length) {
+          window.clearInterval(timer);
+          simPlayTimerRef.current = null;
+          setSimPlaying(false);
+          return simulationRun.events.length;
+        }
+        return next;
+      });
+    }, 650);
+    simPlayTimerRef.current = timer;
+    return () => {
+      window.clearInterval(timer);
+      if (simPlayTimerRef.current === timer) simPlayTimerRef.current = null;
+    };
+  }, [simPlaying, simulationRun]);
+
+  // Cleanup timers on unmount
+  useEffect(() => {
+    return () => {
+      if (simPlayTimerRef.current) window.clearInterval(simPlayTimerRef.current);
+      Object.values(pulseClearTimersRef.current).forEach((t) => window.clearTimeout(t));
+    };
+  }, []);
+
+  // Reset simulation when inputs change
+  useEffect(() => {
+    resetUserSimulation();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [battleEngineInputSignature]);
+
+  // Prune chosen actions when active ids change
+  useEffect(() => {
+    if (!battleEngineCurrentState) {
+      if (Object.keys(userChosenActions).length > 0) setUserChosenActions({});
+      return;
+    }
+    const activeIds = new Set<string>([
+      ...battleEngineCurrentState.sides.ally.activeIds.filter(Boolean) as string[],
+      ...battleEngineCurrentState.sides.enemy.activeIds.filter(Boolean) as string[],
+    ]);
+    setUserChosenActions((current) => {
+      const next: Record<string, ChosenAction> = {};
+      let changed = false;
+      for (const [k, v] of Object.entries(current)) {
+        if (activeIds.has(k)) next[k] = v;
+        else changed = true;
+      }
+      return changed ? next : current;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [battleEngineInputSignature]);
+
+  // Interpolated display state during simulation playback
+  const battleLabDisplayState = useMemo<BattleState | null>(() => {
+    if (!battleEngineCurrentState) return null;
+    if (simViewMode === "real" || !simulationRun) return battleEngineCurrentState;
+
+    const { startState, finalState, events } = simulationRun;
+    if (events.length === 0 || simEventIndex >= events.length) return finalState;
+
+    const fraction = events.length > 0 ? simEventIndex / events.length : 1;
+    const clone: BattleState = {
+      ...finalState,
+      combatants: { ...finalState.combatants },
+      sides: {
+        ally: { ...finalState.sides.ally },
+        enemy: { ...finalState.sides.enemy },
+      },
+    };
+
+    for (const id of Object.keys(finalState.combatants)) {
+      const start = startState.combatants[id];
+      const end = finalState.combatants[id];
+      if (!start || !end) continue;
+      const interpHp = Math.round(start.currentHp + (end.currentHp - start.currentHp) * fraction);
+      clone.combatants[id] = { ...end, currentHp: interpHp };
+    }
+
+    return clone;
+  }, [battleEngineCurrentState, simViewMode, simulationRun, simEventIndex]);
+
+  // Drive damage pulses and effect flashes from display state changes
+  useEffect(() => {
+    if (!battleLabDisplayState) return;
+    const prevByCombatant = prevDisplayHpRef.current;
+    const nextPulses: Record<string, number> = {};
+
+    for (const [id, combatant] of Object.entries(battleLabDisplayState.combatants)) {
+      const prev = prevByCombatant[id] ?? combatant.currentHp;
+      const delta = prev - combatant.currentHp;
+      if (delta !== 0 && Math.abs(delta) >= 1) {
+        nextPulses[id] = delta; // positive = damage, negative = heal
+      }
+      prevByCombatant[id] = combatant.currentHp;
+    }
+
+    if (Object.keys(nextPulses).length > 0) {
+      setDamagePulses((current) => ({ ...current, ...nextPulses }));
+      for (const id of Object.keys(nextPulses)) {
+        const existing = pulseClearTimersRef.current[id];
+        if (existing) window.clearTimeout(existing);
+        pulseClearTimersRef.current[id] = window.setTimeout(() => {
+          setDamagePulses((c) => {
+            const copy = { ...c };
+            delete copy[id];
+            return copy;
+          });
+        }, 900);
+      }
+    }
+  }, [battleLabDisplayState]);
+
+  // Detect event-driven flashes (protect / status)
+  useEffect(() => {
+    if (!simulationRun) return;
+    if (simEventIndex === 0 || simEventIndex > simulationRun.events.length) return;
+    const event = simulationRun.events[simEventIndex - 1];
+    if (!event) return;
+
+    const text = event.text.toLowerCase();
+    let kind: "protect" | "status" | null = null;
+    if (text.includes("protect") || text.includes("detect") || text.includes("wide guard") || text.includes("quick guard")) {
+      kind = "protect";
+    } else if (
+      text.includes("burned") ||
+      text.includes("paralyzed") ||
+      text.includes("fell asleep") ||
+      text.includes("asleep") ||
+      text.includes("poisoned")
+    ) {
+      kind = "status";
+    }
+
+    const targetId = event.targetId ?? event.actorId;
+    if (!targetId || !kind) return;
+
+    setSlotFlashes((c) => ({ ...c, [targetId]: kind }));
+    const tid = window.setTimeout(() => {
+      setSlotFlashes((c) => {
+        const copy = { ...c };
+        delete copy[targetId];
+        return copy;
+      });
+    }, 650);
+    return () => window.clearTimeout(tid);
+  }, [simEventIndex, simulationRun]);
+
+  // Fill default chosen actions whenever active slots or engine recommendation changes
+  useEffect(() => {
+    if (!battleEngineCurrentState) return;
+    const state = battleEngineCurrentState;
+    const defaults: Record<string, ChosenAction> = {};
+    const engineAllyPlan = battleEngineRecommendation?.bestPlan ?? null;
+    const enginePredictedEnemyPlan = battleEngineRecommendation?.predictedEnemyResponse ?? null;
+
+    const seedFor = (combatantId: string, sidePlan: JointActionPlan | null) => {
+      const combatant = state.combatants[combatantId];
+      if (!combatant) return;
+      if (userChosenActions[combatantId]) return; // don't overwrite user picks
+
+      const engineAction = sidePlan?.actions.find((a) => a.actorId === combatantId);
+      if (engineAction) {
+        const a = engineAction.action;
+        if (a.type === "move") {
+          defaults[combatantId] = { kind: "move", moveId: a.moveId, targetId: a.targetId };
+          return;
+        }
+        if (a.type === "switch") {
+          defaults[combatantId] = { kind: "switch", switchInId: a.switchInId };
+          return;
+        }
+        defaults[combatantId] = { kind: "pass" };
+        return;
+      }
+
+      const bestMove =
+        [...combatant.knownMoves, ...combatant.candidateMoves].sort(
+          (l, r) => (r.basePower ?? 0) - (l.basePower ?? 0),
+        )[0] ?? null;
+      if (bestMove) {
+        defaults[combatantId] = {
+          kind: "move",
+          moveId: bestMove.id,
+          targetId: getDefaultTargetForMove(state, combatant, bestMove),
+        };
+      }
+    };
+
+    for (const id of state.sides.ally.activeIds.filter(Boolean) as string[]) {
+      seedFor(id, engineAllyPlan);
+    }
+    for (const id of state.sides.enemy.activeIds.filter(Boolean) as string[]) {
+      seedFor(id, enginePredictedEnemyPlan);
+    }
+
+    if (Object.keys(defaults).length > 0) {
+      setUserChosenActions((c) => ({ ...defaults, ...c }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [battleEngineInputSignature, battleEngineRecommendation]);
+
+  const setChosenAction = (combatantId: string, action: ChosenAction) => {
+    setUserChosenActions((c) => ({ ...c, [combatantId]: action }));
+  };
+
+  const applyEngineRecommendationToChosen = () => {
+    if (!battleEngineCurrentState || !battleEngineRecommendation) return;
+    const state = battleEngineCurrentState;
+    const next: Record<string, ChosenAction> = {};
+
+    const copyPlan = (plan: JointActionPlan | null) => {
+      if (!plan) return;
+      for (const p of plan.actions) {
+        const a = p.action;
+        if (a.type === "move") next[p.actorId] = { kind: "move", moveId: a.moveId, targetId: a.targetId };
+        else if (a.type === "switch") next[p.actorId] = { kind: "switch", switchInId: a.switchInId };
+        else next[p.actorId] = { kind: "pass" };
+      }
+    };
+    copyPlan(battleEngineRecommendation.bestPlan);
+    copyPlan(battleEngineRecommendation.predictedEnemyResponse);
+    setUserChosenActions((c) => ({ ...c, ...next }));
+    void state; // keep reference, lint
   };
 
   useEffect(() => {
@@ -10006,691 +11252,770 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             </section>
           ) : null}
 
-          {doublesThreatReady ? (
+          {doublesThreatReady && battleLabDisplayState ? (
             <>
-            <section className="damage-doubles-block battle-lab-shell">
-              <div className="coverage-preview-header">
-                <div>
-                  <p className="eyebrow">Battle Lab</p>
-                  <h3>Pick the lead pair, tune the board, and run search in one place</h3>
-                </div>
-                <div className="damage-assumption-row compact">
-                  <span className="damage-assumption-pill">Selected leads drive threat board and engine</span>
-                  <span className="damage-assumption-pill">Simulator edits feed directly into search</span>
-                  <span className="damage-assumption-pill">Worker-backed search stays off the main thread</span>
-                </div>
-              </div>
-
-              <div className="battle-lab-summary-strip">
-                <div className="battle-lab-summary-group ally">
-                  <span className="battle-lab-summary-label">My active pair</span>
-                  <div className="battle-lab-summary-list">
-                    {(["A", "B"] as const).map((rankLabel, rankIndex) => {
-                      const slotIndex = doublesAllySelection[rankIndex];
-                      const pokemon = slotIndex !== null ? team[slotIndex]?.pokemon ?? null : null;
-                      return (
-                        <button
-                          key={`battle-lab-ally-summary-${rankLabel}`}
-                          type="button"
-                          className={`battle-lab-summary-chip ally ${pokemon ? "filled" : "empty"}`}
-                          onClick={() => {
-                            if (slotIndex !== null) {
-                              toggleDoublesAllySelection(slotIndex);
-                            }
-                          }}
-                          disabled={slotIndex === null}
-                        >
-                          <span className="battle-lab-summary-rank">{rankLabel}</span>
-                          {pokemon ? <PokemonSprite pokemon={pokemon} className="battle-lab-summary-sprite" /> : null}
-                          <span className="battle-lab-summary-copy">
-                            <strong>{pokemon?.name ?? "Empty"}</strong>
-                            <small>{slotIndex !== null ? `Slot ${slotIndex + 1}` : "Choose above"}</small>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="battle-lab-summary-group enemy">
-                  <span className="battle-lab-summary-label">Enemy active pair</span>
-                  <div className="battle-lab-summary-list">
-                    {(["A", "B"] as const).map((rankLabel, rankIndex) => {
-                      const slotIndex = doublesEnemySelection[rankIndex];
-                      const entry = slotIndex !== null ? opponentRoster.find((item) => item.slotIndex === slotIndex) ?? null : null;
-                      const pokemon = entry?.pokemon ?? null;
-                      return (
-                        <button
-                          key={`battle-lab-enemy-summary-${rankLabel}`}
-                          type="button"
-                          className={`battle-lab-summary-chip enemy ${pokemon ? "filled" : "empty"}`}
-                          onClick={() => {
-                            if (slotIndex !== null) {
-                              toggleDoublesEnemySelection(slotIndex);
-                            }
-                          }}
-                          disabled={slotIndex === null}
-                        >
-                          <span className="battle-lab-summary-rank">{rankLabel}</span>
-                          {pokemon ? <PokemonSprite pokemon={pokemon} className="battle-lab-summary-sprite" /> : null}
-                          <span className="battle-lab-summary-copy">
-                            <strong>{pokemon?.name ?? "Empty"}</strong>
-                            <small>{slotIndex !== null ? `Enemy ${slotIndex + 1}` : "Choose above"}</small>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-
-              {selectedBattleScenario ? (
-                <BattlefieldStateView
-                  state={selectedBattleScenario.state}
-                  title={selectedBattleScenario.label}
-                  subtitle={selectedBattleScenario.subtitle}
-                  events={selectedBattleScenario.events}
-                  onApply={
-                    selectedBattleScenario.id !== "current-board"
-                      ? applyProjectedBattleScenario
-                      : undefined
-                  }
-                  applyDisabled={selectedBattleScenario.id === "current-board"}
-                />
-              ) : null}
-
-              <div className="battle-lab-main">
-                <section className="battle-simulator-panel battle-lab-section">
-                  <div className="coverage-preview-header">
-                    <div>
-                      <p className="eyebrow">Board State</p>
-                      <h3>Edit the exact position you want to search</h3>
+            {(() => {
+              const displayState = battleLabDisplayState;
+              const realState = battleEngineCurrentState!;
+              const currentEvent =
+                simulationRun && simEventIndex > 0 && simEventIndex <= simulationRun.events.length
+                  ? simulationRun.events[simEventIndex - 1]
+                  : null;
+              const allyActiveIds = displayState.sides.ally.activeIds;
+              const enemyActiveIds = displayState.sides.enemy.activeIds;
+              const deckSlots: Array<{
+                id: string | null;
+                side: BattleSide;
+                rankLabel: string;
+              }> = [
+                { id: allyActiveIds[0] ?? null, side: "ally", rankLabel: "A" },
+                { id: allyActiveIds[1] ?? null, side: "ally", rankLabel: "B" },
+                { id: enemyActiveIds[0] ?? null, side: "enemy", rankLabel: "A" },
+                { id: enemyActiveIds[1] ?? null, side: "enemy", rankLabel: "B" },
+              ];
+              const simulationReady = !!simulationRun;
+              const simulationFinished = simulationReady && simEventIndex >= simulationRun!.events.length;
+              const canApplyNext = !simPlaying && Boolean(simulationRun || battleEngineCurrentState);
+              const displayedTurnNumber =
+                simulationRun && simViewMode === "sim" && !simulationFinished
+                  ? simulationRun.startState.field.turn
+                  : displayState.field.turn;
+              const visibleLogEvents =
+                simulationRun?.events.slice(0, simulationFinished ? simulationRun.events.length : simEventIndex) ?? [];
+              return (
+                <section className="damage-doubles-block bl-shell">
+                  <div className="bl-top">
+                    <div className="bl-top-title">
+                      <p className="eyebrow">Battle Lab</p>
+                      <h3>
+                        Turn {displayedTurnNumber} ·{" "}
+                        <span className={`bl-view-tag ${simViewMode}`}>
+                          {simViewMode === "real" ? "Real Board" : simulationFinished ? "Simulation · End" : "Simulation"}
+                        </span>
+                      </h3>
                     </div>
-                    <div className="damage-assumption-row compact">
-                      <span className="damage-assumption-pill">Allies use exact HP</span>
-                      <span className="damage-assumption-pill">Enemies use HP %</span>
-                    </div>
-                  </div>
-
-                  <p className="selector-note battle-simulator-note">
-                    HP, burn, paralysis, sleep, and Atk / Def / Spe stages feed directly into the recommendation.
-                    Bench Pokemon stay available for switches and keep any values you already edited for them.
-                  </p>
-
-                  <div className="battle-simulator-grid">
-                    {battleSimulatorActiveAllies.map((entry) => (
-                      <BattleSimulatorCard
-                        key={`battle-simulator-ally-${entry.slotIndex}-${entry.pokemon.id}`}
-                        side="ally"
-                        slotIndex={entry.slotIndex}
-                        rankLabel={entry.rankLabel}
-                        pokemon={entry.pokemon}
-                        state={entry.state}
-                        onChange={(patch) =>
-                          updateBattleSimulatorMemberState("ally", entry.slotIndex, entry.pokemon.id, patch)
-                        }
-                      />
-                    ))}
-
-                    {battleSimulatorActiveEnemies.map((entry) => (
-                      <BattleSimulatorCard
-                        key={`battle-simulator-enemy-${entry.slotIndex}-${entry.pokemon.id}`}
-                        side="enemy"
-                        slotIndex={entry.slotIndex}
-                        rankLabel={entry.rankLabel}
-                        pokemon={entry.pokemon}
-                        state={entry.state}
-                        onChange={(patch) =>
-                          updateBattleSimulatorMemberState("enemy", entry.slotIndex, entry.pokemon.id, patch)
-                        }
-                      />
-                    ))}
-                  </div>
-
-                  <div className="battle-simulator-actions">
-                    <button type="button" className="secondary-button" onClick={resetBattleSimulatorState}>
-                      Reset Battle State
-                    </button>
-                    <span className="selector-note">
-                      Weather and terrain still come from the damage calculator controls above.
-                    </span>
-                  </div>
-                </section>
-
-                <section className="battle-engine-panel battle-lab-section">
-                <div className="coverage-preview-header">
-                  <div>
-                    <p className="eyebrow">Battle Engine</p>
-                    <h3>Recommendation and counterplay</h3>
-                  </div>
-                  <span>
-                    {battleEngineSearching
-                      ? "Searching..."
-                      : battleEngineRecommendation
-                        ? `Depth ${battleEngineRecommendation.depthReached} search`
-                        : "Manual run"}
-                  </span>
-                </div>
-
-                <p className="selector-note battle-engine-note">
-                  Searches legal doubles actions with switches, move priority, Fake Out, Protect, Tailwind, Trick
-                  Room, Safeguard, Ally Switch, Feint, Encore, Disable, Helping Hand, redirection, screens, guards,
-                  common status moves, speed control, and simple self setup / healing lines. The simulator state
-                  beside it is used as the starting board, then the search mixes conservative / expected / optimistic
-                  branches for misses and secondary effects, belief-aware enemy move assumptions, and iterative deepening.
-                </p>
-
-                {battleScenarioOptions.length > 0 ? (
-                  <div className="battle-scenario-chip-row">
-                    {battleScenarioOptions.map((option) => (
+                    <div className="bl-view-toggle" role="tablist">
                       <button
-                        key={`battle-scenario-chip-${option.id}`}
                         type="button"
-                        className={`battle-scenario-chip ${selectedBattleScenario?.id === option.id ? "selected" : ""}`}
-                        onClick={() => setSelectedBattleScenarioId(option.id)}
+                        role="tab"
+                        className={simViewMode === "real" ? "active" : ""}
+                        onClick={() => setSimViewMode("real")}
                       >
-                        <strong>{option.label}</strong>
-                        <small>{option.subtitle}</small>
+                        Real
                       </button>
-                    ))}
-                  </div>
-                ) : null}
-
-                <div className="damage-assumption-row">
-                  <label className="team-slot-field" style={{ minWidth: 180 }}>
-                    <span>Search mode</span>
-                    <select
-                      value={battleEngineSearchMode}
-                      onChange={(event) => setBattleEngineSearchMode(event.target.value as SearchMode)}
-                      disabled={battleEngineSearching}
-                    >
-                      <option value="fast">Fast</option>
-                      <option value="balanced">Balanced</option>
-                      <option value="deep">Deep</option>
-                    </select>
-                  </label>
-                  <label className="team-slot-field" style={{ minWidth: 180 }}>
-                    <span>Objective</span>
-                    <select
-                      value={battleEngineObjectiveMode}
-                      onChange={(event) => setBattleEngineObjectiveMode(event.target.value as ObjectiveMode)}
-                      disabled={battleEngineSearching}
-                    >
-                      <option value="robust">Robust</option>
-                      <option value="likely">Likely</option>
-                      <option value="hybrid">Hybrid</option>
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    className="primary-button"
-                    onClick={runBattleEngineAnalysis}
-                    disabled={!canRunBattleEngine || battleEngineSearching}
-                  >
-                    {battleEngineSearching
-                      ? "Searching..."
-                      : battleEngineRecommendation
-                        ? "Recalculate Battle Engine"
-                        : "Run Battle Engine"}
-                  </button>
-                  <span className="damage-assumption-pill">
-                    {battleEngineSearching
-                      ? "Worker search running off the main UI thread"
-                      : battleEngineRecommendation
-                      ? battleEngineIsStale
-                        ? "Current board changed after the last run"
-                        : "Results match the current board"
-                      : "No engine result yet"}
-                  </span>
-                </div>
-
-                {battleEngineError ? (
-                  <p className="selector-note" style={{ color: "var(--status-bad)" }}>
-                    {battleEngineError}
-                  </p>
-                ) : null}
-
-                {battleEngineRecommendation ? (
-                  <>
-                    <div className="damage-assumption-row">
-                      <span className="damage-assumption-pill">
-                        Chosen score {Math.round(battleEngineRecommendation.rootScore)}
-                      </span>
-                      <span className="damage-assumption-pill">
-                        Robust {Math.round(battleEngineRecommendation.robustScore)}
-                      </span>
-                      <span className="damage-assumption-pill">
-                        Likely {Math.round(battleEngineRecommendation.likelyScore)}
-                      </span>
-                      <span className="damage-assumption-pill">
-                        Hybrid {Math.round(battleEngineRecommendation.hybridScore)}
-                      </span>
-                      <span className="damage-assumption-pill">
-                        Depth {battleEngineRecommendation.depthReached} · {Math.round(battleEngineRecommendation.diagnostics.elapsedMs)}ms
-                      </span>
-                    </div>
-
-                    <div className="battle-engine-grid">
                       <button
                         type="button"
-                        className={`battle-engine-card primary battle-engine-card-button ${
-                          selectedBattleScenario?.id === "recommended-outcome" ? "selected" : ""
-                        }`}
+                        role="tab"
+                        className={simViewMode === "sim" ? "active" : ""}
                         onClick={() => {
-                          if (battleEngineRecommendation.preview?.state) {
-                            setSelectedBattleScenarioId("recommended-outcome");
-                          }
+                          if (simulationRun) setSimViewMode("sim");
                         }}
-                        disabled={!battleEngineRecommendation.preview?.state}
+                        disabled={!simulationRun}
                       >
-                        <div className="battle-engine-card-head">
-                          <div>
-                            <p className="eyebrow">Recommended Line</p>
-                            <strong>
-                              {battleEngineRecommendation.bestPlan?.summary ?? "No legal ally line available"}
-                            </strong>
+                        Sim
+                      </button>
+                    </div>
+                    <div className="bl-top-fields">
+                      <label className={`bl-field-pill ally ${doublesAllyTailwind ? "on" : ""}`}>
+                        <input
+                          type="checkbox"
+                          checked={doublesAllyTailwind}
+                          onChange={(e) => setAllyTailwindActive(e.target.checked)}
+                        />
+                        My TW
+                      </label>
+                      <label className={`bl-field-pill enemy ${doublesEnemyTailwind ? "on" : ""}`}>
+                        <input
+                          type="checkbox"
+                          checked={doublesEnemyTailwind}
+                          onChange={(e) => setEnemyTailwindActive(e.target.checked)}
+                        />
+                        Enemy TW
+                      </label>
+                      <label className={`bl-field-pill ${doublesTrickRoom ? "on" : ""}`}>
+                        <input
+                          type="checkbox"
+                          checked={doublesTrickRoom}
+                          onChange={(e) => setTrickRoomActive(e.target.checked)}
+                        />
+                        Trick Room
+                      </label>
+                      <select
+                        className="bl-field-select"
+                        value={damageWeather}
+                        onChange={(e) => setDamageWeather(e.target.value as DamageWeather)}
+                        aria-label="Weather"
+                      >
+                        <option value="none">Weather · none</option>
+                        <option value="sun">Sun</option>
+                        <option value="rain">Rain</option>
+                        <option value="sand">Sand</option>
+                        <option value="snow">Snow</option>
+                      </select>
+                      <select
+                        className="bl-field-select"
+                        value={damageTerrain}
+                        onChange={(e) => setDamageTerrain(e.target.value as DamageTerrain)}
+                        aria-label="Terrain"
+                      >
+                        <option value="none">Terrain · none</option>
+                        <option value="electric">Electric</option>
+                        <option value="grassy">Grassy</option>
+                        <option value="psychic">Psychic</option>
+                        <option value="misty">Misty</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="bl-main">
+                    <aside className="bl-log">
+                      <div className="bl-log-head">
+                        <div>
+                          <p className="eyebrow">Turn Log</p>
+                          <strong>{simulationRun ? "What happened" : "Awaiting sim"}</strong>
+                        </div>
+                        {simulationRun ? (
+                          <span className="bl-log-count">{visibleLogEvents.length}/{simulationRun.events.length}</span>
+                        ) : null}
+                      </div>
+                      {visibleLogEvents.length > 0 ? (
+                        <ol className="bl-log-list">
+                          {visibleLogEvents.map((event, index) => {
+                            const ownerSide =
+                              event.actorId?.startsWith("ally-") || event.targetId?.startsWith("ally-")
+                                ? "ally"
+                                : event.actorId?.startsWith("enemy-") || event.targetId?.startsWith("enemy-")
+                                  ? "enemy"
+                                  : "neutral";
+                            return (
+                              <li
+                                key={`bl-log-${index}-${event.actorId ?? "none"}-${event.targetId ?? "none"}`}
+                                className={`bl-log-item ${ownerSide}${index === visibleLogEvents.length - 1 ? " current" : ""}`}
+                                title={event.text}
+                              >
+                                <span className="bl-log-step">{index + 1}</span>
+                                <span className="bl-log-copy">
+                                  <span className="bl-log-participants">
+                                    {event.actorId ? (
+                                      <span className={`bl-log-chip ${getBattleLabCombatantTone(event.actorId)}`}>
+                                        {getBattleLabCombatantName(simulationRun, realState, event.actorId)}
+                                      </span>
+                                    ) : null}
+                                    {event.targetId ? (
+                                      <span className={`bl-log-chip ${getBattleLabCombatantTone(event.targetId)}`}>
+                                        {getBattleLabCombatantName(simulationRun, realState, event.targetId)}
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                  <span className="bl-log-text">{summarizeBattleLabEvent(event.text)}</span>
+                                </span>
+                              </li>
+                            );
+                          })}
+                        </ol>
+                      ) : (
+                        <div className="bl-log-empty">
+                          {simulationRun
+                            ? "Step or play the turn to populate the log."
+                            : "Press Play Turn to generate a concise event trace."}
+                        </div>
+                      )}
+                    </aside>
+
+                    <div className="bl-board-wrap">
+                      <div className="bl-board">
+                        <div className="bl-board-row enemy">
+                          {(["A", "B"] as const).map((rank, i) => {
+                            const id = enemyActiveIds[i];
+                            const combatant = id ? displayState.combatants[id] : null;
+                            const slotKey = id ? `enemy-${id}` : `enemy-empty-${rank}`;
+                            const teamIndex = combatant?.teamIndex;
+                            const pokemonId = combatant?.pokemon.id ?? null;
+                            const patchState =
+                              teamIndex != null && pokemonId
+                                ? getBattleSimulatorMemberState("enemy", teamIndex, pokemonId)
+                                : null;
+                            return (
+                              <BattleLabSlot
+                                key={slotKey}
+                                combatant={combatant}
+                                rankLabel={rank}
+                                side="enemy"
+                                displayHp={combatant?.currentHp ?? 0}
+                                displayHpPercent={
+                                  combatant && combatant.maxHp > 0
+                                    ? (combatant.currentHp / combatant.maxHp) * 100
+                                    : 0
+                                }
+                                pulse={id ? damagePulses[id] ?? 0 : 0}
+                                effectFlash={id ? slotFlashes[id] ?? null : null}
+                                editing={editingSlotKey === slotKey && simViewMode === "real"}
+                                quickEditing={simViewMode === "real"}
+                                onToggleEdit={() => {
+                                  if (simViewMode !== "real") return;
+                                  setEditingSlotKey(editingSlotKey === slotKey ? null : slotKey);
+                                }}
+                                onEditPatch={(patch) => {
+                                  if (teamIndex != null && pokemonId) {
+                                    updateBattleSimulatorMemberState("enemy", teamIndex, pokemonId, patch);
+                                  }
+                                }}
+                                simulatorPatch={patchState}
+                              />
+                            );
+                          })}
+                        </div>
+
+                        <div className="bl-board-center">
+                          <span className="bl-center-turn">Turn {displayedTurnNumber}</span>
+                          <div className="bl-center-chips">
+                            {displayState.field.weather !== "none" ? (
+                              <span className="bl-center-chip">☀ {displayState.field.weather}</span>
+                            ) : null}
+                            {displayState.field.terrain !== "none" ? (
+                              <span className="bl-center-chip">▤ {displayState.field.terrain}</span>
+                            ) : null}
+                            {displayState.field.trickRoomTurns > 0 ? (
+                              <span className="bl-center-chip tr">TR {displayState.field.trickRoomTurns}</span>
+                            ) : null}
+                            {displayState.sides.ally.tailwindTurns > 0 ? (
+                              <span className="bl-center-chip ally">TW·A {displayState.sides.ally.tailwindTurns}</span>
+                            ) : null}
+                            {displayState.sides.enemy.tailwindTurns > 0 ? (
+                              <span className="bl-center-chip enemy">TW·E {displayState.sides.enemy.tailwindTurns}</span>
+                            ) : null}
+                            {displayState.sides.ally.reflectTurns > 0 ? (
+                              <span className="bl-center-chip ally">Reflect</span>
+                            ) : null}
+                            {displayState.sides.ally.lightScreenTurns > 0 ? (
+                              <span className="bl-center-chip ally">L·Screen</span>
+                            ) : null}
+                            {displayState.sides.enemy.reflectTurns > 0 ? (
+                              <span className="bl-center-chip enemy">Reflect</span>
+                            ) : null}
+                            {displayState.sides.enemy.lightScreenTurns > 0 ? (
+                              <span className="bl-center-chip enemy">L·Screen</span>
+                            ) : null}
                           </div>
-                          <span className="mini-type-pill neutral-pill">
-                            {battleEngineObjectiveMode} {Math.round(battleEngineRecommendation.rootScore)}
+                          {currentEvent ? (
+                            <div className="bl-center-ticker">{currentEvent.text}</div>
+                          ) : null}
+                        </div>
+
+                        <div className="bl-board-row ally">
+                          {(["A", "B"] as const).map((rank, i) => {
+                            const id = allyActiveIds[i];
+                            const combatant = id ? displayState.combatants[id] : null;
+                            const slotKey = id ? `ally-${id}` : `ally-empty-${rank}`;
+                            const teamIndex = combatant?.teamIndex;
+                            const pokemonId = combatant?.pokemon.id ?? null;
+                            const patchState =
+                              teamIndex != null && pokemonId
+                                ? getBattleSimulatorMemberState("ally", teamIndex, pokemonId)
+                                : null;
+                            return (
+                              <BattleLabSlot
+                                key={slotKey}
+                                combatant={combatant}
+                                rankLabel={rank}
+                                side="ally"
+                                displayHp={combatant?.currentHp ?? 0}
+                                displayHpPercent={
+                                  combatant && combatant.maxHp > 0
+                                    ? (combatant.currentHp / combatant.maxHp) * 100
+                                    : 0
+                                }
+                                pulse={id ? damagePulses[id] ?? 0 : 0}
+                                effectFlash={id ? slotFlashes[id] ?? null : null}
+                                editing={editingSlotKey === slotKey && simViewMode === "real"}
+                                quickEditing={simViewMode === "real"}
+                                onToggleEdit={() => {
+                                  if (simViewMode !== "real") return;
+                                  setEditingSlotKey(editingSlotKey === slotKey ? null : slotKey);
+                                }}
+                                onEditPatch={(patch) => {
+                                  if (teamIndex != null && pokemonId) {
+                                    updateBattleSimulatorMemberState("ally", teamIndex, pokemonId, patch);
+                                  }
+                                }}
+                                simulatorPatch={patchState}
+                              />
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="bl-sim-strip">
+                        <button
+                          type="button"
+                          className="bl-sim-btn play"
+                          onClick={runUserSimulation}
+                          disabled={simPlaying || !battleEngineCurrentState}
+                          title="Play the turn with selected moves"
+                        >
+                          {simPlaying ? "⏸ Playing" : "▶ Play Turn"}
+                        </button>
+                        <button
+                          type="button"
+                          className="bl-sim-btn"
+                          onClick={simPlaying ? pauseUserSimulation : stepUserSimulation}
+                          disabled={!simulationRun || simulationFinished}
+                          title="Step to next event"
+                        >
+                          {simPlaying ? "⏸" : "⏭"}
+                        </button>
+                        <button
+                          type="button"
+                          className="bl-sim-btn"
+                          onClick={resetUserSimulation}
+                          disabled={!simulationRun && simViewMode === "real"}
+                          title="Reset simulation"
+                        >
+                          ↺
+                        </button>
+                        <div className="bl-sim-progress">
+                          {simulationRun ? (
+                            <>
+                              <span className="bl-sim-progress-label">
+                                {simEventIndex}/{simulationRun.events.length}
+                              </span>
+                              <div className="bl-sim-progress-bar">
+                                <span
+                                  className="bl-sim-progress-fill"
+                                  style={{
+                                    width: `${
+                                      simulationRun.events.length > 0
+                                        ? (simEventIndex / simulationRun.events.length) * 100
+                                        : 0
+                                    }%`,
+                                  }}
+                                />
+                              </div>
+                            </>
+                          ) : (
+                            <span className="bl-sim-progress-label muted">
+                              Pick moves and press Play Turn
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          className="bl-sim-btn next"
+                          onClick={() => {
+                            if (simulationRun) {
+                              applySimulationAsNextTurn();
+                              return;
+                            }
+                            advanceRealBoardToNextTurn();
+                          }}
+                          disabled={!canApplyNext}
+                          title={
+                            simulationRun
+                              ? "Apply the simulated result as the new real board state"
+                              : "Advance the edited real board to the next turn"
+                          }
+                        >
+                          {simulationRun ? "Next Turn →" : "Advance Turn →"}
+                        </button>
+                      </div>
+                    </div>
+
+                    <aside className="bl-engine">
+                      <div className="bl-engine-head">
+                        <div>
+                          <p className="eyebrow">Battle Engine</p>
+                          <span className="bl-engine-status">
+                            {battleEngineSearching
+                              ? "Searching..."
+                              : battleEngineRecommendation
+                                ? battleEngineIsStale
+                                  ? "Stale · rerun"
+                                  : `Depth ${battleEngineRecommendation.depthReached}`
+                                : "Not yet run"}
                           </span>
                         </div>
-
-                        {battleEngineRecommendation.bestPlan ? (
-                          <div className="battle-engine-action-list">
-                            {battleEngineRecommendation.bestPlan.actions.map((plannedAction) => (
-                              <div
-                                key={`battle-engine-best-${plannedAction.actorId}-${plannedAction.summary}`}
-                                className="battle-engine-action"
-                              >
-                                <strong>{plannedAction.actorLabel}</strong>
-                                <p>{plannedAction.summary.replace(`${plannedAction.actorLabel}: `, "")}</p>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="selector-note">The engine could not find a legal ally plan from this state.</p>
-                        )}
-                      </button>
-
-                      <article className="battle-engine-card enemy">
-                        <div className="battle-engine-card-head">
-                          <div>
-                            <p className="eyebrow">Predicted Enemy Reply</p>
-                            <strong>
-                              {battleEngineRecommendation.predictedEnemyResponse
-                                ? battleEngineRecommendation.predictedEnemyResponse.summary
-                                : "No enemy action available"}
-                            </strong>
-                          </div>
+                        <div className="bl-engine-controls">
+                          <select
+                            value={battleEngineSearchMode}
+                            onChange={(e) => setBattleEngineSearchMode(e.target.value as SearchMode)}
+                            disabled={battleEngineSearching}
+                          >
+                            <option value="fast">Fast</option>
+                            <option value="balanced">Balanced</option>
+                            <option value="deep">Deep</option>
+                          </select>
+                          <select
+                            value={battleEngineObjectiveMode}
+                            onChange={(e) => setBattleEngineObjectiveMode(e.target.value as ObjectiveMode)}
+                            disabled={battleEngineSearching}
+                          >
+                            <option value="robust">Robust</option>
+                            <option value="likely">Likely</option>
+                            <option value="hybrid">Hybrid</option>
+                          </select>
+                          <button
+                            type="button"
+                            className="primary-button bl-engine-run"
+                            onClick={runBattleEngineAnalysis}
+                            disabled={!canRunBattleEngine || battleEngineSearching}
+                          >
+                            {battleEngineSearching ? "..." : "Run"}
+                          </button>
                         </div>
-
-                        {battleEngineRecommendation.predictedEnemyResponse ? (
-                          <div className="battle-engine-action-list">
-                            {battleEngineRecommendation.predictedEnemyResponse.actions.map((plannedAction) => (
-                              <div
-                                key={`battle-engine-enemy-${plannedAction.actorId}-${plannedAction.summary}`}
-                                className="battle-engine-action"
-                              >
-                                <strong>{plannedAction.actorLabel}</strong>
-                                <p>{plannedAction.summary.replace(`${plannedAction.actorLabel}: `, "")}</p>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="selector-note">The opposing side has no legal response from the current state.</p>
-                        )}
-                      </article>
-                    </div>
-
-                    <details className="battle-engine-preview" open>
-                      <summary>Explain recommendation</summary>
-                      <div className="battle-engine-preview-list">
-                        <p>
-                          Worst-case reply:{" "}
-                          {battleEngineRecommendation.enemyBestResponse?.summary ?? "No robust enemy counterline found."}
-                        </p>
-                        <p>
-                          Search mode <strong>{battleEngineRecommendation.budget.searchMode}</strong>, objective{" "}
-                          <strong>{battleEngineRecommendation.budget.objectiveMode}</strong>, branch model{" "}
-                          <strong>{battleEngineRecommendation.diagnostics.branchModelUsed}</strong>.
-                        </p>
-                        {battleEngineRecommendation.pv.length > 0 ? (
-                          <>
-                            <p>
-                              Principal variation:
-                            </p>
-                            {battleEngineRecommendation.pv.slice(0, 3).map((step) => (
-                              <p key={`battle-engine-pv-${step.ply}`}>
-                                Turn {step.turn}: {step.allyPlan?.summary ?? "No ally plan"} |{" "}
-                                {step.enemyPlan?.summary ?? "No enemy reply"} | robust {Math.round(step.robustScore)} | likely{" "}
-                                {Math.round(step.likelyScore)}
-                              </p>
-                            ))}
-                          </>
-                        ) : null}
-                        {battleEngineRecommendation.diagnostics.enemyBeliefs.length > 0 ? (
-                          <>
-                            <p>Enemy assumptions:</p>
-                            {battleEngineRecommendation.diagnostics.enemyBeliefs.map((entry) => (
-                              <p key={`battle-engine-beliefs-${entry.combatantId}`}>
-                                {entry.label}: {entry.moves.map((move) =>
-                                  `${move.moveName} ${Math.round(move.policyWeight * 100)}%${move.inferred ? " inferred" : ""}`,
-                                ).join(", ")} ({entry.confidenceSummary})
-                              </p>
-                            ))}
-                          </>
-                        ) : null}
-                        <p>
-                          Diagnostics: nodes {battleEngineRecommendation.diagnostics.searchNodes}, turn resolves{" "}
-                          {battleEngineRecommendation.diagnostics.resolveTurnCalls}, joint plans{" "}
-                          {battleEngineRecommendation.diagnostics.generatedJointPlans}, plan pairs{" "}
-                          {battleEngineRecommendation.diagnostics.planPairEvaluations}, TT hits{" "}
-                          {battleEngineRecommendation.diagnostics.ttHits}, TT stores{" "}
-                          {battleEngineRecommendation.diagnostics.ttStores}, cutoffs{" "}
-                          {battleEngineRecommendation.diagnostics.cutoffs}.
-                        </p>
                       </div>
-                    </details>
 
-                    {battleEngineRecommendation.preview?.events.length ? (
-                      <details className="battle-engine-preview">
-                        <summary>Average-roll turn preview</summary>
-                        <div className="battle-engine-preview-list">
-                          {battleEngineRecommendation.preview.events.slice(0, 12).map((event, index) => (
-                            <p key={`battle-engine-preview-${index}`}>{event.text}</p>
-                          ))}
-                        </div>
-                      </details>
-                    ) : null}
+                      {battleEngineError ? (
+                        <p className="bl-engine-error">{battleEngineError}</p>
+                      ) : null}
 
-                    {battleEngineRecommendation.consideredPlans.length > 1 ? (
-                      <section className="battle-engine-alternatives">
-                        <div className="coverage-preview-header">
-                          <p className="eyebrow">Other Candidate Lines</p>
-                          <span>{battleEngineRecommendation.consideredPlans.length - 1} alternates</span>
-                        </div>
+                      {battleEngineRecommendation ? (
+                        <>
+                          <div className="bl-engine-scores">
+                            <span className="bl-score-pill primary">
+                              Score {Math.round(battleEngineRecommendation.rootScore)}
+                            </span>
+                            <span className="bl-score-pill">
+                              Rob {Math.round(battleEngineRecommendation.robustScore)}
+                            </span>
+                            <span className="bl-score-pill">
+                              Lik {Math.round(battleEngineRecommendation.likelyScore)}
+                            </span>
+                            <span className="bl-score-pill">
+                              {Math.round(battleEngineRecommendation.diagnostics.elapsedMs)}ms
+                            </span>
+                          </div>
 
-                        <div className="battle-engine-alt-list">
-                          {battleEngineRecommendation.consideredPlans.slice(1).map((scoreEntry: SearchPlanScore, index) => (
+                          <div className="bl-engine-card ally">
+                            <div className="bl-engine-card-top">
+                              <strong>Best ally line</strong>
+                              <button
+                                type="button"
+                                className="bl-engine-apply"
+                                onClick={applyEngineRecommendationToChosen}
+                              >
+                                Use
+                              </button>
+                            </div>
+                            {battleEngineRecommendation.bestPlan ? (
+                              <ul>
+                                {battleEngineRecommendation.bestPlan.actions.map((a) => (
+                                  <li key={`bl-eng-ally-${a.actorId}`}>
+                                    <strong>{a.actorLabel}</strong>{" "}
+                                    {a.summary.replace(`${a.actorLabel}: `, "")}
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <p className="bl-engine-muted">No legal ally plan.</p>
+                            )}
+                          </div>
+
+                          <div className="bl-engine-card enemy">
+                            <strong>Predicted enemy reply</strong>
+                            {battleEngineRecommendation.predictedEnemyResponse ? (
+                              <ul>
+                                {battleEngineRecommendation.predictedEnemyResponse.actions.map((a) => (
+                                  <li key={`bl-eng-enemy-${a.actorId}`}>
+                                    <strong>{a.actorLabel}</strong>{" "}
+                                    {a.summary.replace(`${a.actorLabel}: `, "")}
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <p className="bl-engine-muted">No enemy response available.</p>
+                            )}
+                          </div>
+
+                          {battleEngineRecommendation.consideredPlans.length > 1 ? (
+                            <div className="bl-engine-alts">
+                              <span className="bl-engine-alts-label">Watch out for:</span>
+                              {battleEngineRecommendation.consideredPlans
+                                .slice(1, 4)
+                                .map((scoreEntry: SearchPlanScore, i) => (
+                                  <button
+                                    key={`bl-eng-alt-${i}`}
+                                    type="button"
+                                    className="bl-engine-alt"
+                                    onClick={() => {
+                                      // Load this plan's actions as user's chosen
+                                      const next: Record<string, ChosenAction> = {};
+                                      for (const a of scoreEntry.plan.actions) {
+                                        const act = a.action;
+                                        if (act.type === "move")
+                                          next[a.actorId] = {
+                                            kind: "move",
+                                            moveId: act.moveId,
+                                            targetId: act.targetId,
+                                          };
+                                        else if (act.type === "switch")
+                                          next[a.actorId] = { kind: "switch", switchInId: act.switchInId };
+                                        else next[a.actorId] = { kind: "pass" };
+                                      }
+                                      setUserChosenActions((c) => ({ ...c, ...next }));
+                                    }}
+                                    title={scoreEntry.plan.summary}
+                                  >
+                                    <strong>#{i + 2}</strong>
+                                    <span>{scoreEntry.plan.summary}</span>
+                                    <em>{Math.round(scoreEntry.score)}</em>
+                                  </button>
+                                ))}
+                            </div>
+                          ) : null}
+                        </>
+                      ) : (
+                        <p className="bl-engine-muted">
+                          Press <strong>Run</strong> to see the engine&apos;s best move + counterplay.
+                        </p>
+                      )}
+                    </aside>
+                  </div>
+
+                  <div className="bl-decks">
+                    {deckSlots.map((slot) => {
+                      if (!slot.id) {
+                        return (
+                          <div key={`bl-deck-${slot.side}-${slot.rankLabel}`} className={`bl-deck ${slot.side} empty`}>
+                            <div className="bl-deck-head">
+                              <span className={`bl-slot-rank ${slot.side}`}>{slot.rankLabel}</span>
+                              <small>Empty slot</small>
+                            </div>
+                          </div>
+                        );
+                      }
+                      const combatant = displayState.combatants[slot.id];
+                      if (!combatant) return null;
+                      const movePool = [...combatant.knownMoves, ...combatant.candidateMoves];
+                      const seen = new Set<string>();
+                      const uniqueMoves = movePool.filter((m) => {
+                        const key = normalizePokemonNameKey(m.name);
+                        if (seen.has(key)) return false;
+                        seen.add(key);
+                        return true;
+                      });
+                      const topMoves = uniqueMoves.slice(0, 4);
+                      const chosen = userChosenActions[slot.id];
+                      const benchIds = realState.sides[slot.side].benchIds.filter(
+                        (id) => realState.combatants[id]?.currentHp > 0,
+                      );
+                      const currentLastMoveId =
+                        combatant.teamIndex != null
+                          ? getBattleSimulatorMemberState(slot.side, combatant.teamIndex, combatant.pokemon.id).lastMoveId
+                          : null;
+
+                      return (
+                        <div key={`bl-deck-${slot.side}-${slot.id}`} className={`bl-deck ${slot.side}`}>
+                          <div className="bl-deck-head">
+                            <span className={`bl-slot-rank ${slot.side}`}>{slot.rankLabel}</span>
+                            <PokemonSprite pokemon={combatant.pokemon} className="bl-deck-sprite" />
+                            <div className="bl-deck-head-copy">
+                              <strong>{combatant.pokemon.name}</strong>
+                              <small>{slot.side === "ally" ? "You pick" : "Predicted"}</small>
+                            </div>
+                          </div>
+
+                          <div className="bl-deck-moves">
+                            {topMoves.length === 0 ? (
+                              <div className="bl-deck-empty">No moves scouted.</div>
+                            ) : (
+                              topMoves.map((move) => {
+                                const isMoveSelected =
+                                  chosen?.kind === "move" && chosen.moveId === move.id;
+                                const targetId =
+                                  isMoveSelected && chosen.kind === "move"
+                                    ? chosen.targetId
+                                    : getDefaultTargetForMove(realState, combatant, move);
+                                const target = targetId ? realState.combatants[targetId] ?? null : null;
+                                const canCycleTarget = move.targetKind === "singleOpponent";
+                                return (
+                                  <BattleLabMoveButton
+                                    key={`bl-mv-${slot.id}-${move.id}`}
+                                    move={move}
+                                    selected={isMoveSelected}
+                                    target={target}
+                                    canCycleTarget={canCycleTarget}
+                                    lastMoveSelected={currentLastMoveId === move.id}
+                                    canSetLastMove={simViewMode === "real"}
+                                    onClick={() =>
+                                      setChosenAction(slot.id!, {
+                                        kind: "move",
+                                        moveId: move.id,
+                                        targetId: getDefaultTargetForMove(realState, combatant, move),
+                                      })
+                                    }
+                                    onSetLastMove={() => {
+                                      updateBattleSimulatorMemberState(slot.side, combatant.teamIndex, combatant.pokemon.id, {
+                                        lastMoveId: currentLastMoveId === move.id ? null : move.id,
+                                      });
+                                    }}
+                                    onCycleTarget={() => {
+                                      if (!isMoveSelected || !canCycleTarget) return;
+                                      const oppSide: BattleSide = slot.side === "ally" ? "enemy" : "ally";
+                                      const oppIds = realState.sides[oppSide].activeIds.filter(
+                                        (id): id is string => Boolean(id),
+                                      );
+                                      if (oppIds.length <= 1) return;
+                                      const currentIdx = oppIds.indexOf(targetId ?? "");
+                                      const nextIdx = (currentIdx + 1) % oppIds.length;
+                                      setChosenAction(slot.id!, {
+                                        kind: "move",
+                                        moveId: move.id,
+                                        targetId: oppIds[nextIdx],
+                                      });
+                                    }}
+                                    disabled={simViewMode === "sim"}
+                                  />
+                                );
+                              })
+                            )}
+                          </div>
+
+                          <div className="bl-deck-alt">
+                            {benchIds.length > 0 ? (
+                              <select
+                                className="bl-deck-switch"
+                                value={chosen?.kind === "switch" ? chosen.switchInId : ""}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (!v) return;
+                                  setChosenAction(slot.id!, { kind: "switch", switchInId: v });
+                                }}
+                                disabled={simViewMode === "sim"}
+                              >
+                                <option value="">Switch...</option>
+                                {benchIds.map((bid) => (
+                                  <option key={`bl-sw-${slot.id}-${bid}`} value={bid}>
+                                    {realState.combatants[bid]?.pokemon.name ?? "?"}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : null}
                             <button
-                              key={`battle-engine-alt-${scoreEntry.plan.summary}`}
                               type="button"
-                              className={`battle-engine-alt-card battle-engine-card-button ${
-                                selectedBattleScenario?.id === `candidate-${index}` ? "selected" : ""
-                              }`}
-                              onClick={() => {
-                                if (scoreEntry.preview?.state) {
-                                  setSelectedBattleScenarioId(`candidate-${index}`);
-                                }
-                              }}
-                              disabled={!scoreEntry.preview?.state}
+                              className={`bl-deck-pass ${chosen?.kind === "pass" ? "selected" : ""}`}
+                              onClick={() => setChosenAction(slot.id!, { kind: "pass" })}
+                              disabled={simViewMode === "sim"}
                             >
-                              <div className="battle-engine-alt-head">
-                                <strong>{scoreEntry.plan.summary}</strong>
-                                <span className="mini-type-pill neutral-pill">
-                                  {battleEngineObjectiveMode} {Math.round(scoreEntry.score)}
-                                </span>
-                              </div>
-                              <p>
-                                Robust {Math.round(scoreEntry.robustScore)} · likely {Math.round(scoreEntry.likelyScore)} ·{" "}
-                                hybrid {Math.round(scoreEntry.hybridScore)}
-                              </p>
-                              <p>
-                                Predicted enemy reply:{" "}
-                                {scoreEntry.predictedEnemyResponse?.summary ?? "No legal enemy counterplay from this state."}
-                              </p>
+                              Pass
                             </button>
-                          ))}
+                          </div>
                         </div>
-                      </section>
-                    ) : null}
-                  </>
-                ) : (
-                  <div className="matchup-empty-board">
-                    Press <strong>Run Battle Engine</strong> to evaluate the simulator board state.
-                  </div>
-                )}
-                </section>
-              </div>
-            </section>
-
-            <div className="damage-threat-layout">
-              <div className="damage-threat-columns">
-                <section className="damage-doubles-block">
-                  <div className="coverage-preview-header">
-                    <p className="eyebrow">Enemy Damage On You</p>
-                    <span>Best single hit from each enemy into each ally</span>
+                      );
+                    })}
                   </div>
 
-                  <div className="damage-threat-card-grid">
-                    {incomingThreatCards.map((card) => {
-                      const tone = getThreatCardTone(card.strongestLine, "incoming");
-
-                      return (
-                        <article
-                          key={`incoming-threat-${card.target.slotIndex}`}
-                          className={`damage-threat-card incoming ${tone}`}
-                        >
-                          <div className="damage-threat-card-head">
-                            <div className="opponent-coverage-main">
-                              <PokemonSprite pokemon={card.target.pokemon} />
-                              <div>
-                                <strong>{card.target.pokemon.name}</strong>
-                                <p>Slot {card.target.slotIndex + 1}</p>
-                              </div>
-                            </div>
-                            <span className={`damage-threat-card-badge ${tone}`}>
-                              {card.strongestLine?.bestRow
-                                ? `Max ${formatPercent(card.strongestLine.bestRow.estimate.maxPercent)}%`
-                                : "No damage"}
-                            </span>
+                  <details className="bl-threat-footer">
+                    <summary>
+                      <span>Threat board · turn order</span>
+                      <span className="bl-threat-summary-count">
+                        {threatTurnOrder.length > 0
+                          ? `${threatTurnOrder[0].member.pokemon.name} moves first`
+                          : "no data"}
+                      </span>
+                    </summary>
+                    <div className="bl-threat-body">
+                      <div className="bl-threat-columns">
+                        <div className="bl-threat-col">
+                          <div className="bl-threat-col-head">
+                            <strong>Enemy → You</strong>
+                            <small>Biggest incoming hit per ally</small>
                           </div>
-
-                          <div className="damage-threat-line-list">
-                            {card.lines.map((line) => {
-                              const isStrongest =
-                                card.strongestLine?.attacker.side === line.attacker.side &&
-                                card.strongestLine?.attacker.slotIndex === line.attacker.slotIndex;
-
+                          <div className="bl-threat-grid">
+                            {incomingThreatCards.map((card) => {
+                              const tone = getThreatCardTone(card.strongestLine, "incoming");
+                              const line = card.strongestLine;
                               return (
                                 <div
-                                  key={`incoming-threat-line-${card.target.slotIndex}-${line.attacker.slotIndex}`}
-                                  className={`damage-threat-line ${isStrongest ? "is-strongest" : ""}`}
+                                  key={`bl-inc-${card.target.slotIndex}`}
+                                  className={`bl-threat-cell incoming ${tone}`}
                                 >
-                                  <div className="damage-threat-line-head">
-                                    <strong>
-                                      Enemy {line.attacker.slotIndex + 1} • {line.attacker.pokemon.name}
-                                    </strong>
-                                    <span>
-                                      {line.bestRow
-                                        ? `${formatPercent(line.bestRow.estimate.maxPercent)}% max`
-                                        : "No damaging move"}
-                                    </span>
+                                  <PokemonSprite
+                                    pokemon={card.target.pokemon}
+                                    className="bl-threat-cell-sprite"
+                                  />
+                                  <div className="bl-threat-cell-copy">
+                                    <strong>{card.target.pokemon.name}</strong>
+                                    <small>
+                                      {line?.bestRow
+                                        ? `${line.attacker.pokemon.name} · ${getAttackLabel(line.bestRow.attack)}`
+                                        : "No hits"}
+                                    </small>
                                   </div>
-                                  <p className="damage-threat-line-copy">
-                                    {line.bestRow
-                                      ? `${getAttackLabel(line.bestRow.attack)} • ${formatDamageHpRange(line.bestRow)} • ${formatDamagePercentRange(line.bestRow)}`
-                                      : "No supported damaging move found for this attacker."}
-                                  </p>
-                                  <div className="damage-threat-line-badges">
-                                    <span
-                                      className={`speed-matchup-pill ${
-                                        line.timing === "before"
-                                          ? "faster"
-                                          : line.timing === "after"
-                                            ? "slower"
-                                            : "tie"
-                                      }`}
-                                    >
-                                      {formatThreatTimingLabel(line.timing)}
-                                    </span>
-                                    {line.bestRow ? (
-                                      <span className="mini-type-pill neutral-pill">
-                                        {TYPE_META[line.bestRow.estimate.effectiveAttackType].label}
-                                      </span>
-                                    ) : null}
-                                    {line.bestRow?.isSpreadMove ? (
-                                      <span className="mini-type-pill neutral-pill">Spread</span>
-                                    ) : null}
-                                  </div>
+                                  <span className={`bl-threat-cell-badge ${tone}`}>
+                                    {line?.bestRow
+                                      ? `${formatPercent(line.bestRow.estimate.maxPercent)}%`
+                                      : "—"}
+                                  </span>
                                 </div>
                               );
                             })}
                           </div>
-                        </article>
-                      );
-                    })}
-                  </div>
-                </section>
+                        </div>
 
-                <section className="damage-doubles-block">
-                  <div className="coverage-preview-header">
-                    <p className="eyebrow">Your Threat On Them</p>
-                    <span>Best single hit from each ally into each enemy</span>
-                  </div>
-
-                  <div className="damage-threat-card-grid">
-                    {outgoingThreatCards.map((card) => {
-                      const tone = getThreatCardTone(card.strongestLine, "outgoing");
-
-                      return (
-                        <article
-                          key={`outgoing-threat-${card.target.slotIndex}`}
-                          className={`damage-threat-card outgoing ${tone}`}
-                        >
-                          <div className="damage-threat-card-head">
-                            <div className="opponent-coverage-main">
-                              <PokemonSprite pokemon={card.target.pokemon} />
-                              <div>
-                                <strong>{card.target.pokemon.name}</strong>
-                                <p>Enemy {card.target.slotIndex + 1}</p>
-                              </div>
-                            </div>
-                            <span className={`damage-threat-card-badge ${tone}`}>
-                              {card.strongestLine?.bestRow
-                                ? `Max ${formatPercent(card.strongestLine.bestRow.estimate.maxPercent)}%`
-                                : "No damage"}
-                            </span>
+                        <div className="bl-threat-col">
+                          <div className="bl-threat-col-head">
+                            <strong>You → Enemy</strong>
+                            <small>Biggest outgoing hit per enemy</small>
                           </div>
-
-                          <div className="damage-threat-line-list">
-                            {card.lines.map((line) => {
-                              const isStrongest =
-                                card.strongestLine?.attacker.side === line.attacker.side &&
-                                card.strongestLine?.attacker.slotIndex === line.attacker.slotIndex;
-
+                          <div className="bl-threat-grid">
+                            {outgoingThreatCards.map((card) => {
+                              const tone = getThreatCardTone(card.strongestLine, "outgoing");
+                              const line = card.strongestLine;
                               return (
                                 <div
-                                  key={`outgoing-threat-line-${card.target.slotIndex}-${line.attacker.slotIndex}`}
-                                  className={`damage-threat-line ${isStrongest ? "is-strongest" : ""}`}
+                                  key={`bl-out-${card.target.slotIndex}`}
+                                  className={`bl-threat-cell outgoing ${tone}`}
                                 >
-                                  <div className="damage-threat-line-head">
-                                    <strong>
-                                      Slot {line.attacker.slotIndex + 1} • {line.attacker.pokemon.name}
-                                    </strong>
-                                    <span>
-                                      {line.bestRow
-                                        ? `${formatPercent(line.bestRow.estimate.maxPercent)}% max`
-                                        : "No damaging move"}
-                                    </span>
+                                  <PokemonSprite
+                                    pokemon={card.target.pokemon}
+                                    className="bl-threat-cell-sprite"
+                                  />
+                                  <div className="bl-threat-cell-copy">
+                                    <strong>{card.target.pokemon.name}</strong>
+                                    <small>
+                                      {line?.bestRow
+                                        ? `${line.attacker.pokemon.name} · ${getAttackLabel(line.bestRow.attack)}`
+                                        : "No hits"}
+                                    </small>
                                   </div>
-                                  <p className="damage-threat-line-copy">
-                                    {line.bestRow
-                                      ? `${getAttackLabel(line.bestRow.attack)} • ${formatDamageHpRange(line.bestRow)} • ${formatDamagePercentRange(line.bestRow)}`
-                                      : "No supported damaging move found for this attacker."}
-                                  </p>
-                                  <div className="damage-threat-line-badges">
-                                    <span
-                                      className={`speed-matchup-pill ${
-                                        line.timing === "before"
-                                          ? "faster"
-                                          : line.timing === "after"
-                                            ? "slower"
-                                            : "tie"
-                                      }`}
-                                    >
-                                      {formatThreatTimingLabel(line.timing)}
-                                    </span>
-                                    {line.bestRow ? (
-                                      <span className="mini-type-pill neutral-pill">
-                                        {TYPE_META[line.bestRow.estimate.effectiveAttackType].label}
-                                      </span>
-                                    ) : null}
-                                    {line.bestRow?.isSpreadMove ? (
-                                      <span className="mini-type-pill neutral-pill">Spread</span>
-                                    ) : null}
-                                  </div>
+                                  <span className={`bl-threat-cell-badge ${tone}`}>
+                                    {line?.bestRow
+                                      ? `${formatPercent(line.bestRow.estimate.maxPercent)}%`
+                                      : "—"}
+                                  </span>
                                 </div>
                               );
                             })}
                           </div>
-                        </article>
-                      );
-                    })}
-                  </div>
-                </section>
-              </div>
+                        </div>
 
-              <section className="damage-doubles-block damage-threat-turn-order-panel">
-                <div className="coverage-preview-header">
-                  <p className="eyebrow">Turn Order</p>
-                  <span>{doublesTrickRoom ? "Trick Room active" : "Normal speed order"}</span>
-                </div>
-
-                <div className="damage-threat-control-row">
-                  <label className={`damage-doubles-toggle ${doublesAllyTailwind ? "is-on" : ""}`}>
-                    <input
-                      type="checkbox"
-                      checked={doublesAllyTailwind}
-                      onChange={(event) => setDoublesAllyTailwind(event.target.checked)}
-                    />
-                    My Tailwind
-                  </label>
-                  <label className={`damage-doubles-toggle ${doublesEnemyTailwind ? "is-on" : ""}`}>
-                    <input
-                      type="checkbox"
-                      checked={doublesEnemyTailwind}
-                      onChange={(event) => setDoublesEnemyTailwind(event.target.checked)}
-                    />
-                    Enemy Tailwind
-                  </label>
-                  <label className={`damage-doubles-toggle ${doublesTrickRoom ? "is-on" : ""}`}>
-                    <input
-                      type="checkbox"
-                      checked={doublesTrickRoom}
-                      onChange={(event) => setDoublesTrickRoom(event.target.checked)}
-                    />
-                    Trick Room
-                  </label>
-                </div>
-
-                <p className="selector-note damage-threat-order-note">
-                  Priority is not modeled here. This list only reflects rough Speed, Tailwind, and Trick Room.
-                </p>
-
-                <div className="speed-tier-list damage-threat-turn-order-list">
-                  {threatTurnOrder.map(({ member, effectiveSpeed, tailwindActive }, index) => (
-                    <div
-                      key={`threat-turn-order-${member.side}-${member.slotIndex}`}
-                      className={`speed-tier-chip damage-threat-turn-order-chip ${member.side}`}
-                    >
-                      <span className="speed-tier-rank">#{index + 1}</span>
-                      <span className="speed-tier-name">
-                        {member.pokemon.name}
-                        <br />
-                        <small>
-                          {member.side === "ally" ? `Slot ${member.slotIndex + 1}` : `Enemy ${member.slotIndex + 1}`}
-                        </small>
-                      </span>
-                      <span className="speed-tier-stat damage-threat-order-meta">
-                        {effectiveSpeed}
-                        {tailwindActive ? <small>Tailwind</small> : null}
-                      </span>
+                        <div className="bl-threat-col">
+                          <div className="bl-threat-col-head">
+                            <strong>Turn order</strong>
+                            <small>{doublesTrickRoom ? "Trick Room" : "Speed order"}</small>
+                          </div>
+                          <ol className="bl-threat-order">
+                            {threatTurnOrder.map(({ member, effectiveSpeed, tailwindActive }, idx) => (
+                              <li
+                                key={`bl-ord-${member.side}-${member.slotIndex}`}
+                                className={`bl-threat-order-row ${member.side}`}
+                              >
+                                <span className="bl-threat-order-rank">#{idx + 1}</span>
+                                <span className="bl-threat-order-name">{member.pokemon.name}</span>
+                                <span className="bl-threat-order-spe">
+                                  {effectiveSpeed}
+                                  {tailwindActive ? " ↑" : ""}
+                                </span>
+                              </li>
+                            ))}
+                          </ol>
+                        </div>
+                      </div>
                     </div>
-                  ))}
-                </div>
-              </section>
-            </div>
+                  </details>
+                </section>
+              );
+            })()}
             </>
           ) : (
             <div className="matchup-empty-board">

@@ -11,6 +11,10 @@ type BattleEngineInputSignatureOptions = {
   allyTailwind: boolean;
   enemyTailwind: boolean;
   trickRoom: boolean;
+  allyTailwindTurns?: number;
+  enemyTailwindTurns?: number;
+  trickRoomTurns?: number;
+  turn?: number;
   searchMode?: SearchMode;
   objectiveMode?: ObjectiveMode;
 };
@@ -22,8 +26,16 @@ export function buildBattleEngineInputSignature(options: BattleEngineInputSignat
     stages: member.stages ?? null,
     statusCondition: member.statusCondition ?? "none",
     sleepTurns: member.sleepTurns ?? 0,
+    tauntTurns: member.tauntTurns ?? 0,
+    encoreTurns: member.encoreTurns ?? 0,
+    encoredMoveId: member.encoredMoveId ?? null,
+    disableTurns: member.disableTurns ?? 0,
+    disabledMoveId: member.disabledMoveId ?? null,
+    helpingHandTurns: member.helpingHandTurns ?? 0,
     active: member.isActive,
+    lastMoveId: member.lastMoveId ?? null,
     turnsActive: member.turnsActive ?? 0,
+    protectStreak: member.protectStreak ?? 0,
     abilityName: member.abilityName ?? null,
     itemName: member.itemName ?? null,
     statSpread: member.statSpread ?? null,
@@ -65,9 +77,10 @@ export function buildBattleEngineInputSignature(options: BattleEngineInputSignat
     enemyMembers: options.enemyMembers.map((member) => serializeMember(member, true)),
     weather: options.weather,
     terrain: options.terrain,
-    allyTailwind: options.allyTailwind,
-    enemyTailwind: options.enemyTailwind,
-    trickRoom: options.trickRoom,
+    allyTailwindTurns: options.allyTailwindTurns ?? (options.allyTailwind ? 2 : 0),
+    enemyTailwindTurns: options.enemyTailwindTurns ?? (options.enemyTailwind ? 2 : 0),
+    trickRoomTurns: options.trickRoomTurns ?? (options.trickRoom ? 2 : 0),
+    turn: options.turn ?? 1,
     searchMode: options.searchMode ?? "balanced",
     objectiveMode: options.objectiveMode ?? "robust",
   });

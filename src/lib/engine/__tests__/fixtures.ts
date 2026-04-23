@@ -47,6 +47,7 @@ type FixtureMemberOptions = {
   disableTurns?: number;
   lastMoveId?: string | null;
   turnsActive?: number;
+  protectStreak?: number;
   isActive?: boolean;
 };
 
@@ -135,6 +136,7 @@ export function makeMember(options: FixtureMemberOptions): BattleStateMemberInpu
     disableTurns: options.disableTurns ?? 0,
     lastMoveId: options.lastMoveId ?? null,
     turnsActive: options.turnsActive ?? 0,
+    protectStreak: options.protectStreak ?? 0,
     isActive: options.isActive ?? true,
   };
 }

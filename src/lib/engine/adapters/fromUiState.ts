@@ -29,9 +29,20 @@ type RuntimeBattleState = {
   hpPercent: number;
   attackStage: number;
   defenseStage: number;
+  specialAttackStage: number;
+  specialDefenseStage: number;
   speedStage: number;
   statusCondition: BattleStateMemberInput["statusCondition"];
   sleepTurns: number;
+  tauntTurns: number;
+  encoreTurns: number;
+  encoredMoveId: string | null;
+  disableTurns: number;
+  disabledMoveId: string | null;
+  helpingHandTurns: number;
+  lastMoveId: string | null;
+  turnsActive: number;
+  protectStreak: number;
 };
 
 type ResolveStoredOrPresetMovesetInput = {
@@ -256,6 +267,8 @@ function toStageBlock(runtime: RuntimeBattleState) {
   return {
     attack: runtime.attackStage,
     defense: runtime.defenseStage,
+    specialAttack: runtime.specialAttackStage,
+    specialDefense: runtime.specialDefenseStage,
     speed: runtime.speedStage,
   };
 }
@@ -312,6 +325,15 @@ export function buildAllyBattleStateMember(input: AllyMemberInput & { moveByKey:
     stages: toStageBlock(input.runtime),
     statusCondition: input.runtime.statusCondition,
     sleepTurns: input.runtime.statusCondition === "sleep" ? input.runtime.sleepTurns : 0,
+    tauntTurns: input.runtime.tauntTurns,
+    encoreTurns: input.runtime.encoreTurns,
+    encoredMoveId: input.runtime.encoredMoveId,
+    disableTurns: input.runtime.disableTurns,
+    disabledMoveId: input.runtime.disabledMoveId,
+    helpingHandTurns: input.runtime.helpingHandTurns,
+    lastMoveId: input.runtime.lastMoveId,
+    turnsActive: input.runtime.turnsActive,
+    protectStreak: input.runtime.protectStreak,
     isActive: input.isActive,
   } satisfies BattleStateMemberInput;
 }
@@ -352,6 +374,15 @@ export function buildEnemyBattleStateMember(input: EnemyMemberInput) {
     stages: toStageBlock(input.runtime),
     statusCondition: input.runtime.statusCondition,
     sleepTurns: input.runtime.statusCondition === "sleep" ? input.runtime.sleepTurns : 0,
+    tauntTurns: input.runtime.tauntTurns,
+    encoreTurns: input.runtime.encoreTurns,
+    encoredMoveId: input.runtime.encoredMoveId,
+    disableTurns: input.runtime.disableTurns,
+    disabledMoveId: input.runtime.disabledMoveId,
+    helpingHandTurns: input.runtime.helpingHandTurns,
+    lastMoveId: input.runtime.lastMoveId,
+    turnsActive: input.runtime.turnsActive,
+    protectStreak: input.runtime.protectStreak,
     isActive: input.isActive,
   } satisfies BattleStateMemberInput;
 }
@@ -365,9 +396,20 @@ export function buildPreviewEnemyBattleStateMember(
       hpPercent: 100,
       attackStage: 0,
       defenseStage: 0,
+      specialAttackStage: 0,
+      specialDefenseStage: 0,
       speedStage: 0,
       statusCondition: "none",
       sleepTurns: 0,
+      tauntTurns: 0,
+      encoreTurns: 0,
+      encoredMoveId: null,
+      disableTurns: 0,
+      disabledMoveId: null,
+      helpingHandTurns: 0,
+      lastMoveId: null,
+      turnsActive: 0,
+      protectStreak: 0,
     },
     isActive: input.isActive ?? input.slotIndex < 2,
   });

@@ -106,6 +106,37 @@ describe("engine regression coverage", () => {
     ).toBe(true);
   });
 
+  it("does not generate Fake Out after the user's first active turn", () => {
+    const fakeOutUser = makePokemon("Fake Out User", { baseStats: { atk: 110, spe: 120 } });
+    const target = makePokemon("Target", { baseStats: { hp: 120, def: 110 } });
+    const fakeOut = makeMove("Fake Out", {
+      type: "Normal",
+      category: "Physical",
+      basePower: 40,
+      priority: 3,
+      target: "normal",
+    });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 60, target: "normal" });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: fakeOutUser, moveNames: ["Fake Out", "Tackle"], turnsActive: 1 })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: target, moveNames: [] })],
+      moves: [fakeOut, tackle],
+    });
+
+    const plans = generateJointActionPlans(state, "ally", {
+      maxIndividualActionsPerActor: 8,
+      maxJointPlans: 12,
+    });
+
+    expect(
+      plans.some((plan) =>
+        plan.actions.some(
+          (entry) => entry.actorId === "ally-0" && entry.action.type === "move" && entry.summary.includes(": Fake Out"),
+        ),
+      ),
+    ).toBe(false);
+  });
+
   it("does not let Fake Out flinch Ghost-type targets", () => {
     const fakeOutUser = makePokemon("Fake Out User", { baseStats: { atk: 110, spe: 120 } });
     const ghostTarget = makePokemon("Ghost Target", { types: ["Ghost"], baseStats: { hp: 120, def: 110, spe: 90 } });
@@ -132,6 +163,28 @@ describe("engine regression coverage", () => {
     expect(result.events.some((event) => event.text.includes("is unaffected"))).toBe(true);
     expect(result.events.some((event) => event.text.includes("flinches from Fake Out"))).toBe(false);
     expect(result.events.some((event) => event.text.includes("Ghost Target uses Tackle"))).toBe(true);
+  });
+
+  it("fails consecutive Protect in the expected branch", () => {
+    const protector = makePokemon("Protector", { baseStats: { hp: 120, def: 110 } });
+    const protect = makeMove("Protect", { type: "Normal", category: "Status", basePower: 0, target: "self", priority: 4 });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: protector, moveNames: ["Protect"], protectStreak: 1 })],
+      enemy: [],
+      moves: [protect],
+    });
+
+    const result = resolveTurn(
+      state,
+      buildMovePlan(state, "ally", [{ actorId: "ally-0", moveName: "Protect" }]),
+      null,
+      "average",
+      { accuracyMode: "expected" },
+    );
+
+    expect(result.events.some((event) => event.text.includes("Protect fails"))).toBe(true);
+    expect(result.state.combatants["ally-0"].isProtected).toBe(false);
+    expect(result.state.combatants["ally-0"].protectStreak).toBe(0);
   });
 
   it("wakes a sleeping active even when that actor only passes for the turn", () => {

@@ -27,9 +27,20 @@ describe("battle simulator runtime adapter", () => {
           hpPercent: 72,
           attackStage: 1,
           defenseStage: 0,
+          specialAttackStage: 2,
+          specialDefenseStage: -1,
           speedStage: -1,
           statusCondition: "burn",
           sleepTurns: 0,
+          tauntTurns: 0,
+          encoreTurns: 0,
+          encoredMoveId: null,
+          disableTurns: 0,
+          disabledMoveId: null,
+          helpingHandTurns: 0,
+          lastMoveId: "ally-0-saved-tackle",
+          turnsActive: 2,
+          protectStreak: 1,
         },
       ],
       [
@@ -38,9 +49,20 @@ describe("battle simulator runtime adapter", () => {
           hpPercent: 38,
           attackStage: -2,
           defenseStage: 3,
+          specialAttackStage: 1,
+          specialDefenseStage: -2,
           speedStage: 0,
           statusCondition: "sleep",
           sleepTurns: 2,
+          tauntTurns: 1,
+          encoreTurns: 2,
+          encoredMoveId: "ally-2-saved-protect",
+          disableTurns: 0,
+          disabledMoveId: null,
+          helpingHandTurns: 0,
+          lastMoveId: "ally-2-saved-protect",
+          turnsActive: 1,
+          protectStreak: 1,
         },
       ],
     ]);
@@ -49,13 +71,19 @@ describe("battle simulator runtime adapter", () => {
 
     expect(hydrated[0]?.isActive).toBe(false);
     expect(hydrated[0]?.currentHpPercent).toBe(72);
-    expect(hydrated[0]?.stages).toEqual({ attack: 1, defense: 0, speed: -1 });
+    expect(hydrated[0]?.stages).toEqual({ attack: 1, defense: 0, specialAttack: 2, specialDefense: -1, speed: -1 });
     expect(hydrated[0]?.statusCondition).toBe("burn");
+    expect(hydrated[0]?.lastMoveId).toBe("ally-0-saved-tackle");
+    expect(hydrated[0]?.turnsActive).toBe(2);
+    expect(hydrated[0]?.protectStreak).toBe(1);
     expect(hydrated[1]?.isActive).toBe(true);
     expect(hydrated[1]?.currentHpPercent).toBe(38);
-    expect(hydrated[1]?.stages).toEqual({ attack: -2, defense: 3, speed: 0 });
+    expect(hydrated[1]?.stages).toEqual({ attack: -2, defense: 3, specialAttack: 1, specialDefense: -2, speed: 0 });
     expect(hydrated[1]?.statusCondition).toBe("sleep");
     expect(hydrated[1]?.sleepTurns).toBe(2);
+    expect(hydrated[1]?.tauntTurns).toBe(1);
+    expect(hydrated[1]?.encoreTurns).toBe(2);
+    expect(hydrated[1]?.lastMoveId).toBe("ally-2-saved-protect");
   });
 
   it("does not mutate the original member inputs", () => {
@@ -64,9 +92,20 @@ describe("battle simulator runtime adapter", () => {
       hpPercent: 50,
       attackStage: 2,
       defenseStage: -1,
+      specialAttackStage: 3,
+      specialDefenseStage: -2,
       speedStage: 1,
       statusCondition: "paralysis",
       sleepTurns: 0,
+      tauntTurns: 0,
+      encoreTurns: 0,
+      encoredMoveId: null,
+      disableTurns: 0,
+      disabledMoveId: null,
+      helpingHandTurns: 0,
+      lastMoveId: null,
+      turnsActive: 0,
+      protectStreak: 0,
     }));
 
     expect(original.isActive).toBe(false);
