@@ -1,5 +1,5 @@
 import { getBelievedMoves, summarizeEnemyBeliefs } from "./beliefs";
-import { ENGINE_DEFAULTS, generateJointActionPlans, getMoveOption, resolveTurn } from "./core";
+import { ENGINE_DEFAULTS, generateJointActionPlans, getActiveIds, getMoveOption, getOpponentSide, resolveTurn } from "./core";
 import { evaluateBattleState } from "./evaluate";
 import { buildSearchStateKey } from "./hash";
 import { TranspositionTable, type CachedSearchBundle } from "./transposition";
@@ -307,8 +307,109 @@ function scoreToLikelihoodFactor(score: number) {
   return Math.exp(Math.max(-3, Math.min(3, score / 90)));
 }
 
-function getEnemyConditionalLikelihoodScore(policyWeight: number, allyPerspectiveScore: number) {
-  return policyWeight * scoreToLikelihoodFactor(-allyPerspectiveScore);
+function doesActionThreatenActor(state: BattleState, action: JointActionPlan["actions"][number], targetActorId: string) {
+  if (action.action.type !== "move") {
+    return false;
+  }
+
+  const move = getMoveOption(state, action.actorId, action.action.moveId);
+  const actor = state.combatants[action.actorId];
+  const target = state.combatants[targetActorId];
+  if (!move || !actor || !target || move.category === null || actor.side === target.side) {
+    return false;
+  }
+
+  if (action.action.targetId === targetActorId) {
+    return true;
+  }
+
+  if (move.targetKind === "allOpponents" || move.targetKind === "allAdjacent") {
+    return getActiveIds(state, getOpponentSide(actor.side)).includes(targetActorId);
+  }
+
+  return false;
+}
+
+function doesAllyPlanThreatenSpreadDamage(state: BattleState, allyPlan: JointActionPlan, targetSide: "ally" | "enemy") {
+  return allyPlan.actions.some((action) => {
+    if (action.action.type !== "move") {
+      return false;
+    }
+
+    const move = getMoveOption(state, action.actorId, action.action.moveId);
+    const actor = state.combatants[action.actorId];
+    if (!move || !actor || move.category === null || !move.isSpreadMove) {
+      return false;
+    }
+
+    return getOpponentSide(actor.side) === targetSide || move.targetKind === "allAdjacent";
+  });
+}
+
+function doesAllyPlanThreatenPriorityDamage(state: BattleState, allyPlan: JointActionPlan, targetSide: "ally" | "enemy") {
+  return allyPlan.actions.some((action) => {
+    if (action.action.type !== "move") {
+      return false;
+    }
+
+    const move = getMoveOption(state, action.actorId, action.action.moveId);
+    const actor = state.combatants[action.actorId];
+    if (!move || !actor || move.category === null || move.priority <= 0) {
+      return false;
+    }
+
+    return action.action.targetId
+      ? state.combatants[action.action.targetId]?.side === targetSide
+      : getOpponentSide(actor.side) === targetSide;
+  });
+}
+
+function getEnemyPlanConditionalPolicyFactor(
+  state: BattleState,
+  allyPlan: JointActionPlan,
+  enemyPlan: JointActionPlan,
+) {
+  let factor = 1;
+
+  for (const action of enemyPlan.actions) {
+    if (action.action.type !== "move") {
+      continue;
+    }
+
+    const move = getMoveOption(state, action.actorId, action.action.moveId);
+    const actor = state.combatants[action.actorId];
+    if (!move || !actor) {
+      continue;
+    }
+
+    if (move.effectKind === "protect" && !allyPlan.actions.some((allyAction) => doesActionThreatenActor(state, allyAction, action.actorId))) {
+      factor *= 0.08;
+    }
+
+    if (move.effectKind === "guard" && move.effectData?.guard === "wideGuard" && !doesAllyPlanThreatenSpreadDamage(state, allyPlan, actor.side)) {
+      factor *= 0.04;
+    }
+
+    if (move.effectKind === "guard" && move.effectData?.guard === "quickGuard" && !doesAllyPlanThreatenPriorityDamage(state, allyPlan, actor.side)) {
+      factor *= 0.06;
+    }
+  }
+
+  return factor;
+}
+
+function getEnemyConditionalLikelihoodScore(
+  state: BattleState,
+  allyPlan: JointActionPlan,
+  enemyPlan: JointActionPlan,
+  policyWeight: number,
+  allyPerspectiveScore: number,
+) {
+  return (
+    policyWeight *
+    getEnemyPlanConditionalPolicyFactor(state, allyPlan, enemyPlan) *
+    scoreToLikelihoodFactor(-allyPerspectiveScore)
+  );
 }
 
 function buildEnemyActionPriorLookup(enemyPlans: JointActionPlan[]) {
@@ -618,7 +719,13 @@ function evaluateNode(
       likelyScore += childBundle.likelyScore * enemyEntry.policyWeight;
       remainingWeight -= enemyEntry.policyWeight;
 
-      const predictedLikelihoodScore = getEnemyConditionalLikelihoodScore(enemyEntry.policyWeight, childBundle.likelyScore);
+      const predictedLikelihoodScore = getEnemyConditionalLikelihoodScore(
+        state,
+        allyPlan,
+        enemyEntry.plan,
+        enemyEntry.policyWeight,
+        childBundle.likelyScore,
+      );
       if (!predictedEntry || predictedLikelihoodScore > predictedEntry.likelihoodScore) {
         predictedEntry = {
           plan: enemyEntry.plan,
@@ -817,6 +924,9 @@ function scoreRootPlans(
       remainingWeight -= enemyEntry.policyWeight;
 
       const enemyConditionalLikelihoodScore = getEnemyConditionalLikelihoodScore(
+        state,
+        allyPlan,
+        enemyEntry.plan,
         enemyEntry.policyWeight,
         branchBundle.likelyScore,
       );

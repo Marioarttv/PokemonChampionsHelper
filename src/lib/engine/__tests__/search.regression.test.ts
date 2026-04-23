@@ -69,6 +69,46 @@ function createStageFilteringState() {
 }
 
 describe("search regression coverage", () => {
+  it("does not predict Wide Guard into a selected single-target plus Protect line", () => {
+    const garchomp = makePokemon("Garchomp", { types: ["Dragon", "Ground"], baseStats: { hp: 108, atk: 130, def: 95, spe: 102 } });
+    const milotic = makePokemon("Milotic", { types: ["Water"], baseStats: { hp: 125, spa: 100, def: 95, spd: 125, spe: 81 } });
+    const charizard = makePokemon("Charizard-Mega-Y", { types: ["Fire", "Flying"], baseStats: { hp: 100, spa: 159, def: 78, spd: 115, spe: 100 } });
+    const aerodactyl = makePokemon("Aerodactyl", { types: ["Rock", "Flying"], baseStats: { hp: 100, atk: 105, def: 65, spd: 75, spe: 130 } });
+    const dragonClaw = makeMove("Dragon Claw", { type: "Dragon", category: "Physical", basePower: 80, target: "normal" });
+    const rockSlide = makeMove("Rock Slide", { type: "Rock", category: "Physical", basePower: 75, target: "allAdjacentFoes" });
+    const protect = makeMove("Protect", { type: "Normal", category: "Status", basePower: 0, target: "self", priority: 4 });
+    const scald = makeMove("Scald", { type: "Water", category: "Special", basePower: 80, target: "normal" });
+    const weatherBall = makeMove("Weather Ball", { type: "Fire", category: "Special", basePower: 100, target: "normal" });
+    const tailwind = makeMove("Tailwind", { type: "Flying", category: "Status", basePower: 0, target: "self" });
+    const wideGuard = makeMove("Wide Guard", { type: "Rock", category: "Status", basePower: 0, target: "self", priority: 3 });
+    const dualWingbeat = makeMove("Dual Wingbeat", { type: "Flying", category: "Physical", basePower: 80, target: "normal" });
+
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: garchomp, moveNames: ["Dragon Claw", "Rock Slide", "Protect"] }),
+        makeMember({ side: "ally", slot: 1, pokemon: milotic, moveNames: ["Scald", "Protect"] }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: charizard, moveNames: ["Weather Ball", "Protect", "Tailwind"] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: aerodactyl, moveNames: ["Dual Wingbeat", "Rock Slide", "Tailwind", "Wide Guard"] }),
+      ],
+      moves: [dragonClaw, rockSlide, protect, scald, weatherBall, tailwind, wideGuard, dualWingbeat],
+      weather: "sun",
+    });
+
+    const recommendation = recommendBestPlan(state, {
+      searchMode: "balanced",
+      objectiveMode: "robust",
+      maxJointPlansPerSide: 12,
+      maxIndividualActionsPerActor: 6,
+      maxDepth: 1,
+    });
+
+    expect(recommendation.bestPlan?.summary).toContain("Garchomp: Dragon Claw into Aerodactyl");
+    expect(recommendation.predictedEnemyResponse?.summary).not.toContain("Aerodactyl: Wide Guard");
+    expect(recommendation.predictedEnemyResponse?.summary).toContain("Aerodactyl: Tailwind");
+  });
+
   it("keeps root scores finite when no legal enemy plans exist", () => {
     const tailwindUser = makePokemon("Tailwind User", { baseStats: { spe: 120 } });
     const tailwind = makeMove("Tailwind", { type: "Flying", category: "Status", basePower: 0, target: "self" });
