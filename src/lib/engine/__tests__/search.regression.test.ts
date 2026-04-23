@@ -95,6 +95,64 @@ describe("search regression coverage", () => {
     expect(Number.isFinite(recommendation.consideredPlans[0]?.robustScore ?? Number.NaN)).toBe(true);
   });
 
+  it("supports 2v1 endgame boards", () => {
+    const closer = makePokemon("Closer", { baseStats: { atk: 128, spe: 108 } });
+    const partner = makePokemon("Partner", { baseStats: { spa: 118, spe: 96 } });
+    const wall = makePokemon("Wall", { baseStats: { hp: 115, def: 125, spd: 110, spe: 62 } });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 60, target: "normal" });
+    const protect = makeMove("Protect", { type: "Normal", category: "Status", basePower: 0, target: "self", priority: 4 });
+
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: closer, moveNames: ["Tackle", "Protect"] }),
+        makeMember({ side: "ally", slot: 1, pokemon: partner, moveNames: ["Tackle", "Protect"] }),
+      ],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: wall, moveNames: ["Tackle", "Protect"] })],
+      moves: [tackle, protect],
+    });
+
+    const recommendation = recommendBestPlan(state, {
+      searchMode: "balanced",
+      objectiveMode: "robust",
+      maxJointPlansPerSide: 4,
+      maxIndividualActionsPerActor: 4,
+    });
+
+    expect(recommendation.bestPlan).not.toBeNull();
+    expect(recommendation.predictedEnemyResponse).not.toBeNull();
+    expect(recommendation.bestPlan?.actions).toHaveLength(2);
+    expect(recommendation.predictedEnemyResponse?.actions).toHaveLength(1);
+    expect(recommendation.consideredPlans.length).toBeGreaterThan(0);
+    expect(Number.isFinite(recommendation.rootScore)).toBe(true);
+  });
+
+  it("supports true 1v1 endgame boards", () => {
+    const closer = makePokemon("Closer", { baseStats: { atk: 128, spe: 108 } });
+    const wall = makePokemon("Wall", { baseStats: { hp: 115, def: 125, spd: 110, spe: 62 } });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 60, target: "normal" });
+    const protect = makeMove("Protect", { type: "Normal", category: "Status", basePower: 0, target: "self", priority: 4 });
+
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: closer, moveNames: ["Tackle", "Protect"] })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: wall, moveNames: ["Tackle", "Protect"] })],
+      moves: [tackle, protect],
+    });
+
+    const recommendation = recommendBestPlan(state, {
+      searchMode: "balanced",
+      objectiveMode: "robust",
+      maxJointPlansPerSide: 4,
+      maxIndividualActionsPerActor: 4,
+    });
+
+    expect(recommendation.bestPlan).not.toBeNull();
+    expect(recommendation.predictedEnemyResponse).not.toBeNull();
+    expect(recommendation.bestPlan?.actions).toHaveLength(1);
+    expect(recommendation.predictedEnemyResponse?.actions).toHaveLength(1);
+    expect(recommendation.consideredPlans.length).toBeGreaterThan(0);
+    expect(Number.isFinite(recommendation.rootScore)).toBe(true);
+  });
+
   it("keeps likely and robust objectives distinct when hidden-info priors favor Trick Room", () => {
     const state = createTrickRoomBeliefState();
 

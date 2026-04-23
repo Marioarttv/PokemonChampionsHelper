@@ -9692,6 +9692,23 @@ textarea::placeholder {
   font-weight: 700;
 }
 
+.bl-slot-hp-projection small {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.bl-slot-hp-projection.damage small {
+  color: #ffb6c0;
+}
+
+.bl-slot-hp-projection.heal small {
+  color: #9af3b3;
+}
+
 .bl-slot-hp-quick {
   display: grid;
   grid-template-columns: auto 1fr auto;
@@ -9911,6 +9928,137 @@ textarea::placeholder {
   font-size: 0.72rem;
   min-width: 1.6rem;
   text-align: center;
+}
+
+/* Bench strips */
+.bl-bench-grid {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.bl-bench {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.42rem 0.5rem;
+  border-radius: 12px;
+  background: rgba(10, 14, 30, 0.58);
+  border: 1px solid rgba(226, 232, 255, 0.06);
+}
+
+.bl-bench.ally {
+  border-left: 3px solid rgba(74, 222, 128, 0.28);
+}
+
+.bl-bench.enemy {
+  border-left: 3px solid rgba(255, 85, 101, 0.28);
+}
+
+.bl-bench-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.bl-bench-head span,
+.bl-bench-head strong,
+.bl-bench-head small {
+  font-size: 0.64rem;
+  letter-spacing: 0.04em;
+}
+
+.bl-bench-head span {
+  color: var(--ink-strong);
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.bl-bench-head strong,
+.bl-bench-head small {
+  color: var(--ink-soft);
+  font-weight: 800;
+}
+
+.bl-bench-track {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.bl-bench-chip {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.28rem 0.4rem;
+  border-radius: 10px;
+  background: rgba(16, 22, 44, 0.74);
+  border: 1px solid rgba(226, 232, 255, 0.06);
+}
+
+.bl-bench-chip.fainted {
+  opacity: 0.65;
+}
+
+.bl-bench-sprite {
+  width: 1.6rem;
+  height: 1.6rem;
+  image-rendering: pixelated;
+}
+
+.bl-bench-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.bl-bench-copy strong {
+  color: var(--ink-strong);
+  font-size: 0.68rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bl-bench-copy span {
+  color: var(--ink-soft);
+  font-size: 0.6rem;
+  font-weight: 700;
+}
+
+.bl-bench-actions {
+  display: inline-flex;
+  gap: 0.2rem;
+}
+
+.bl-bench-assign {
+  appearance: none;
+  min-width: 1.5rem;
+  padding: 0.16rem 0.35rem;
+  border-radius: 999px;
+  border: 1px solid rgba(122, 160, 255, 0.3);
+  background: rgba(122, 160, 255, 0.14);
+  color: #cfdcff;
+  font-size: 0.6rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.bl-bench-assign:hover {
+  background: rgba(122, 160, 255, 0.22);
+}
+
+.bl-bench-state {
+  color: var(--ink-soft);
+  font-size: 0.58rem;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.bl-bench-empty {
+  padding: 0.4rem 0.1rem 0.2rem;
+  color: var(--ink-soft);
+  font-size: 0.66rem;
+  font-weight: 700;
 }
 
 /* Sim strip */

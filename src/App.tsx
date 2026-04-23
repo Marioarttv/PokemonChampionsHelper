@@ -4280,6 +4280,21 @@ function normalizePairSelection(
   return [first, second];
 }
 
+function normalizeSparsePairSelection(
+  selection: OpenerSelection,
+  availableIndices: number[],
+  preferredOffset: number,
+): OpenerSelection {
+  const normalized = normalizePairSelection(selection, availableIndices, preferredOffset);
+  const firstWasValid = selection[0] !== null && availableIndices.includes(selection[0]);
+
+  if (firstWasValid && selection[1] === null) {
+    return [normalized[0], null];
+  }
+
+  return normalized;
+}
+
 function togglePairSelection(selection: OpenerSelection, slotIndex: number): OpenerSelection {
   const current = selection.filter((entry): entry is number => entry !== null);
 
@@ -4297,6 +4312,25 @@ function togglePairSelection(selection: OpenerSelection, slotIndex: number): Ope
   }
 
   return [current[0], slotIndex];
+}
+
+function assignPairSelectionSlot(selection: OpenerSelection, slotIndex: number, memberIndex: 0 | 1): OpenerSelection {
+  const next: OpenerSelection = [...selection];
+  const existingIndex = next.indexOf(slotIndex) as -1 | 0 | 1;
+
+  if (existingIndex === memberIndex) {
+    return next;
+  }
+
+  if (existingIndex !== -1) {
+    const currentAtTarget = next[memberIndex];
+    next[memberIndex] = slotIndex;
+    next[existingIndex] = currentAtTarget;
+    return next;
+  }
+
+  next[memberIndex] = slotIndex;
+  return next;
 }
 
 function normalizeTeamSlots(
@@ -5377,6 +5411,63 @@ function buildJointPlanFromUserChoices(
   };
 }
 
+function getMoveOptionFromBattleAction(state: BattleState, action: BattleAction) {
+  if (action.type !== "move") {
+    return null;
+  }
+
+  const actor = state.combatants[action.actorId];
+  if (!actor) {
+    return null;
+  }
+
+  return [...actor.knownMoves, ...actor.candidateMoves].find((move) => move.id === action.moveId) ?? null;
+}
+
+function isManualDamageMove(move: BattleMoveOption | null) {
+  return move?.effectKind === "damage" || move?.effectKind === "fakeOut";
+}
+
+function buildUtilityOnlyPlan(state: BattleState, plan: JointActionPlan): JointActionPlan {
+  return {
+    ...plan,
+    actions: plan.actions.map((plannedAction) => {
+      const move = getMoveOptionFromBattleAction(state, plannedAction.action);
+
+      if (isManualDamageMove(move)) {
+        return {
+          ...plannedAction,
+          action: { type: "pass", actorId: plannedAction.actorId },
+          summary: `${plannedAction.actorLabel}: manual board update`,
+        };
+      }
+
+      return plannedAction;
+    }),
+  };
+}
+
+function applyChosenMoveHistoryToState(state: BattleState, plans: JointActionPlan[]) {
+  for (const plan of plans) {
+    for (const plannedAction of plan.actions) {
+      const actor = state.combatants[plannedAction.actorId];
+      if (!actor) {
+        continue;
+      }
+
+      if (plannedAction.action.type === "move") {
+        actor.lastMoveId = plannedAction.action.moveId;
+        const move = getMoveOptionFromBattleAction(state, plannedAction.action);
+        if (move?.effectKind !== "protect") {
+          actor.protectStreak = 0;
+        }
+      } else if (plannedAction.action.type === "switch") {
+        actor.protectStreak = 0;
+      }
+    }
+  }
+}
+
 function classifyHpTone(hpPercent: number) {
   if (hpPercent <= 25) return "danger" as const;
   if (hpPercent <= 50) return "warn" as const;
@@ -5697,7 +5788,7 @@ function BattleLabSlot({
         {projectedHpDelta !== null && projectedHp !== null && projectedHpDelta !== 0 ? (
           <div className={`bl-slot-hp-projection ${projectedHpDelta < 0 ? "damage" : "heal"}`}>
             <small>
-              Proj {projectedHpDelta > 0 ? `+${projectedHpDelta}` : projectedHpDelta} -> {projectedHp}/{combatant.maxHp}
+              Proj {projectedHpDelta > 0 ? `+${projectedHpDelta}` : projectedHpDelta} {"->"} {projectedHp}/{combatant.maxHp}
             </small>
           </div>
         ) : null}
@@ -6017,6 +6108,75 @@ function BattleLabSlot({
           </details>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+type BattleLabBenchStripProps = {
+  side: BattleSide;
+  entries: BattleCombatantState[];
+  replacementRanks: Array<"A" | "B">;
+  editable: boolean;
+  onAssign: (rank: "A" | "B", teamIndex: number) => void;
+};
+
+function BattleLabBenchStrip({
+  side,
+  entries,
+  replacementRanks,
+  editable,
+  onAssign,
+}: BattleLabBenchStripProps) {
+  return (
+    <div className={`bl-bench ${side}`}>
+      <div className="bl-bench-head">
+        <span>{side === "ally" ? "Your Backline" : "Enemy Backline"}</span>
+        {replacementRanks.length > 0 ? (
+          <strong>Replace {replacementRanks.join(" / ")}</strong>
+        ) : (
+          <small>In the back</small>
+        )}
+      </div>
+      <div className="bl-bench-track">
+        {entries.length > 0 ? (
+          entries.map((combatant) => {
+            const hpPercent = combatant.maxHp > 0 ? clampPercent((combatant.currentHp / combatant.maxHp) * 100) : 0;
+            const status = STATUS_PALETTE[combatant.statusCondition];
+            const canAssign = editable && replacementRanks.length > 0 && combatant.currentHp > 0;
+            return (
+              <div key={`bl-bench-${side}-${combatant.id}`} className={`bl-bench-chip ${combatant.currentHp <= 0 ? "fainted" : ""}`}>
+                <PokemonSprite pokemon={combatant.pokemon} className="bl-bench-sprite" />
+                <div className="bl-bench-copy">
+                  <strong>{combatant.pokemon.name}</strong>
+                  <span>
+                    {Math.round(hpPercent)}%
+                    {status.label ? ` · ${status.label}` : ""}
+                  </span>
+                </div>
+                {canAssign ? (
+                  <div className="bl-bench-actions">
+                    {replacementRanks.map((rank) => (
+                      <button
+                        key={`bl-bench-assign-${combatant.id}-${rank}`}
+                        type="button"
+                        className="bl-bench-assign"
+                        onClick={() => onAssign(rank, combatant.teamIndex)}
+                        title={`Send in to slot ${rank}`}
+                      >
+                        {rank}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="bl-bench-state">{combatant.currentHp > 0 ? "Back" : "KO"}</span>
+                )}
+              </div>
+            );
+          })
+        ) : (
+          <div className="bl-bench-empty">No reserves</div>
+        )}
+      </div>
     </div>
   );
 }
@@ -7064,7 +7224,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   }, [filledLeadOptions]);
   useEffect(() => {
     const availableIndices = filledLeadOptions.map((entry) => entry.index);
-    setDoublesAllySelection((current) => normalizePairSelection(current, availableIndices, 0));
+    setDoublesAllySelection((current) => normalizeSparsePairSelection(current, availableIndices, 0));
   }, [filledLeadOptions]);
 
   useEffect(() => {
@@ -7080,7 +7240,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   }, [scoutingOpponentEntries]);
   useEffect(() => {
     const availableIndices = scoutingOpponentEntries.map((entry) => entry.slotIndex);
-    setDoublesEnemySelection((current) => normalizePairSelection(current, availableIndices, 0));
+    setDoublesEnemySelection((current) => normalizeSparsePairSelection(current, availableIndices, 0));
   }, [scoutingOpponentEntries]);
 
   const openerSummaries = useMemo(
@@ -7692,6 +7852,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       }),
     [battleSimulatorState, doublesEnemySelection, moveByKey, scoutingOpponentEntries],
   );
+  const battleLabReady = doublesAllyMembers.length >= 1 && doublesEnemyMembers.length >= 1;
   const doublesThreatReady = doublesAllyMembers.length === 2 && doublesEnemyMembers.length === 2;
   const previewRecommendationSettings = useMemo(
     () => ({
@@ -7905,7 +8066,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   );
   const battleEngineCurrentState = useMemo(
     () =>
-      doublesThreatReady && battleEngineAllyMembers.length >= 2 && battleEngineEnemyMembers.length >= 2
+      battleLabReady
         ? createBattleState({
             ally: battleEngineAllyMembers,
             enemy: battleEngineEnemyMembers,
@@ -7924,9 +8085,9 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     [
       battleEngineAllyMembers,
       battleEngineEnemyMembers,
+      battleLabReady,
       damageTerrain,
       damageWeather,
-      doublesThreatReady,
       battleFieldRuntime,
       doublesAllyTailwind,
       doublesEnemyTailwind,
@@ -7987,14 +8148,15 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       return;
     }
 
-    setDoublesAllySelection((current) => normalizePairSelection(current, battleEngineSelectableAllySlotIndices, 0));
+    setDoublesAllySelection((current) =>
+      normalizeSparsePairSelection(current, battleEngineSelectableAllySlotIndices, 0),
+    );
   }, [battleEngineSelectableAllySlotIndices]);
   const previewBattleEngineAllyMemberBySlot = useMemo(
     () => new Map(previewBattleEngineAllyMembers.map((member) => [member.teamIndex, member] as const)),
     [previewBattleEngineAllyMembers],
   );
-  const canRunBattleEngine =
-    doublesThreatReady && battleEngineAllyMembers.length >= 2 && battleEngineEnemyMembers.length >= 2;
+  const canRunBattleEngine = battleLabReady;
   const battleEngineInputSignature = useMemo(
     () =>
       buildBattleEngineInputSignature({
@@ -8111,14 +8273,48 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   };
 
   // --- Battle Lab simulation ---
-  const runUserSimulation = () => {
-    if (!battleEngineCurrentState) return;
+  const battleLabChosenTurn = useMemo(() => {
+    if (!battleEngineCurrentState) {
+      return null;
+    }
+
     const state = battleEngineCurrentState;
     const engineAllyPlan = battleEngineRecommendation?.bestPlan ?? null;
     const enginePredictedEnemyPlan = battleEngineRecommendation?.predictedEnemyResponse ?? null;
     const allyPlan = buildJointPlanFromUserChoices(state, "ally", userChosenActions, engineAllyPlan);
     const enemyPlan = buildJointPlanFromUserChoices(state, "enemy", userChosenActions, enginePredictedEnemyPlan);
-    const result = resolveTurn(state, allyPlan, enemyPlan, "average");
+
+    return {
+      state,
+      allyPlan,
+      enemyPlan,
+    };
+  }, [battleEngineCurrentState, battleEngineRecommendation, userChosenActions]);
+
+  const battleLabDamageProjection = useMemo(() => {
+    if (!battleLabChosenTurn) {
+      return null;
+    }
+
+    return resolveTurn(battleLabChosenTurn.state, battleLabChosenTurn.allyPlan, battleLabChosenTurn.enemyPlan, "average");
+  }, [battleLabChosenTurn]);
+
+  const battleLabUtilityProjection = useMemo(() => {
+    if (!battleLabChosenTurn) {
+      return null;
+    }
+
+    const utilityAllyPlan = buildUtilityOnlyPlan(battleLabChosenTurn.state, battleLabChosenTurn.allyPlan);
+    const utilityEnemyPlan = buildUtilityOnlyPlan(battleLabChosenTurn.state, battleLabChosenTurn.enemyPlan);
+    const result = resolveTurn(battleLabChosenTurn.state, utilityAllyPlan, utilityEnemyPlan, "average");
+    applyChosenMoveHistoryToState(result.state, [battleLabChosenTurn.allyPlan, battleLabChosenTurn.enemyPlan]);
+    return result;
+  }, [battleLabChosenTurn]);
+
+  const runUserSimulation = () => {
+    if (!battleLabChosenTurn || !battleLabDamageProjection) return;
+    const { state, allyPlan, enemyPlan } = battleLabChosenTurn;
+    const result = battleLabDamageProjection;
 
     if (simPlayTimerRef.current) {
       window.clearInterval(simPlayTimerRef.current);
@@ -8176,17 +8372,11 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   };
 
   const advanceRealBoardToNextTurn = () => {
-    const nextFieldRuntime = {
-      turn: battleFieldRuntime.turn + 1,
-      allyTailwindTurns: Math.max(0, battleFieldRuntime.allyTailwindTurns - 1),
-      enemyTailwindTurns: Math.max(0, battleFieldRuntime.enemyTailwindTurns - 1),
-      trickRoomTurns: Math.max(0, battleFieldRuntime.trickRoomTurns - 1),
-    };
+    if (!battleLabUtilityProjection) {
+      return;
+    }
 
-    setBattleFieldRuntime(nextFieldRuntime);
-    setDoublesAllyTailwind(nextFieldRuntime.allyTailwindTurns > 0);
-    setDoublesEnemyTailwind(nextFieldRuntime.enemyTailwindTurns > 0);
-    setDoublesTrickRoom(nextFieldRuntime.trickRoomTurns > 0);
+    applyBattleStateToBoard(battleLabUtilityProjection.state);
     setEditingSlotKey(null);
     setUserChosenActions({});
     resetUserSimulation();
@@ -8830,6 +9020,12 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   };
   const toggleDoublesEnemySelection = (slotIndex: number) => {
     setDoublesEnemySelection((current) => togglePairSelection(current, slotIndex));
+  };
+  const assignDoublesAllySelection = (slotIndex: number, memberIndex: 0 | 1) => {
+    setDoublesAllySelection((current) => assignPairSelectionSlot(current, slotIndex, memberIndex));
+  };
+  const assignDoublesEnemySelection = (slotIndex: number, memberIndex: 0 | 1) => {
+    setDoublesEnemySelection((current) => assignPairSelectionSlot(current, slotIndex, memberIndex));
   };
 
   const updateOpponentQuery = (slotIndex: number, query: string) => {
@@ -11252,7 +11448,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             </section>
           ) : null}
 
-          {doublesThreatReady && battleLabDisplayState ? (
+          {battleLabReady && battleLabDisplayState ? (
             <>
             {(() => {
               const displayState = battleLabDisplayState;
@@ -11280,6 +11476,22 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                 simulationRun && simViewMode === "sim" && !simulationFinished
                   ? simulationRun.startState.field.turn
                   : displayState.field.turn;
+              const allyReplacementRanks = (["A", "B"] as const).filter((rank, rankIndex) => {
+                const combatantId = realState.sides.ally.activeIds[rankIndex];
+                const combatant = combatantId ? realState.combatants[combatantId] ?? null : null;
+                return !combatant || combatant.currentHp <= 0;
+              });
+              const enemyReplacementRanks = (["A", "B"] as const).filter((rank, rankIndex) => {
+                const combatantId = realState.sides.enemy.activeIds[rankIndex];
+                const combatant = combatantId ? realState.combatants[combatantId] ?? null : null;
+                return !combatant || combatant.currentHp <= 0;
+              });
+              const allyBenchEntries = realState.sides.ally.benchIds
+                .map((combatantId) => realState.combatants[combatantId] ?? null)
+                .filter((combatant): combatant is BattleCombatantState => Boolean(combatant));
+              const enemyBenchEntries = realState.sides.enemy.benchIds
+                .map((combatantId) => realState.combatants[combatantId] ?? null)
+                .filter((combatant): combatant is BattleCombatantState => Boolean(combatant));
               const visibleLogEvents =
                 simulationRun?.events.slice(0, simulationFinished ? simulationRun.events.length : simEventIndex) ?? [];
               return (
@@ -11435,6 +11647,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                               teamIndex != null && pokemonId
                                 ? getBattleSimulatorMemberState("enemy", teamIndex, pokemonId)
                                 : null;
+                            const projectedCombatant =
+                              simViewMode === "real" && id ? battleLabDamageProjection?.state.combatants[id] ?? null : null;
                             return (
                               <BattleLabSlot
                                 key={slotKey}
@@ -11446,6 +11660,10 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                                   combatant && combatant.maxHp > 0
                                     ? (combatant.currentHp / combatant.maxHp) * 100
                                     : 0
+                                }
+                                projectedHp={projectedCombatant?.currentHp ?? null}
+                                projectedHpDelta={
+                                  combatant && projectedCombatant ? projectedCombatant.currentHp - combatant.currentHp : null
                                 }
                                 pulse={id ? damagePulses[id] ?? 0 : 0}
                                 effectFlash={id ? slotFlashes[id] ?? null : null}
@@ -11513,6 +11731,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                               teamIndex != null && pokemonId
                                 ? getBattleSimulatorMemberState("ally", teamIndex, pokemonId)
                                 : null;
+                            const projectedCombatant =
+                              simViewMode === "real" && id ? battleLabDamageProjection?.state.combatants[id] ?? null : null;
                             return (
                               <BattleLabSlot
                                 key={slotKey}
@@ -11524,6 +11744,10 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                                   combatant && combatant.maxHp > 0
                                     ? (combatant.currentHp / combatant.maxHp) * 100
                                     : 0
+                                }
+                                projectedHp={projectedCombatant?.currentHp ?? null}
+                                projectedHpDelta={
+                                  combatant && projectedCombatant ? projectedCombatant.currentHp - combatant.currentHp : null
                                 }
                                 pulse={id ? damagePulses[id] ?? 0 : 0}
                                 effectFlash={id ? slotFlashes[id] ?? null : null}
@@ -11543,6 +11767,23 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                             );
                           })}
                         </div>
+                      </div>
+
+                      <div className="bl-bench-grid">
+                        <BattleLabBenchStrip
+                          side="enemy"
+                          entries={enemyBenchEntries}
+                          replacementRanks={enemyReplacementRanks}
+                          editable={simViewMode === "real"}
+                          onAssign={(rank, slotIndex) => assignDoublesEnemySelection(slotIndex, rank === "A" ? 0 : 1)}
+                        />
+                        <BattleLabBenchStrip
+                          side="ally"
+                          entries={allyBenchEntries}
+                          replacementRanks={allyReplacementRanks}
+                          editable={simViewMode === "real"}
+                          onAssign={(rank, slotIndex) => assignDoublesAllySelection(slotIndex, rank === "A" ? 0 : 1)}
+                        />
                       </div>
 
                       <div className="bl-sim-strip">
@@ -12019,8 +12260,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             </>
           ) : (
             <div className="matchup-empty-board">
-              Pick two filled allies and two loaded enemies to see each slot’s biggest incoming hit, your best
-              outgoing threat, and the current turn order.
+              Pick at least one filled ally and one loaded enemy to open Battle Lab. The full threat grid expands
+              automatically once both sides have two active mons.
             </div>
           )}
         </section>
