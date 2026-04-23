@@ -12,7 +12,7 @@ import { doesDefenderItemReduceDamage, isResistBerryItem, normalizeDamageItemId 
 import { getEffectiveSpeedForBattleState } from "./rules/speed";
 import { canApplyStatusCondition } from "./rules/status";
 import { getBelievedMoves } from "./beliefs";
-import { getSpecialMoveDefinition, hasProtectFamilyMove, isProtectFamilyMoveName, normalizeMoveKey } from "./moveRegistry";
+import { getSpecialMoveDefinition, hasSelfProtectMove, isProtectFamilyMoveName, normalizeMoveKey } from "./moveRegistry";
 import type {
   BattleAction,
   BattleCombatantState,
@@ -48,9 +48,19 @@ const SITRUS_BERRY_HEAL_FRACTION = 0.25;
 const LEFTOVERS_HEAL_FRACTION = 1 / 16;
 const BLACK_SLUDGE_DAMAGE_FRACTION = 1 / 8;
 const STAGE_KEYS: Array<keyof BattleStatStages> = ["attack", "defense", "specialAttack", "specialDefense", "speed"];
+const WEATHER_ENTRY_ABILITIES: Record<string, BattleState["field"]["weather"]> = {
+  drizzle: "rain",
+  drought: "sun",
+  sandstream: "sand",
+  snowwarning: "snow",
+};
 
 function clampStage(value: number) {
   return Math.max(-6, Math.min(6, value));
+}
+
+function clampUnit(value: number) {
+  return Math.max(0, Math.min(1, value));
 }
 
 function getAbilityKey(combatant: BattleCombatantState) {
@@ -278,7 +288,7 @@ function buildKnownMoves(
     byName.add(nameKey);
   }
 
-  if (universalProtect && !hasProtectFamilyMove([...byId.values(), ...candidateById.values()])) {
+  if (universalProtect && !hasSelfProtectMove([...byId.values(), ...candidateById.values()])) {
     byId.set(`${actorId}-assumed-protect`, {
       id: `${actorId}-assumed-protect`,
       name: "Protect",
@@ -520,7 +530,9 @@ export function createBattleState(input: CreateBattleStateInput): BattleState {
     },
   };
 
-  applyInitialEntryEffects(state);
+  if (input.applyInitialEntryEffects !== false) {
+    applyInitialEntryEffects(state);
+  }
   return state;
 }
 
@@ -845,6 +857,43 @@ function getIncomingThreatsAgainst(state: BattleState, targetIds: string[]) {
   });
 }
 
+type DefensiveThreatTarget = {
+  targetId: string;
+  value: number;
+};
+
+type DefensiveThreat = {
+  attackerId: string;
+  move: BattleMoveOption;
+  isPriority: boolean;
+  isSpread: boolean;
+  targets: DefensiveThreatTarget[];
+};
+
+type IncomingDamagePiece = {
+  attackerId: string;
+  move: BattleMoveOption;
+  targetId: string;
+  averageDamage: number;
+  maxDamage: number;
+  averagePercent: number;
+  isPriority: boolean;
+  isSpread: boolean;
+};
+
+type IncomingDamageBundle = {
+  targetId: string;
+  pieces: IncomingDamagePiece[];
+  weight: number;
+};
+
+type IncomingDamageChoice = {
+  attackerId: string;
+  move: BattleMoveOption;
+  targetIds: string[];
+  weight: number;
+};
+
 function getProtectSuccessChance(protectStreak: number) {
   if (protectStreak <= 0) {
     return 1;
@@ -862,6 +911,206 @@ function doesProtectSucceed(protectStreak: number, accuracyMode: "conservative" 
     return successChance >= 2 / 3;
   }
   return successChance >= 1;
+}
+
+function getThreatBeliefWeight(certainty: number, policyWeight: number) {
+  return (0.55 + certainty * 0.45) * (0.65 + policyWeight * 0.35);
+}
+
+function getDefensiveThreatTargetIds(
+  state: BattleState,
+  side: BattleSide,
+  attacker: BattleCombatantState,
+  move: BattleMoveOption,
+) {
+  const sideActiveIds = getActiveIds(state, side);
+
+  if (move.targetKind === "singleOpponent") {
+    return sideActiveIds;
+  }
+
+  if (move.targetKind === "allOpponents") {
+    return sideActiveIds;
+  }
+
+  if (move.targetKind === "allAdjacent") {
+    return sideActiveIds.filter((targetId) => targetId !== attacker.id);
+  }
+
+  return [];
+}
+
+function getDefensiveThreatTargetValue(
+  state: BattleState,
+  attackerId: string,
+  targetId: string,
+  move: BattleMoveOption,
+  certainty: number,
+  policyWeight: number,
+) {
+  if (isTargetImmuneByTyping(state, attackerId, targetId, move)) {
+    return null;
+  }
+
+  const preview = getDamagePreview(state, attackerId, targetId, move);
+  if (!preview) {
+    return null;
+  }
+
+  const target = state.combatants[targetId];
+  if (!target || target.currentHp <= 0) {
+    return null;
+  }
+
+  const beliefMultiplier = getThreatBeliefWeight(certainty, policyWeight);
+  const damageValue = preview.estimate.averagePercent * beliefMultiplier;
+  const averageKoBonus = preview.estimate.averageDamage >= target.currentHp ? 90 : 0;
+  const maxKoBonus = preview.estimate.maxDamage >= target.currentHp ? 45 : 0;
+  const fakeOutBonus = move.effectKind === "fakeOut" ? 65 : 0;
+  const value = damageValue + (averageKoBonus + maxKoBonus + fakeOutBonus) * beliefMultiplier;
+
+  if (value <= 0) {
+    return null;
+  }
+
+  return {
+    targetId,
+    value,
+  } satisfies DefensiveThreatTarget;
+}
+
+function getDefensiveThreats(state: BattleState, side: BattleSide) {
+  const opponentSide = getOpponentSide(side);
+  const threats: DefensiveThreat[] = [];
+
+  for (const attackerId of getActiveIds(state, opponentSide)) {
+    const attacker = state.combatants[attackerId];
+    if (!attacker) {
+      continue;
+    }
+
+    for (const { move, certainty, policyWeight } of getBelievedMoves(attacker, { topN: 6 })) {
+      if (move.category === null) {
+        continue;
+      }
+
+      const targetIds = getDefensiveThreatTargetIds(state, side, attacker, move);
+      if (targetIds.length === 0) {
+        continue;
+      }
+
+      const targets = targetIds
+        .map((targetId) => getDefensiveThreatTargetValue(state, attackerId, targetId, move, certainty, policyWeight))
+        .filter((target): target is DefensiveThreatTarget => Boolean(target));
+
+      if (targets.length === 0) {
+        continue;
+      }
+
+      threats.push({
+        attackerId,
+        move,
+        isPriority: move.priority > 0,
+        isSpread: move.isSpreadMove,
+        targets,
+      });
+    }
+  }
+
+  return threats;
+}
+
+function getIncomingDamageChoices(state: BattleState, side: BattleSide, attackerId: string) {
+  const attacker = state.combatants[attackerId];
+  if (!attacker) {
+    return [];
+  }
+
+  const choices: IncomingDamageChoice[] = [];
+  for (const { move, certainty, policyWeight } of getBelievedMoves(attacker, { topN: 4 })) {
+    if (move.category === null) {
+      continue;
+    }
+
+    const targetIds = getDefensiveThreatTargetIds(state, side, attacker, move);
+    if (targetIds.length === 0) {
+      continue;
+    }
+
+    const weight = getThreatBeliefWeight(certainty, policyWeight);
+    if (move.targetKind === "singleOpponent") {
+      for (const targetId of targetIds) {
+        choices.push({ attackerId, move, targetIds: [targetId], weight });
+      }
+      continue;
+    }
+
+    choices.push({ attackerId, move, targetIds, weight });
+  }
+
+  return choices;
+}
+
+function getIncomingDamageBundles(state: BattleState, side: BattleSide) {
+  const opponentSide = getOpponentSide(side);
+  const choicesByAttacker = getActiveIds(state, opponentSide)
+    .map((attackerId) => getIncomingDamageChoices(state, side, attackerId))
+    .filter((choices) => choices.length > 0);
+  const bundles: IncomingDamageBundle[] = [];
+
+  if (choicesByAttacker.length === 0) {
+    return bundles;
+  }
+
+  const walk = (index: number, current: IncomingDamageChoice[]) => {
+    if (index === choicesByAttacker.length) {
+      const piecesByTarget = new Map<string, IncomingDamagePiece[]>();
+      const weight = current.reduce((product, choice) => product * choice.weight, 1);
+
+      for (const choice of current) {
+        for (const targetId of choice.targetIds) {
+          if (isTargetImmuneByTyping(state, choice.attackerId, targetId, choice.move)) {
+            continue;
+          }
+
+          const preview = getDamagePreview(state, choice.attackerId, targetId, choice.move);
+          if (!preview) {
+            continue;
+          }
+
+          const piece: IncomingDamagePiece = {
+            attackerId: choice.attackerId,
+            move: choice.move,
+            targetId,
+            averageDamage: preview.estimate.averageDamage,
+            maxDamage: preview.estimate.maxDamage,
+            averagePercent: preview.estimate.averagePercent,
+            isPriority: choice.move.priority > 0,
+            isSpread: choice.move.isSpreadMove,
+          };
+          const pieces = piecesByTarget.get(targetId) ?? [];
+          pieces.push(piece);
+          piecesByTarget.set(targetId, pieces);
+        }
+      }
+
+      for (const [targetId, pieces] of piecesByTarget) {
+        if (pieces.length > 0) {
+          bundles.push({ targetId, pieces, weight });
+        }
+      }
+      return;
+    }
+
+    for (const choice of choicesByAttacker[index]) {
+      current.push(choice);
+      walk(index + 1, current);
+      current.pop();
+    }
+  };
+
+  walk(0, []);
+  return bundles;
 }
 
 function getStateAfterPassiveTurn(state: BattleState) {
@@ -898,7 +1147,9 @@ function scoreProtectAction(state: BattleState, actorId: string) {
     return 0;
   }
 
-  const threats = getIncomingThreatsAgainst(state, [actorId]);
+  const threats = getDefensiveThreats(state, actor.side).flatMap((threat) =>
+    threat.targets.filter((target) => target.targetId === actorId).map((target) => target.value),
+  );
   const highestThreat = threats.length > 0 ? Math.max(...threats) : 0;
   const hpPercent = actor.maxHp > 0 ? (actor.currentHp / actor.maxHp) * 100 : 0;
   const baseScore = highestThreat * 1.4 + (100 - hpPercent) * 0.45 + getProtectStallScore(state, actor.side);
@@ -1050,23 +1301,21 @@ function scoreGuardAction(state: BattleState, actorId: string, guard: BattleMove
     return 0;
   }
 
-  const enemyIds = getActiveIds(state, getOpponentSide(actor.side));
   let guardedThreat = 0;
-  for (const enemyId of enemyIds) {
-    for (const { move, certainty } of getBelievedMoves(state.combatants[enemyId], { topN: 6 })) {
-      if (guard === "quickGuard" && move.priority > 0) {
-        guardedThreat += 40 * certainty;
-      }
-      if (guard === "wideGuard" && move.isSpreadMove) {
-        guardedThreat += getActiveIds(state, actor.side).reduce(
-          (sum, allyId) =>
-            sum + (getDamagePreview(state, enemyId, allyId, move)?.estimate.averagePercent ?? 0) * (0.55 + certainty * 0.45),
-          0,
-        );
-      }
+  for (const threat of getDefensiveThreats(state, actor.side)) {
+    if (guard === "quickGuard" && threat.isPriority) {
+      guardedThreat += threat.targets.reduce((sum, target) => sum + target.value, 0);
+    }
+    if (guard === "wideGuard" && threat.isSpread) {
+      guardedThreat += threat.targets.reduce((sum, target) => sum + target.value, 0);
     }
   }
-  return guardedThreat * 0.6 + 25;
+
+  if (guardedThreat <= 0) {
+    return guard === "wideGuard" ? -35 : -25;
+  }
+
+  return guardedThreat * (guard === "wideGuard" ? 0.72 : 0.8) - 10;
 }
 
 function scoreSafeguardAction(state: BattleState, actorId: string) {
@@ -1535,7 +1784,771 @@ function generateActionsForActor(
   return actions.sort((left, right) => right.heuristicScore - left.heuristicScore).slice(0, maxIndividualActions);
 }
 
-function combineActionSets(side: BattleSide, actionGroups: PlannedAction[][]) {
+function getPlannedActionMove(state: BattleState, entry: PlannedAction) {
+  if (entry.action.type !== "move") {
+    return null;
+  }
+
+  return getMoveOption(state, entry.actorId, entry.action.moveId);
+}
+
+function isDefensiveMove(move: BattleMoveOption | null) {
+  return move?.effectKind === "protect" || move?.effectKind === "guard";
+}
+
+function isSetupMove(move: BattleMoveOption | null) {
+  return move?.effectKind === "boost" && Boolean(move.effectData?.selfStages);
+}
+
+function getDefensiveActionScore(state: BattleState, actions: PlannedAction[]) {
+  return actions.reduce((sum, entry) => {
+    const move = getPlannedActionMove(state, entry);
+    return sum + (isDefensiveMove(move) ? entry.heuristicScore : 0);
+  }, 0);
+}
+
+function getSetupActionScore(state: BattleState, actions: PlannedAction[]) {
+  return actions.reduce((sum, entry) => {
+    const move = getPlannedActionMove(state, entry);
+    return sum + (isSetupMove(move) ? entry.heuristicScore : 0);
+  }, 0);
+}
+
+function getMoveHitChance(move: BattleMoveOption) {
+  return move.accuracy >= 100 ? 1 : Math.max(0.55, Math.min(1, move.accuracy / 100));
+}
+
+function getPreemptiveKoConfidence(
+  state: BattleState,
+  action: PlannedAction,
+  move: BattleMoveOption,
+  targetId: string,
+) {
+  const target = state.combatants[targetId];
+  if (!target || target.currentHp <= 0 || isTargetImmuneByTyping(state, action.actorId, targetId, move)) {
+    return 0;
+  }
+
+  const preview = getDamagePreview(state, action.actorId, targetId, move);
+  if (!preview) {
+    return 0;
+  }
+
+  const hitChance = getMoveHitChance(move);
+  if (preview.estimate.averageDamage >= target.currentHp) {
+    return hitChance;
+  }
+
+  if (preview.estimate.maxDamage >= target.currentHp) {
+    return hitChance * 0.45;
+  }
+
+  return 0;
+}
+
+function getThreatControlConfidence(
+  state: BattleState,
+  actions: PlannedAction[],
+  threat: DefensiveThreat,
+  options?: {
+    excludeActorId?: string;
+  },
+) {
+  const threatSource = state.combatants[threat.attackerId];
+  if (!threatSource) {
+    return 0;
+  }
+
+  let confidence = 0;
+  for (const action of actions) {
+    if (action.actorId === options?.excludeActorId) {
+      continue;
+    }
+
+    const move = getPlannedActionMove(state, action);
+    const actor = state.combatants[action.actorId];
+    if (!move || !actor || actor.side === threatSource.side) {
+      continue;
+    }
+
+    if (!doesActionMoveBeforeThreat(state, action, threat)) {
+      continue;
+    }
+
+    const targetIds = getTargetIdsForAction(state, actor, move, action.action.type === "move" ? action.action.targetId : null);
+    if (!targetIds.includes(threat.attackerId)) {
+      continue;
+    }
+
+    if (move.effectKind === "fakeOut" && actor.turnsActive === 0) {
+      confidence = Math.max(confidence, getMoveHitChance(move) * 0.95);
+      continue;
+    }
+
+    if (move.category !== null) {
+      const koConfidence = getPreemptiveKoConfidence(state, action, move, threat.attackerId);
+      confidence = Math.max(confidence, koConfidence);
+
+      const threatHasProtect = hasSelfProtectMove([...threatSource.knownMoves, ...threatSource.candidateMoves]);
+      if (threatHasProtect) {
+        confidence = Math.max(confidence, koConfidence * 0.82);
+      }
+    }
+  }
+
+  return clampUnit(confidence);
+}
+
+function getDamagePieceControlConfidence(
+  state: BattleState,
+  actions: PlannedAction[],
+  piece: IncomingDamagePiece,
+  options?: {
+    excludeActorId?: string;
+  },
+) {
+  const threatSource = state.combatants[piece.attackerId];
+  if (!threatSource) {
+    return 0;
+  }
+
+  const pieceAction: PlannedAction = {
+    actorId: piece.attackerId,
+    actorLabel: threatSource.pokemon.name,
+    action: {
+      type: "move",
+      actorId: piece.attackerId,
+      moveId: piece.move.id,
+      targetId: piece.targetId,
+    },
+    summary: `${threatSource.pokemon.name}: ${piece.move.name}`,
+    heuristicScore: 0,
+  };
+
+  let confidence = 0;
+  for (const action of actions) {
+    if (action.actorId === options?.excludeActorId) {
+      continue;
+    }
+
+    const move = getPlannedActionMove(state, action);
+    const actor = state.combatants[action.actorId];
+    if (!move || !actor || actor.side === threatSource.side) {
+      continue;
+    }
+
+    if (compareActionOrder(state, action, pieceAction, state.field.trickRoomTurns > 0) >= 0) {
+      continue;
+    }
+
+    const targetIds = getTargetIdsForAction(state, actor, move, action.action.type === "move" ? action.action.targetId : null);
+    if (!targetIds.includes(piece.attackerId)) {
+      continue;
+    }
+
+    if (move.effectKind === "fakeOut" && actor.turnsActive === 0) {
+      confidence = Math.max(confidence, getMoveHitChance(move) * 0.95);
+      continue;
+    }
+
+    if (move.category !== null) {
+      confidence = Math.max(confidence, getPreemptiveKoConfidence(state, action, move, piece.attackerId));
+    }
+  }
+
+  return clampUnit(confidence);
+}
+
+function doesActionMoveBeforeThreat(state: BattleState, action: PlannedAction, threat: DefensiveThreat) {
+  const attacker = state.combatants[threat.attackerId];
+  if (!attacker) {
+    return false;
+  }
+
+  const threatAction: PlannedAction = {
+    actorId: threat.attackerId,
+    actorLabel: attacker.pokemon.name,
+    action: {
+      type: "move",
+      actorId: threat.attackerId,
+      moveId: threat.move.id,
+      targetId: null,
+    },
+    summary: `${attacker.pokemon.name}: ${threat.move.name}`,
+    heuristicScore: 0,
+  };
+
+  return compareActionOrder(state, action, threatAction, state.field.trickRoomTurns > 0) < 0;
+}
+
+function getThreatNeutralizationConfidence(
+  state: BattleState,
+  actions: PlannedAction[],
+  threat: DefensiveThreat,
+) {
+  let confidence = 0;
+
+  for (const action of actions) {
+    const move = getPlannedActionMove(state, action);
+    const actor = state.combatants[action.actorId];
+    if (!move || !actor || actor.side === state.combatants[threat.attackerId]?.side || move.category === null) {
+      continue;
+    }
+
+    if (!doesActionMoveBeforeThreat(state, action, threat)) {
+      continue;
+    }
+
+    const targetIds = getTargetIdsForAction(state, actor, move, action.action.type === "move" ? action.action.targetId : null);
+    if (!targetIds.includes(threat.attackerId)) {
+      continue;
+    }
+
+    confidence = Math.max(confidence, getPreemptiveKoConfidence(state, action, move, threat.attackerId));
+  }
+
+  return confidence;
+}
+
+function getOffensiveTempoScore(state: BattleState, actions: PlannedAction[], threats: DefensiveThreat[]) {
+  let score = 0;
+  const offensiveActionCount = actions.filter((entry) => {
+    const move = getPlannedActionMove(state, entry);
+    return move?.category !== null;
+  }).length;
+
+  for (const threat of threats) {
+    const neutralizationConfidence = getThreatNeutralizationConfidence(state, actions, threat);
+    if (neutralizationConfidence <= 0) {
+      continue;
+    }
+
+    const threatValue = threat.targets.reduce((sum, target) => sum + target.value, 0);
+    score += threatValue * neutralizationConfidence * (offensiveActionCount > 1 ? 0.35 : 0.22);
+  }
+
+  return score;
+}
+
+function getBestProjectedPressure(state: BattleState, actorId: string) {
+  const actor = state.combatants[actorId];
+  if (!actor) {
+    return 0;
+  }
+
+  return Math.max(
+    0,
+    ...getBelievedDamagingMoves(state, actorId).flatMap((entry) =>
+      getActiveIds(state, getOpponentSide(actor.side)).map(
+        (targetId) =>
+          (getDamagePreview(state, actorId, targetId, entry.move)?.estimate.averagePercent ?? 0) *
+          (0.6 + entry.policyWeight * 0.4),
+      ),
+    ),
+  );
+}
+
+function getSetupOffensivePayoffScore(
+  state: BattleState,
+  boostedState: BattleState,
+  actorId: string,
+) {
+  const actor = state.combatants[actorId];
+  if (!actor) {
+    return 0;
+  }
+
+  let score = 0;
+  for (const entry of getBelievedDamagingMoves(state, actorId)) {
+    const moveWeight = 0.6 + entry.policyWeight * 0.4;
+    for (const targetId of getActiveIds(state, getOpponentSide(actor.side))) {
+      const target = state.combatants[targetId];
+      if (!target || target.currentHp <= 0) {
+        continue;
+      }
+
+      const before = getDamagePreview(state, actorId, targetId, entry.move);
+      const after = getDamagePreview(boostedState, actorId, targetId, entry.move);
+      if (!before || !after) {
+        continue;
+      }
+
+      score += Math.max(0, after.estimate.averagePercent - before.estimate.averagePercent) * moveWeight * 1.15;
+      if (before.estimate.averageDamage < target.currentHp && after.estimate.averageDamage >= target.currentHp) {
+        score += 70 * moveWeight;
+      } else if (before.estimate.maxDamage < target.currentHp && after.estimate.maxDamage >= target.currentHp) {
+        score += 34 * moveWeight;
+      }
+    }
+  }
+
+  return score;
+}
+
+function getSetupDefensivePayoffScore(
+  state: BattleState,
+  boostedState: BattleState,
+  actorId: string,
+  threats: DefensiveThreat[],
+) {
+  const actor = state.combatants[actorId];
+  if (!actor) {
+    return 0;
+  }
+
+  let score = 0;
+  for (const threat of threats) {
+    if (!threat.targets.some((target) => target.targetId === actorId)) {
+      continue;
+    }
+
+    const before = getDamagePreview(state, threat.attackerId, actorId, threat.move);
+    const after = getDamagePreview(boostedState, threat.attackerId, actorId, threat.move);
+    if (!before || !after) {
+      continue;
+    }
+
+    const preventedPercent = Math.max(0, before.estimate.averagePercent - after.estimate.averagePercent);
+    score += preventedPercent * 0.95;
+    if (before.estimate.averageDamage >= actor.currentHp && after.estimate.averageDamage < actor.currentHp) {
+      score += 64;
+    } else if (before.estimate.maxDamage >= actor.currentHp && after.estimate.maxDamage < actor.currentHp) {
+      score += 30;
+    }
+  }
+
+  return score;
+}
+
+function getSetupSpeedPayoffScore(
+  state: BattleState,
+  boostedState: BattleState,
+  actorId: string,
+  stages: BattleStageDelta,
+) {
+  if ((stages.speed ?? 0) <= 0) {
+    return 0;
+  }
+
+  const actor = state.combatants[actorId];
+  if (!actor) {
+    return 0;
+  }
+
+  const beforeSpeed = getEffectiveSpeed(state, actorId);
+  const afterSpeed = getEffectiveSpeed(boostedState, actorId);
+  let score = 0;
+  for (const targetId of getActiveIds(state, getOpponentSide(actor.side))) {
+    const targetSpeed = getEffectiveSpeed(state, targetId);
+    if (beforeSpeed > targetSpeed || afterSpeed <= targetSpeed) {
+      continue;
+    }
+
+    const bestDamage = Math.max(
+      0,
+      ...getBelievedDamagingMoves(state, actorId).map(
+        (entry) => getDamagePreview(boostedState, actorId, targetId, entry.move)?.estimate.averagePercent ?? 0,
+      ),
+    );
+    const target = state.combatants[targetId];
+    const koBonus =
+      target && getBelievedDamagingMoves(state, actorId).some(
+        (entry) => (getDamagePreview(boostedState, actorId, targetId, entry.move)?.estimate.maxDamage ?? 0) >= target.currentHp,
+      )
+        ? 30
+        : 0;
+    score += 28 + bestDamage * 0.22 + koBonus;
+  }
+
+  return score;
+}
+
+function getSetupPayoffScore(
+  state: BattleState,
+  actorId: string,
+  stages: BattleStageDelta,
+  threats: DefensiveThreat[],
+) {
+  const actor = state.combatants[actorId];
+  if (!actor) {
+    return 0;
+  }
+
+  const boostedState = cloneBattleState(state);
+  const boostedActor = boostedState.combatants[actorId];
+  if (!boostedActor) {
+    return 0;
+  }
+  applyStageDelta(boostedActor, stages);
+
+  const appliedStageValue =
+    Math.max(0, boostedActor.stages.attack - actor.stages.attack) * 18 +
+    Math.max(0, boostedActor.stages.specialAttack - actor.stages.specialAttack) * 18 +
+    Math.max(0, boostedActor.stages.defense - actor.stages.defense) * 14 +
+    Math.max(0, boostedActor.stages.specialDefense - actor.stages.specialDefense) * 14 +
+    Math.max(0, boostedActor.stages.speed - actor.stages.speed) * 14;
+
+  if (appliedStageValue <= 0) {
+    return 0;
+  }
+
+  const offensivePayoff = getSetupOffensivePayoffScore(state, boostedState, actorId);
+  const defensivePayoff = getSetupDefensivePayoffScore(state, boostedState, actorId, threats);
+  const speedPayoff = getSetupSpeedPayoffScore(state, boostedState, actorId, stages);
+  const currentPressure = getBestProjectedPressure(state, actorId);
+  const payoff = appliedStageValue + offensivePayoff + defensivePayoff + speedPayoff + currentPressure * 0.08;
+
+  return Math.min(260, payoff);
+}
+
+function getPlanThreatControlRatio(
+  state: BattleState,
+  actions: PlannedAction[],
+  threats: DefensiveThreat[],
+  setupActorId: string,
+) {
+  const setupActor = state.combatants[setupActorId];
+  if (!setupActor) {
+    return 0;
+  }
+
+  let totalThreatValue = 0;
+  let controlledThreatValue = 0;
+  for (const threat of threats) {
+    const threatValue = threat.targets.reduce((sum, target) => sum + target.value, 0);
+    if (threatValue <= 0) {
+      continue;
+    }
+
+    totalThreatValue += threatValue;
+    controlledThreatValue += threatValue * getThreatControlConfidence(state, actions, threat, { excludeActorId: setupActorId });
+  }
+
+  if (totalThreatValue <= 0) {
+    return 0;
+  }
+
+  return clampUnit(controlledThreatValue / totalThreatValue);
+}
+
+function getSetupSafetyMultiplier(
+  state: BattleState,
+  actions: PlannedAction[],
+  setupAction: PlannedAction,
+  threats: DefensiveThreat[],
+  bundles: IncomingDamageBundle[],
+) {
+  const actor = state.combatants[setupAction.actorId];
+  if (!actor) {
+    return 0;
+  }
+
+  let incomingValue = 0;
+  let residualValue = 0;
+  for (const threat of threats) {
+    const actorThreatValue = threat.targets
+      .filter((target) => target.targetId === setupAction.actorId)
+      .reduce((sum, target) => sum + target.value, 0);
+    if (actorThreatValue <= 0) {
+      continue;
+    }
+
+    incomingValue += actorThreatValue;
+    const controlConfidence = getThreatControlConfidence(state, actions, threat, { excludeActorId: setupAction.actorId });
+    residualValue += actorThreatValue * (1 - controlConfidence);
+  }
+
+  const bundleRisk = getTargetBundleRiskValues(state, actions, bundles, setupAction.actorId, {
+    excludeActorId: setupAction.actorId,
+  });
+  incomingValue += bundleRisk.incoming * 0.85;
+  residualValue += bundleRisk.residual * 0.85;
+
+  const personalSafety = incomingValue <= 0 ? 0.82 : clampUnit(1 - residualValue / Math.max(90, incomingValue));
+  const boardControl = Math.max(
+    getPlanThreatControlRatio(state, actions, threats, setupAction.actorId),
+    getPlanBundleControlRatio(state, actions, bundles, setupAction.actorId),
+  );
+  const hpRatio = actor.maxHp > 0 ? actor.currentHp / actor.maxHp : 0;
+  const hpAdjustment = hpRatio < 0.35 && residualValue > 45 ? -0.28 : hpRatio > 0.7 ? 0.08 : 0;
+
+  return Math.max(0, Math.min(1.35, personalSafety + boardControl * 0.48 + hpAdjustment));
+}
+
+function getSetupOpportunityScore(
+  state: BattleState,
+  actions: PlannedAction[],
+  threats: DefensiveThreat[],
+  bundles: IncomingDamageBundle[],
+) {
+  return actions.reduce((sum, entry) => {
+    const move = getPlannedActionMove(state, entry);
+    if (!isSetupMove(move) || !move?.effectData?.selfStages) {
+      return sum;
+    }
+
+    const payoff = getSetupPayoffScore(state, entry.actorId, move.effectData.selfStages, threats);
+    if (payoff <= 18) {
+      return sum - 24;
+    }
+
+    const safetyMultiplier = getSetupSafetyMultiplier(state, actions, entry, threats, bundles);
+    return sum + payoff * safetyMultiplier - 18;
+  }, 0);
+}
+
+function getBundleRiskValue(
+  state: BattleState,
+  bundle: IncomingDamageBundle,
+  getScale?: (piece: IncomingDamagePiece) => number,
+) {
+  const target = state.combatants[bundle.targetId];
+  if (!target || target.currentHp <= 0) {
+    return 0;
+  }
+
+  const scaledPieces = bundle.pieces.map((piece) => ({
+    piece,
+    scale: clampUnit(getScale ? getScale(piece) : 1),
+  }));
+  const averageDamage = scaledPieces.reduce((sum, entry) => sum + entry.piece.averageDamage * entry.scale, 0);
+  const maxDamage = scaledPieces.reduce((sum, entry) => sum + entry.piece.maxDamage * entry.scale, 0);
+  const averagePercent = scaledPieces.reduce((sum, entry) => sum + entry.piece.averagePercent * entry.scale, 0);
+
+  if (averageDamage <= 0 && maxDamage <= 0) {
+    return 0;
+  }
+
+  const individualAverageKo = scaledPieces.some((entry) => entry.piece.averageDamage * entry.scale >= target.currentHp);
+  const individualMaxKo = scaledPieces.some((entry) => entry.piece.maxDamage * entry.scale >= target.currentHp);
+  const averageKoBonus = averageDamage >= target.currentHp ? (individualAverageKo ? 55 : 155) : 0;
+  const maxKoBonus = maxDamage >= target.currentHp ? (individualMaxKo ? 24 : 76) : 0;
+  const multiSourceBonus = bundle.pieces.length > 1 && averageDamage >= target.currentHp * 0.82 ? 32 : 0;
+
+  return (averagePercent * 0.38 + averageKoBonus + maxKoBonus + multiSourceBonus) * bundle.weight;
+}
+
+function getBundlePiecePreventionConfidence(
+  state: BattleState,
+  actions: PlannedAction[],
+  piece: IncomingDamagePiece,
+  options?: {
+    excludeActorId?: string;
+  },
+) {
+  let confidence = getDamagePieceControlConfidence(state, actions, piece, options);
+
+  for (const entry of actions) {
+    const move = getPlannedActionMove(state, entry);
+    if (!move) {
+      continue;
+    }
+
+    if (move.effectKind === "protect" && entry.actorId === piece.targetId) {
+      const protector = state.combatants[entry.actorId];
+      confidence = Math.max(confidence, getProtectSuccessChance(protector?.protectStreak ?? 0));
+    }
+
+    if (move.effectKind === "guard" && move.effectData?.guard === "wideGuard" && piece.isSpread) {
+      confidence = Math.max(confidence, 1);
+    }
+
+    if (move.effectKind === "guard" && move.effectData?.guard === "quickGuard" && piece.isPriority) {
+      confidence = Math.max(confidence, 1);
+    }
+  }
+
+  return clampUnit(confidence);
+}
+
+function getBundleResidualRiskValue(
+  state: BattleState,
+  actions: PlannedAction[],
+  bundle: IncomingDamageBundle,
+  options?: {
+    excludeActorId?: string;
+  },
+) {
+  return getBundleRiskValue(
+    state,
+    bundle,
+    (piece) => 1 - getBundlePiecePreventionConfidence(state, actions, piece, options),
+  );
+}
+
+function getBundlePreventionScore(state: BattleState, actions: PlannedAction[], bundles: IncomingDamageBundle[]) {
+  return bundles.reduce((sum, bundle) => {
+    const before = getBundleRiskValue(state, bundle);
+    if (before <= 0) {
+      return sum;
+    }
+
+    const after = getBundleResidualRiskValue(state, actions, bundle);
+    return sum + Math.max(0, before - after);
+  }, 0);
+}
+
+function getPlanBundleControlRatio(
+  state: BattleState,
+  actions: PlannedAction[],
+  bundles: IncomingDamageBundle[],
+  excludeActorId: string,
+) {
+  let totalRisk = 0;
+  let controlledRisk = 0;
+  for (const bundle of bundles) {
+    const before = getBundleRiskValue(state, bundle);
+    if (before <= 0) {
+      continue;
+    }
+
+    totalRisk += before;
+    controlledRisk += Math.max(0, before - getBundleResidualRiskValue(state, actions, bundle, { excludeActorId }));
+  }
+
+  if (totalRisk <= 0) {
+    return 0;
+  }
+
+  return clampUnit(controlledRisk / totalRisk);
+}
+
+function getTargetBundleRiskValues(
+  state: BattleState,
+  actions: PlannedAction[],
+  bundles: IncomingDamageBundle[],
+  targetId: string,
+  options?: {
+    excludeActorId?: string;
+  },
+) {
+  return bundles.reduce(
+    (values, bundle) => {
+      if (bundle.targetId !== targetId) {
+        return values;
+      }
+
+      const before = getBundleRiskValue(state, bundle);
+      values.incoming += before;
+      values.residual += getBundleResidualRiskValue(state, actions, bundle, options);
+      return values;
+    },
+    { incoming: 0, residual: 0 },
+  );
+}
+
+function getSecuredTargetOvercommitPenalty(state: BattleState, actions: PlannedAction[]) {
+  const actionsByTarget = new Map<string, PlannedAction[]>();
+  for (const entry of actions) {
+    const move = getPlannedActionMove(state, entry);
+    if (!move || move.category === null || move.isSpreadMove || entry.action.type !== "move" || !entry.action.targetId) {
+      continue;
+    }
+
+    const groupedActions = actionsByTarget.get(entry.action.targetId) ?? [];
+    groupedActions.push(entry);
+    actionsByTarget.set(entry.action.targetId, groupedActions);
+  }
+
+  let penalty = 0;
+  for (const [targetId, groupedActions] of actionsByTarget) {
+    if (groupedActions.length < 2) {
+      continue;
+    }
+
+    const target = state.combatants[targetId];
+    if (!target || target.currentHp <= 0) {
+      continue;
+    }
+
+    const securedActions = groupedActions.filter((entry) => {
+      const move = getPlannedActionMove(state, entry);
+      if (!move) {
+        return false;
+      }
+
+      const preview = getDamagePreview(state, entry.actorId, targetId, move);
+      return (preview?.estimate.averageDamage ?? 0) >= target.currentHp;
+    });
+
+    if (securedActions.length === 0) {
+      continue;
+    }
+
+    penalty += (groupedActions.length - 1) * 46;
+  }
+
+  return penalty;
+}
+
+function getDefensiveCoverageScore(
+  state: BattleState,
+  actions: PlannedAction[],
+  threats: DefensiveThreat[],
+) {
+  const protectedIds = new Set<string>();
+  const switchedOutIds = new Set<string>();
+  let wideGuardActive = false;
+  let quickGuardActive = false;
+  let protectStallScore = 0;
+
+  for (const entry of actions) {
+    if (entry.action.type === "switch") {
+      switchedOutIds.add(entry.actorId);
+      continue;
+    }
+
+    const move = getPlannedActionMove(state, entry);
+    if (!move) {
+      continue;
+    }
+
+    if (move.effectKind === "protect") {
+      const actor = state.combatants[entry.actorId];
+      protectedIds.add(entry.actorId);
+      protectStallScore += (actor ? getProtectStallScore(state, actor.side) : 0) * getProtectSuccessChance(actor?.protectStreak ?? 0);
+      continue;
+    }
+
+    if (move.effectKind === "guard" && move.effectData?.guard === "wideGuard") {
+      wideGuardActive = true;
+    }
+    if (move.effectKind === "guard" && move.effectData?.guard === "quickGuard") {
+      quickGuardActive = true;
+    }
+  }
+
+  if (protectedIds.size === 0 && switchedOutIds.size === 0 && !wideGuardActive && !quickGuardActive) {
+    return 0;
+  }
+
+  let coveredThreatValue = 0;
+  for (const threat of threats) {
+    const neutralizationConfidence = getThreatNeutralizationConfidence(state, actions, threat);
+    const guardCoversThreat = (wideGuardActive && threat.isSpread) || (quickGuardActive && threat.isPriority);
+
+    for (const target of threat.targets) {
+      if (switchedOutIds.has(target.targetId)) {
+        continue;
+      }
+
+      if (protectedIds.has(target.targetId)) {
+        const protector = state.combatants[target.targetId];
+        coveredThreatValue += target.value * (1 - neutralizationConfidence) * getProtectSuccessChance(protector?.protectStreak ?? 0);
+        continue;
+      }
+
+      if (guardCoversThreat) {
+        coveredThreatValue += target.value * (1 - neutralizationConfidence);
+      }
+    }
+  }
+
+  const defensiveMoveCount = actions.filter((entry) => isDefensiveMove(getPlannedActionMove(state, entry))).length;
+  return coveredThreatValue * 1.25 + protectStallScore * 0.8 - defensiveMoveCount * 8;
+}
+
+function combineActionSets(state: BattleState, side: BattleSide, actionGroups: PlannedAction[][]) {
   if (actionGroups.length === 0) {
     return [];
   }
@@ -1559,11 +2572,27 @@ function combineActionSets(side: BattleSide, actionGroups: PlannedAction[][]) {
         }
       }
       const focusBonus = [...focusMap.values()].reduce((sum, count) => sum + (count >= 2 ? 40 : 0), 0);
+      const defensiveThreats = getDefensiveThreats(state, side);
+      const incomingDamageBundles = getIncomingDamageBundles(state, side);
+      const defensiveCoverageScore = getDefensiveCoverageScore(state, current, defensiveThreats);
+      const offensiveTempoScore = getOffensiveTempoScore(state, current, defensiveThreats);
+      const comboDamagePreventionScore = getBundlePreventionScore(state, current, incomingDamageBundles) * 0.7;
+      const defensiveActionScore = getDefensiveActionScore(state, current);
+      const securedTargetOvercommitPenalty = getSecuredTargetOvercommitPenalty(state, current);
       plans.push({
         side,
         actions: [...current].sort((left, right) => left.actorId.localeCompare(right.actorId)),
         summary: current.map((entry) => entry.summary).join(" | "),
-        heuristicScore: heuristicScore + focusBonus,
+        heuristicScore:
+          heuristicScore -
+          defensiveActionScore -
+          getSetupActionScore(state, current) +
+          focusBonus +
+          defensiveCoverageScore +
+          offensiveTempoScore +
+          comboDamagePreventionScore +
+          getSetupOpportunityScore(state, current, defensiveThreats, incomingDamageBundles) -
+          securedTargetOvercommitPenalty,
       });
       return;
     }
@@ -1591,7 +2620,7 @@ export function generateJointActionPlans(
   const maxJointPlans = options?.maxJointPlans ?? DEFAULT_MAX_JOINT_PLANS;
   const activeIds = getActiveIds(state, side);
   const actionGroups = activeIds.map((actorId) => generateActionsForActor(state, actorId, maxIndividualActions));
-  return combineActionSets(side, actionGroups)
+  return combineActionSets(state, side, actionGroups)
     .sort((left, right) => right.heuristicScore - left.heuristicScore)
     .slice(0, maxJointPlans);
 }
@@ -1958,7 +2987,17 @@ function triggerEntryAbility(state: BattleState, combatantId: string, events: Tu
     return;
   }
 
-  if (getAbilityKey(combatant) === "intimidate") {
+  const abilityKey = getAbilityKey(combatant);
+  const weather = WEATHER_ENTRY_ABILITIES[abilityKey];
+  if (weather && state.field.weather !== weather) {
+    state.field.weather = weather;
+    events.push({
+      actorId: combatant.id,
+      text: `${combatant.pokemon.name}'s ${combatant.abilityName ?? combatant.abilityId} made it ${weather}.`,
+    });
+  }
+
+  if (abilityKey === "intimidate") {
     applyIntimidate(state, combatant, events);
   }
 }
@@ -1967,8 +3006,15 @@ function applyInitialEntryEffects(state: BattleState) {
   const initialActiveIds = [...state.sides.ally.activeIds, ...state.sides.enemy.activeIds].filter(
     (combatantId): combatantId is string => Boolean(combatantId),
   );
+  const getEntryOrderSpeed = (combatantId: string) => {
+    const combatant = state.combatants[combatantId];
+    return combatant ? getEffectiveSpeedForBattleState(state, combatant) : 0;
+  };
+  const orderedActiveIds = initialActiveIds.sort(
+    (left, right) => getEntryOrderSpeed(right) - getEntryOrderSpeed(left),
+  );
 
-  for (const combatantId of initialActiveIds) {
+  for (const combatantId of orderedActiveIds) {
     triggerEntryAbility(state, combatantId, []);
   }
 }
@@ -2403,8 +3449,6 @@ function executeMove(
     return;
   }
 
-  actor.protectStreak = 0;
-
   if (move.effectKind === "guard") {
     const sideState = state.sides[actor.side];
     if (move.effectData?.guard === "quickGuard") {
@@ -2413,9 +3457,12 @@ function executeMove(
     if (move.effectData?.guard === "wideGuard") {
       sideState.wideGuardActive = true;
     }
+    actor.protectStreak += 1;
     events.push({ actorId: actor.id, text: `${actor.pokemon.name} uses ${move.name}.` });
     return;
   }
+
+  actor.protectStreak = 0;
 
   if (move.effectKind === "tailwind") {
     state.sides[actor.side].tailwindTurns = APPLIED_TAILWIND_TURNS;

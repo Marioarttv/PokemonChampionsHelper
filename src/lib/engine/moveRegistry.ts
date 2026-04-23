@@ -17,6 +17,20 @@ const PROTECT_FAMILY_MOVE_KEYS = new Set([
   "burningbulwark",
   "kingsshield",
   "obstruct",
+  "quickguard",
+  "silktrap",
+  "spikyshield",
+  "wideguard",
+]);
+
+const SELF_PROTECT_MOVE_KEYS = new Set([
+  "protect",
+  "detect",
+  "banefulbunker",
+  "burninbulwark",
+  "burningbulwark",
+  "kingsshield",
+  "obstruct",
   "silktrap",
   "spikyshield",
 ]);
@@ -143,6 +157,14 @@ export function isProtectFamilyMoveName(moveName: string | null | undefined) {
 
 export function hasProtectFamilyMove(moves: ReadonlyArray<Pick<BattleMoveOption, "name">>) {
   return moves.some((move) => isProtectFamilyMoveName(move.name));
+}
+
+export function isSelfProtectMoveName(moveName: string | null | undefined) {
+  return SELF_PROTECT_MOVE_KEYS.has(normalizeMoveKey(moveName));
+}
+
+export function hasSelfProtectMove(moves: ReadonlyArray<Pick<BattleMoveOption, "name">>) {
+  return moves.some((move) => isSelfProtectMoveName(move.name));
 }
 
 export function getMoveRoleTags(move: Pick<BattleMoveOption, "name" | "effectKind" | "effectData" | "category" | "isSpreadMove" | "priority">) {

@@ -346,6 +346,7 @@ export type CreateBattleStateInput = {
   specialDefenseStage?: number;
   speedStage?: number;
   universalProtect?: boolean;
+  applyInitialEntryEffects?: boolean;
   replacementPolicy?: ReplacementPolicyId;
   allySide?: Partial<BattleSideState>;
   enemySide?: Partial<BattleSideState>;

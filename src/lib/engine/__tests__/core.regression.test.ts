@@ -220,6 +220,36 @@ describe("engine regression coverage", () => {
     expect(result.state.combatants["ally-0"].protectStreak).toBe(0);
   });
 
+  it("carries Wide Guard's protection streak into a following Protect", () => {
+    const guardUser = makePokemon("Guard User", { baseStats: { hp: 120, def: 110 } });
+    const wideGuard = makeMove("Wide Guard", { type: "Rock", category: "Status", basePower: 0, target: "self", priority: 3 });
+    const protect = makeMove("Protect", { type: "Normal", category: "Status", basePower: 0, target: "self", priority: 4 });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: guardUser, moveNames: ["Wide Guard", "Protect"] })],
+      enemy: [],
+      moves: [wideGuard, protect],
+    });
+
+    const guarded = resolveTurn(
+      state,
+      buildMovePlan(state, "ally", [{ actorId: "ally-0", moveName: "Wide Guard" }]),
+      null,
+    );
+
+    expect(guarded.state.combatants["ally-0"].protectStreak).toBe(1);
+
+    const protectAttempt = resolveTurn(
+      guarded.state,
+      buildMovePlan(guarded.state, "ally", [{ actorId: "ally-0", moveName: "Protect" }]),
+      null,
+      "average",
+      { accuracyMode: "expected" },
+    );
+
+    expect(protectAttempt.events.some((event) => event.text.includes("Protect fails"))).toBe(true);
+    expect(protectAttempt.state.combatants["ally-0"].protectStreak).toBe(0);
+  });
+
   it("wakes a sleeping active even when that actor only passes for the turn", () => {
     const sleeper = makePokemon("Sleeper");
     const enemy = makePokemon("Enemy");
@@ -302,6 +332,46 @@ describe("engine regression coverage", () => {
 
     expect(protectLikeMoves).toHaveLength(1);
     expect(protectLikeMoves[0]?.name).toBe("Detect");
+  });
+
+  it("does not infer Wide Guard unless Wide Guard is in the move pool", () => {
+    const defender = makePokemon("Defender");
+    const spreadAttacker = makePokemon("Spread Attacker", { baseStats: { spa: 140 } });
+    const protect = makeMove("Protect", { type: "Normal", category: "Status", basePower: 0, target: "self", priority: 4 });
+    const dazzlingGleam = makeMove("Dazzling Gleam", { type: "Fairy", category: "Special", basePower: 100, target: "allAdjacentFoes" });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: defender, moveNames: ["Protect"] })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: spreadAttacker, moveNames: ["Dazzling Gleam"] })],
+      moves: [protect, dazzlingGleam],
+      universalProtect: true,
+    });
+
+    const moveNames = state.combatants["ally-0"].knownMoves
+      .concat(state.combatants["ally-0"].candidateMoves)
+      .map((move) => move.name);
+    const plans = generateJointActionPlans(state, "ally", {
+      maxJointPlans: 8,
+      maxIndividualActionsPerActor: 8,
+    });
+
+    expect(moveNames).not.toContain("Wide Guard");
+    expect(plans.some((plan) => plan.summary.includes("Wide Guard"))).toBe(false);
+  });
+
+  it("still allows assumed Protect when Wide Guard is the only protection-family move", () => {
+    const defender = makePokemon("Defender");
+    const wideGuard = makeMove("Wide Guard", { type: "Rock", category: "Status", basePower: 0, target: "self", priority: 3 });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: defender, moveNames: ["Wide Guard"] })],
+      enemy: [],
+      moves: [wideGuard],
+      universalProtect: true,
+    });
+
+    const moveNames = state.combatants["ally-0"].knownMoves.map((move) => move.name);
+
+    expect(moveNames).toContain("Wide Guard");
+    expect(moveNames).toContain("Protect");
   });
 
   it("does not let Nasty Plot boost physical damage", () => {
@@ -429,6 +499,63 @@ describe("engine regression coverage", () => {
     expect(state.combatants["ally-0"].stages.attack).toBe(0);
     expect(state.combatants["ally-0"].itemConsumed).toBe(true);
     expect(getEffectiveSpeed(state, "ally-0")).toBeGreaterThan(getEffectiveSpeed(state, "enemy-1"));
+  });
+
+  it("applies lead weather abilities so weather abusers use the correct speed", () => {
+    const pelipper = makePokemon("Pelipper", { baseStats: { spa: 95, spe: 65 } });
+    const ludicolo = makePokemon("Ludicolo", { baseStats: { spa: 90, spe: 70 } });
+    const fastEnemy = makePokemon("Fast Enemy", { baseStats: { spe: 120 } });
+    const partner = makePokemon("Partner", { baseStats: { spe: 70 } });
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: pelipper, moveNames: [], abilityName: "Drizzle" }),
+        makeMember({ side: "ally", slot: 1, pokemon: ludicolo, moveNames: [], abilityName: "Swift Swim" }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: fastEnemy, moveNames: [] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: partner, moveNames: [] }),
+      ],
+      moves: [],
+    });
+
+    expect(state.field.weather).toBe("rain");
+    expect(getEffectiveSpeed(state, "ally-1")).toBeGreaterThan(getEffectiveSpeed(state, "enemy-0"));
+  });
+
+  it("applies switch-in weather before the rest of the turn is resolved", () => {
+    const rainLead = makePokemon("Rain Lead", { baseStats: { spe: 80 } });
+    const sunSetter = makePokemon("Sun Setter", { baseStats: { spe: 40 } });
+    const attacker = makePokemon("Attacker", { baseStats: { atk: 120, spe: 100 } });
+    const target = makePokemon("Target", { baseStats: { hp: 100, def: 80, spe: 60 } });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 60, target: "normal" });
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: rainLead, moveNames: [], abilityName: "Drizzle" }),
+        makeMember({ side: "ally", slot: 1, pokemon: attacker, moveNames: ["Tackle"] }),
+        makeMember({ side: "ally", slot: 2, pokemon: sunSetter, moveNames: [], abilityName: "Drought", isActive: false }),
+      ],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: target, moveNames: [] })],
+      moves: [tackle],
+    });
+
+    expect(state.field.weather).toBe("rain");
+
+    const result = resolveTurn(
+      state,
+      {
+        side: "ally",
+        actions: [
+          ...buildSwitchPlan(state, "ally", [{ actorId: "ally-0", switchInId: "ally-2" }]).actions,
+          ...buildMovePlan(state, "ally", [{ actorId: "ally-1", moveName: "Tackle", targetId: "enemy-0" }]).actions,
+        ],
+        summary: "ally weather switch + attack",
+        heuristicScore: 0,
+      },
+      buildPassPlan(state, "enemy", ["enemy-0"]),
+    );
+
+    expect(result.state.field.weather).toBe("sun");
+    expect(result.events.some((event) => event.text.includes("made it sun"))).toBe(true);
   });
 
   it("applies Choice Scarf speed when ordering actions", () => {
@@ -888,6 +1015,448 @@ describe("engine regression coverage", () => {
     });
 
     expect(recommendation.bestPlan?.summary).toContain("Wide Guard");
+  });
+
+  it("does not treat Wide Guard as Fake Out counterplay when no spread attack is threatened", () => {
+    const fakeOutUser = makePokemon("Sneasler", { baseStats: { atk: 130, spe: 120 } });
+    const partner = makePokemon("Partner", { baseStats: { spa: 115, spe: 90 } });
+    const charizard = makePokemon("Charizard Y", { types: ["Fire", "Flying"], baseStats: { hp: 100, def: 90, spd: 100, spe: 100 } });
+    const aerodactyl = makePokemon("Aerodactyl", { types: ["Rock", "Flying"], baseStats: { atk: 105, spd: 80, spe: 130 } });
+    const fakeOut = makeMove("Fake Out", {
+      type: "Normal",
+      category: "Physical",
+      basePower: 40,
+      priority: 3,
+      target: "normal",
+    });
+    const thunderbolt = makeMove("Thunderbolt", { type: "Electric", category: "Special", basePower: 90, target: "normal" });
+    const protect = makeMove("Protect", { type: "Normal", category: "Status", basePower: 0, target: "self", priority: 4 });
+    const wideGuard = makeMove("Wide Guard", { type: "Rock", category: "Status", basePower: 0, target: "self", priority: 3 });
+    const heatWave = makeMove("Heat Wave", { type: "Fire", category: "Special", basePower: 95, target: "allAdjacentFoes" });
+    const rockSlide = makeMove("Rock Slide", { type: "Rock", category: "Physical", basePower: 75, target: "allAdjacentFoes" });
+
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: fakeOutUser, moveNames: ["Fake Out"] }),
+        makeMember({ side: "ally", slot: 1, pokemon: partner, moveNames: ["Thunderbolt"] }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: charizard, moveNames: ["Protect", "Heat Wave"] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: aerodactyl, moveNames: ["Wide Guard", "Rock Slide"] }),
+      ],
+      moves: [fakeOut, thunderbolt, protect, wideGuard, heatWave, rockSlide],
+    });
+
+    const enemyPlans = generateJointActionPlans(state, "enemy", {
+      maxJointPlans: 8,
+      maxIndividualActionsPerActor: 5,
+    });
+
+    expect(enemyPlans[0]?.summary).not.toContain("Aerodactyl: Wide Guard");
+
+    const recommendation = recommendBestPlan(state, {
+      searchMode: "balanced",
+      objectiveMode: "likely",
+      maxJointPlansPerSide: 8,
+      maxIndividualActionsPerActor: 5,
+    });
+
+    expect(recommendation.predictedEnemyResponse?.summary).not.toContain("Aerodactyl: Wide Guard");
+  });
+
+  it("values Wide Guard when it saves Charizard from Garchomp's Rock Slide", () => {
+    const charizard = makePokemon("Charizard", { types: ["Fire", "Flying"], baseStats: { hp: 90, spa: 130, def: 80, spe: 100 } });
+    const aerodactyl = makePokemon("Aerodactyl", { types: ["Rock", "Flying"], baseStats: { atk: 105, def: 75, spe: 130 } });
+    const garchomp = makePokemon("Garchomp", { types: ["Dragon", "Ground"], baseStats: { atk: 170, spe: 102 } });
+    const enemyPartner = makePokemon("Enemy Partner", { baseStats: { hp: 110, def: 100, spe: 70 } });
+    const wideGuard = makeMove("Wide Guard", { type: "Rock", category: "Status", basePower: 0, target: "self", priority: 3 });
+    const weatherBall = makeMove("Weather Ball", { type: "Fire", category: "Special", basePower: 100, target: "normal" });
+    const rockSlide = makeMove("Rock Slide", { type: "Rock", category: "Physical", basePower: 75, target: "allAdjacentFoes" });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 40, target: "normal" });
+
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: charizard, moveNames: ["Weather Ball"], currentHpPercent: 35 }),
+        makeMember({ side: "ally", slot: 1, pokemon: aerodactyl, moveNames: ["Wide Guard", "Tackle"] }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: garchomp, moveNames: ["Rock Slide"] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: enemyPartner, moveNames: ["Tackle"] }),
+      ],
+      moves: [wideGuard, weatherBall, rockSlide, tackle],
+    });
+
+    const recommendation = recommendBestPlan(state, {
+      searchMode: "balanced",
+      objectiveMode: "robust",
+      maxJointPlansPerSide: 8,
+      maxIndividualActionsPerActor: 5,
+    });
+
+    expect(recommendation.bestPlan?.summary).toContain("Aerodactyl: Wide Guard");
+  });
+
+  it("allows Protect plus Wide Guard when they cover distinct lethal threats", () => {
+    const charizard = makePokemon("Charizard", { types: ["Fire", "Flying"], baseStats: { hp: 90, def: 80, spd: 85, spe: 100 } });
+    const aerodactyl = makePokemon("Aerodactyl", { types: ["Rock", "Flying"], baseStats: { hp: 80, def: 65, spd: 75, spe: 130 } });
+    const miraidon = makePokemon("Miraidon", { types: ["Electric", "Dragon"], baseStats: { spa: 180, spe: 135 } });
+    const garchomp = makePokemon("Garchomp", { types: ["Dragon", "Ground"], baseStats: { atk: 170, spe: 102 } });
+    const protect = makeMove("Protect", { type: "Normal", category: "Status", basePower: 0, target: "self", priority: 4 });
+    const wideGuard = makeMove("Wide Guard", { type: "Rock", category: "Status", basePower: 0, target: "self", priority: 3 });
+    const thunderbolt = makeMove("Thunderbolt", { type: "Electric", category: "Special", basePower: 90, target: "normal" });
+    const rockSlide = makeMove("Rock Slide", { type: "Rock", category: "Physical", basePower: 75, target: "allAdjacentFoes" });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 40, target: "normal" });
+
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: charizard, moveNames: ["Protect", "Tackle"], currentHpPercent: 30 }),
+        makeMember({ side: "ally", slot: 1, pokemon: aerodactyl, moveNames: ["Wide Guard", "Tackle"], currentHpPercent: 45 }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: miraidon, moveNames: ["Thunderbolt"] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: garchomp, moveNames: ["Rock Slide"] }),
+      ],
+      moves: [protect, wideGuard, thunderbolt, rockSlide, tackle],
+    });
+
+    const plans = generateJointActionPlans(state, "ally", {
+      maxJointPlans: 12,
+      maxIndividualActionsPerActor: 5,
+    });
+
+    expect(plans[0]?.summary).toContain("Charizard: Protect");
+    expect(plans[0]?.summary).toContain("Aerodactyl: Wide Guard");
+  });
+
+  it("does not reward Wide Guard when its only valuable spread target is already protecting", () => {
+    const charizard = makePokemon("Charizard", { types: ["Fire", "Flying"], baseStats: { hp: 90, def: 80, spe: 100 } });
+    const steelix = makePokemon("Steelix", { types: ["Steel", "Ground"], baseStats: { hp: 120, atk: 105, def: 220, spe: 30 } });
+    const garchomp = makePokemon("Garchomp", { types: ["Dragon", "Ground"], baseStats: { atk: 155, spe: 102 } });
+    const enemyPartner = makePokemon("Enemy Partner", { baseStats: { hp: 110, def: 100, spe: 70 } });
+    const protect = makeMove("Protect", { type: "Normal", category: "Status", basePower: 0, target: "self", priority: 4 });
+    const wideGuard = makeMove("Wide Guard", { type: "Rock", category: "Status", basePower: 0, target: "self", priority: 3 });
+    const heavySlam = makeMove("Heavy Slam", { type: "Steel", category: "Physical", basePower: 80, target: "normal" });
+    const rockSlide = makeMove("Rock Slide", { type: "Rock", category: "Physical", basePower: 75, target: "allAdjacentFoes" });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 40, target: "normal" });
+
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: charizard, moveNames: ["Protect"], currentHpPercent: 25 }),
+        makeMember({ side: "ally", slot: 1, pokemon: steelix, moveNames: ["Wide Guard", "Heavy Slam"] }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: garchomp, moveNames: ["Rock Slide"] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: enemyPartner, moveNames: ["Tackle"] }),
+      ],
+      moves: [protect, wideGuard, heavySlam, rockSlide, tackle],
+    });
+
+    const plans = generateJointActionPlans(state, "ally", {
+      maxJointPlans: 12,
+      maxIndividualActionsPerActor: 5,
+    });
+    const protectWideGuard = plans.find(
+      (plan) => plan.summary.includes("Charizard: Protect") && plan.summary.includes("Steelix: Wide Guard"),
+    );
+    const protectAttack = plans.find(
+      (plan) => plan.summary.includes("Charizard: Protect") && plan.summary.includes("Steelix: Heavy Slam"),
+    );
+
+    expect(protectWideGuard?.heuristicScore ?? Number.NEGATIVE_INFINITY).toBeLessThan(
+      protectAttack?.heuristicScore ?? Number.POSITIVE_INFINITY,
+    );
+  });
+
+  it("lets a partner attack when a faster ally KOs the threatening enemy first", () => {
+    const fastAttacker = makePokemon("Fast Attacker", { baseStats: { atk: 170, spe: 150 } });
+    const charizard = makePokemon("Charizard", { types: ["Fire", "Flying"], baseStats: { hp: 90, spa: 130, def: 80, spe: 100 } });
+    const garchomp = makePokemon("Garchomp", { types: ["Dragon", "Ground"], baseStats: { hp: 90, def: 70, atk: 165, spe: 102 } });
+    const enemyPartner = makePokemon("Enemy Partner", { types: ["Steel"], baseStats: { hp: 120, def: 150, spd: 75, spe: 70 } });
+    const icePunch = makeMove("Ice Punch", { type: "Ice", category: "Physical", basePower: 120, target: "normal" });
+    const weatherBall = makeMove("Weather Ball", { type: "Fire", category: "Special", basePower: 120, target: "normal" });
+    const protect = makeMove("Protect", { type: "Normal", category: "Status", basePower: 0, target: "self", priority: 4 });
+    const rockSlide = makeMove("Rock Slide", { type: "Rock", category: "Physical", basePower: 75, target: "allAdjacentFoes" });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 40, target: "normal" });
+
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: fastAttacker, moveNames: ["Ice Punch"] }),
+        makeMember({ side: "ally", slot: 1, pokemon: charizard, moveNames: ["Weather Ball", "Protect"], currentHpPercent: 30 }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: garchomp, moveNames: ["Rock Slide"] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: enemyPartner, moveNames: ["Tackle"] }),
+      ],
+      moves: [icePunch, weatherBall, protect, rockSlide, tackle],
+    });
+
+    const plans = generateJointActionPlans(state, "ally", {
+      maxJointPlans: 12,
+      maxIndividualActionsPerActor: 5,
+    });
+
+    expect(plans[0]?.summary).toContain("Fast Attacker: Ice Punch into Garchomp");
+    expect(plans[0]?.summary).toContain("Charizard: Weather Ball into Enemy Partner");
+    expect(plans[0]?.summary).not.toContain("Charizard: Protect");
+  });
+
+  it("uses setup when a partner creates faster lethal Protect pressure", () => {
+    const garchomp = makePokemon("Garchomp", { types: ["Dragon", "Ground"], baseStats: { atk: 190, spe: 150 } });
+    const floette = makePokemon("Mega-Floette", { types: ["Fairy"], baseStats: { hp: 100, spa: 155, spd: 120, spe: 92 } });
+    const charizard = makePokemon("Charizard Y", { types: ["Fire", "Flying"], baseStats: { hp: 100, def: 80, spa: 170, spe: 100 } });
+    const enemyWall = makePokemon("Enemy Wall", { types: ["Steel"], baseStats: { hp: 130, def: 150, spd: 160, spe: 70 } });
+    const stoneEdge = makeMove("Stone Edge", { type: "Rock", category: "Physical", basePower: 150, target: "normal" });
+    const calmMind = makeMove("Calm Mind", { type: "Psychic", category: "Status", basePower: 0, target: "self" });
+    const moonblast = makeMove("Moonblast", { type: "Fairy", category: "Special", basePower: 95, target: "normal" });
+    const protect = makeMove("Protect", { type: "Normal", category: "Status", basePower: 0, target: "self", priority: 4 });
+    const heatWave = makeMove("Heat Wave", { type: "Fire", category: "Special", basePower: 95, target: "allAdjacentFoes" });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 35, target: "normal" });
+
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: garchomp, moveNames: ["Stone Edge"] }),
+        makeMember({ side: "ally", slot: 1, pokemon: floette, moveNames: ["Calm Mind", "Moonblast"] }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: charizard, moveNames: ["Protect", "Heat Wave"] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: enemyWall, moveNames: ["Tackle"] }),
+      ],
+      moves: [stoneEdge, calmMind, moonblast, protect, heatWave, tackle],
+    });
+
+    const plans = generateJointActionPlans(state, "ally", {
+      maxJointPlans: 12,
+      maxIndividualActionsPerActor: 6,
+    });
+
+    expect(plans[0]?.summary).toContain("Garchomp: Stone Edge into Charizard Y");
+    expect(plans[0]?.summary).toContain("Mega-Floette: Calm Mind");
+  });
+
+  it("uses setup when Fake Out covers the damaging threat", () => {
+    const sneasler = makePokemon("Sneasler", { baseStats: { atk: 130, spe: 120 } });
+    const floette = makePokemon("Mega-Floette", { types: ["Fairy"], baseStats: { hp: 105, spa: 155, spd: 120, spe: 92 } });
+    const miraidon = makePokemon("Miraidon", { types: ["Electric"], baseStats: { hp: 115, spa: 180, spd: 125, spe: 135 } });
+    const enemyWall = makePokemon("Enemy Wall", { types: ["Steel"], baseStats: { hp: 130, def: 150, spd: 165, spe: 70 } });
+    const fakeOut = makeMove("Fake Out", { type: "Normal", category: "Physical", basePower: 40, priority: 3, target: "normal" });
+    const calmMind = makeMove("Calm Mind", { type: "Psychic", category: "Status", basePower: 0, target: "self" });
+    const moonblast = makeMove("Moonblast", { type: "Fairy", category: "Special", basePower: 95, target: "normal" });
+    const flashCannon = makeMove("Flash Cannon", { type: "Steel", category: "Special", basePower: 120, target: "normal" });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 35, target: "normal" });
+
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: sneasler, moveNames: ["Fake Out"] }),
+        makeMember({ side: "ally", slot: 1, pokemon: floette, moveNames: ["Calm Mind", "Moonblast"], currentHpPercent: 70 }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: miraidon, moveNames: ["Flash Cannon"] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: enemyWall, moveNames: ["Tackle"] }),
+      ],
+      moves: [fakeOut, calmMind, moonblast, flashCannon, tackle],
+    });
+
+    const plans = generateJointActionPlans(state, "ally", {
+      maxJointPlans: 12,
+      maxIndividualActionsPerActor: 6,
+    });
+
+    expect(plans[0]?.summary).toContain("Sneasler: Fake Out into Miraidon");
+    expect(plans[0]?.summary).toContain("Mega-Floette: Calm Mind");
+  });
+
+  it("does not use setup when the setup user remains exposed to a faster KO", () => {
+    const partner = makePokemon("Partner", { baseStats: { atk: 95, spe: 80 } });
+    const floette = makePokemon("Mega-Floette", { types: ["Fairy"], baseStats: { hp: 100, spa: 155, spd: 110, spe: 92 } });
+    const gengar = makePokemon("Gengar", { types: ["Ghost", "Poison"], baseStats: { hp: 100, spa: 190, spe: 150 } });
+    const enemyPartner = makePokemon("Enemy Partner", { baseStats: { hp: 110, atk: 80, spe: 70 } });
+    const calmMind = makeMove("Calm Mind", { type: "Psychic", category: "Status", basePower: 0, target: "self" });
+    const moonblast = makeMove("Moonblast", { type: "Fairy", category: "Special", basePower: 95, target: "normal" });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 45, target: "normal" });
+    const sludgeBomb = makeMove("Sludge Bomb", { type: "Poison", category: "Special", basePower: 120, target: "normal" });
+
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: partner, moveNames: ["Tackle"] }),
+        makeMember({ side: "ally", slot: 1, pokemon: floette, moveNames: ["Calm Mind", "Moonblast"], currentHpPercent: 45 }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: gengar, moveNames: ["Sludge Bomb"] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: enemyPartner, moveNames: ["Tackle"] }),
+      ],
+      moves: [calmMind, moonblast, tackle, sludgeBomb],
+    });
+
+    const plans = generateJointActionPlans(state, "ally", {
+      maxJointPlans: 12,
+      maxIndividualActionsPerActor: 6,
+    });
+
+    expect(plans[0]?.summary).not.toContain("Mega-Floette: Calm Mind");
+  });
+
+  it("does not reward setup when the boost has no useful payoff", () => {
+    const sneasler = makePokemon("Sneasler", { baseStats: { atk: 130, spe: 120 } });
+    const physicalAttacker = makePokemon("Physical Attacker", { baseStats: { atk: 150, spa: 55, spe: 95 } });
+    const enemyThreat = makePokemon("Enemy Threat", { baseStats: { hp: 110, atk: 130, spe: 100 } });
+    const enemyPartner = makePokemon("Enemy Partner", { baseStats: { hp: 110, def: 95, spd: 95, spe: 70 } });
+    const fakeOut = makeMove("Fake Out", { type: "Normal", category: "Physical", basePower: 40, priority: 3, target: "normal" });
+    const calmMind = makeMove("Calm Mind", { type: "Psychic", category: "Status", basePower: 0, target: "self" });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 80, target: "normal" });
+    const bodySlam = makeMove("Body Slam", { type: "Normal", category: "Physical", basePower: 90, target: "normal" });
+
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: sneasler, moveNames: ["Fake Out"] }),
+        makeMember({ side: "ally", slot: 1, pokemon: physicalAttacker, moveNames: ["Calm Mind", "Tackle"] }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: enemyThreat, moveNames: ["Body Slam"] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: enemyPartner, moveNames: ["Tackle"] }),
+      ],
+      moves: [fakeOut, calmMind, tackle, bodySlam],
+    });
+
+    const plans = generateJointActionPlans(state, "ally", {
+      maxJointPlans: 12,
+      maxIndividualActionsPerActor: 6,
+    });
+
+    expect(plans[0]?.summary).toContain("Sneasler: Fake Out into Enemy Threat");
+    expect(plans[0]?.summary).not.toContain("Physical Attacker: Calm Mind");
+  });
+
+  it("protects against combined spread plus directional lethal damage", () => {
+    const charizard = makePokemon("Charizard", { types: ["Fire", "Flying"], baseStats: { hp: 100, spa: 90, spd: 95, spe: 100 } });
+    const partner = makePokemon("Partner", { baseStats: { atk: 80, spe: 70 } });
+    const flutter = makePokemon("Flutter Mane", { types: ["Ghost", "Fairy"], baseStats: { hp: 110, spa: 170, spd: 135, spe: 135 } });
+    const miraidon = makePokemon("Miraidon", { types: ["Electric", "Dragon"], baseStats: { hp: 120, spa: 165, spd: 115, spe: 135 } });
+    const protect = makeMove("Protect", { type: "Normal", category: "Status", basePower: 0, target: "self", priority: 4 });
+    const weatherBall = makeMove("Weather Ball", { type: "Fire", category: "Special", basePower: 70, target: "normal" });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 45, target: "normal" });
+    const dazzlingGleam = makeMove("Dazzling Gleam", { type: "Fairy", category: "Special", basePower: 100, target: "allAdjacentFoes" });
+    const thunderbolt = makeMove("Thunderbolt", { type: "Electric", category: "Special", basePower: 75, target: "normal" });
+
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: charizard, moveNames: ["Protect", "Weather Ball"], currentHpPercent: 62 }),
+        makeMember({ side: "ally", slot: 1, pokemon: partner, moveNames: ["Tackle"] }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: flutter, moveNames: ["Dazzling Gleam"] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: miraidon, moveNames: ["Thunderbolt"] }),
+      ],
+      moves: [protect, weatherBall, tackle, dazzlingGleam, thunderbolt],
+    });
+
+    const plans = generateJointActionPlans(state, "ally", {
+      maxJointPlans: 12,
+      maxIndividualActionsPerActor: 6,
+    });
+
+    expect(plans[0]?.summary).toContain("Charizard: Protect");
+  });
+
+  it("values Wide Guard when it breaks a spread plus directional KO bundle", () => {
+    const charizard = makePokemon("Charizard", { types: ["Fire", "Flying"], baseStats: { hp: 100, spa: 110, spd: 95, spe: 100 } });
+    const aerodactyl = makePokemon("Aerodactyl", { types: ["Rock", "Flying"], baseStats: { atk: 105, spd: 80, spe: 130 } });
+    const flutter = makePokemon("Flutter Mane", { types: ["Ghost", "Fairy"], baseStats: { hp: 110, spa: 165, spd: 135, spe: 135 } });
+    const miraidon = makePokemon("Miraidon", { types: ["Electric", "Dragon"], baseStats: { hp: 120, spa: 165, spd: 115, spe: 135 } });
+    const weatherBall = makeMove("Weather Ball", { type: "Fire", category: "Special", basePower: 70, target: "normal" });
+    const wideGuard = makeMove("Wide Guard", { type: "Rock", category: "Status", basePower: 0, target: "self", priority: 3 });
+    const rockSlide = makeMove("Rock Slide", { type: "Rock", category: "Physical", basePower: 75, target: "allAdjacentFoes" });
+    const dazzlingGleam = makeMove("Dazzling Gleam", { type: "Fairy", category: "Special", basePower: 100, target: "allAdjacentFoes" });
+    const thunderbolt = makeMove("Thunderbolt", { type: "Electric", category: "Special", basePower: 75, target: "normal" });
+
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: charizard, moveNames: ["Weather Ball"], currentHpPercent: 62 }),
+        makeMember({ side: "ally", slot: 1, pokemon: aerodactyl, moveNames: ["Wide Guard", "Rock Slide"] }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: flutter, moveNames: ["Dazzling Gleam"] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: miraidon, moveNames: ["Thunderbolt"] }),
+      ],
+      moves: [weatherBall, wideGuard, rockSlide, dazzlingGleam, thunderbolt],
+    });
+
+    const plans = generateJointActionPlans(state, "ally", {
+      maxJointPlans: 12,
+      maxIndividualActionsPerActor: 6,
+    });
+
+    expect(plans[0]?.summary).toContain("Aerodactyl: Wide Guard");
+  });
+
+  it("does not overvalue Wide Guard when the directional hit still KOs after blocking spread damage", () => {
+    const charizard = makePokemon("Charizard", { types: ["Fire", "Flying"], baseStats: { hp: 100, spa: 110, spd: 95, spe: 100 } });
+    const aerodactyl = makePokemon("Aerodactyl", { types: ["Rock", "Flying"], baseStats: { atk: 105, spd: 80, spe: 130 } });
+    const flutter = makePokemon("Flutter Mane", { types: ["Ghost", "Fairy"], baseStats: { hp: 110, spa: 165, spd: 135, spe: 135 } });
+    const miraidon = makePokemon("Miraidon", { types: ["Electric", "Dragon"], baseStats: { hp: 120, spa: 185, spd: 115, spe: 135 } });
+    const protect = makeMove("Protect", { type: "Normal", category: "Status", basePower: 0, target: "self", priority: 4 });
+    const weatherBall = makeMove("Weather Ball", { type: "Fire", category: "Special", basePower: 70, target: "normal" });
+    const wideGuard = makeMove("Wide Guard", { type: "Rock", category: "Status", basePower: 0, target: "self", priority: 3 });
+    const rockSlide = makeMove("Rock Slide", { type: "Rock", category: "Physical", basePower: 75, target: "allAdjacentFoes" });
+    const dazzlingGleam = makeMove("Dazzling Gleam", { type: "Fairy", category: "Special", basePower: 80, target: "allAdjacentFoes" });
+    const thunderbolt = makeMove("Thunderbolt", { type: "Electric", category: "Special", basePower: 95, target: "normal" });
+
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: charizard, moveNames: ["Protect", "Weather Ball"], currentHpPercent: 48 }),
+        makeMember({ side: "ally", slot: 1, pokemon: aerodactyl, moveNames: ["Wide Guard", "Rock Slide"] }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: flutter, moveNames: ["Dazzling Gleam"] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: miraidon, moveNames: ["Thunderbolt"] }),
+      ],
+      moves: [protect, weatherBall, wideGuard, rockSlide, dazzlingGleam, thunderbolt],
+    });
+
+    const plans = generateJointActionPlans(state, "ally", {
+      maxJointPlans: 12,
+      maxIndividualActionsPerActor: 6,
+    });
+    const protectAttack = plans.find(
+      (plan) => plan.summary.includes("Charizard: Protect") && plan.summary.includes("Aerodactyl: Rock Slide"),
+    );
+    const attackWideGuard = plans.find(
+      (plan) => plan.summary.includes("Charizard: Weather Ball") && plan.summary.includes("Aerodactyl: Wide Guard"),
+    );
+
+    expect(attackWideGuard?.heuristicScore ?? Number.NEGATIVE_INFINITY).toBeLessThan(
+      protectAttack?.heuristicScore ?? Number.POSITIVE_INFINITY,
+    );
+  });
+
+  it("does not use setup when spread plus directional damage combine to KO the setup user", () => {
+    const partner = makePokemon("Partner", { baseStats: { atk: 95, spe: 80 } });
+    const floette = makePokemon("Mega-Floette", { types: ["Fairy"], baseStats: { hp: 100, spa: 155, spd: 120, spe: 92 } });
+    const flutter = makePokemon("Flutter Mane", { types: ["Ghost", "Fairy"], baseStats: { hp: 110, spa: 165, spd: 135, spe: 135 } });
+    const gengar = makePokemon("Gengar", { types: ["Ghost", "Poison"], baseStats: { hp: 100, spa: 165, spe: 120 } });
+    const calmMind = makeMove("Calm Mind", { type: "Psychic", category: "Status", basePower: 0, target: "self" });
+    const moonblast = makeMove("Moonblast", { type: "Fairy", category: "Special", basePower: 95, target: "normal" });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 45, target: "normal" });
+    const dazzlingGleam = makeMove("Dazzling Gleam", { type: "Fairy", category: "Special", basePower: 80, target: "allAdjacentFoes" });
+    const sludgeBomb = makeMove("Sludge Bomb", { type: "Poison", category: "Special", basePower: 80, target: "normal" });
+
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: partner, moveNames: ["Tackle"] }),
+        makeMember({ side: "ally", slot: 1, pokemon: floette, moveNames: ["Calm Mind", "Moonblast"], currentHpPercent: 58 }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: flutter, moveNames: ["Dazzling Gleam"] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: gengar, moveNames: ["Sludge Bomb"] }),
+      ],
+      moves: [calmMind, moonblast, tackle, dazzlingGleam, sludgeBomb],
+    });
+
+    const plans = generateJointActionPlans(state, "ally", {
+      maxJointPlans: 12,
+      maxIndividualActionsPerActor: 6,
+    });
+
+    expect(plans[0]?.summary).not.toContain("Mega-Floette: Calm Mind");
   });
 
   it("can recommend a defensive switch when the current active is in immediate danger", () => {

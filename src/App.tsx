@@ -131,7 +131,6 @@ import {
 import {
   recommendTeamPreview,
   type TeamPreviewRecommendation,
-  type TeamPreviewSolverMode,
 } from "./lib/teamPreview";
 import {
   rememberBringSelectionSlot,
@@ -317,10 +316,6 @@ const TERRAIN_OPTIONS: Array<{ value: DamageTerrain; label: string }> = [
   { value: "grassy", label: "Grassy Terrain" },
   { value: "psychic", label: "Psychic Terrain" },
   { value: "misty", label: "Misty Terrain" },
-];
-const TEAM_PREVIEW_SCAN_OPTIONS: Array<{ value: TeamPreviewSolverMode; label: string }> = [
-  { value: "sparse", label: "Quickscan" },
-  { value: "dense", label: "Full Scan" },
 ];
 const BATTLE_STATUS_OPTIONS: Array<{ value: BattleStatusCondition; label: string }> = [
   { value: "none", label: "Healthy" },
@@ -5218,6 +5213,57 @@ type SimulationRun = {
   enemyPlan: JointActionPlan;
 };
 
+type BattleLabSlotCoord = {
+  side: BattleSide;
+  slotIndex: 0 | 1;
+};
+
+type BattleLabEventMotion =
+  | {
+      kind: "attack";
+      key: string;
+      actorId: string;
+      targetId: string | null;
+      actorSlot: BattleLabSlotCoord | null;
+      targetSlot: BattleLabSlotCoord | null;
+      direction: "up" | "down";
+      side: BattleSide;
+      isSpread: boolean;
+    }
+  | {
+      kind: "faint";
+      key: string;
+      combatantId: string | null;
+      slot: BattleLabSlotCoord | null;
+    }
+  | {
+      kind: "switch";
+      key: string;
+      outgoingId: string | null;
+      incomingId: string | null;
+      slot: BattleLabSlotCoord | null;
+      side: BattleSide | null;
+    };
+
+type BattleLabManualMotion = {
+  serial: number;
+  faintedCombatantId?: string;
+  faintSlot?: BattleLabSlotCoord;
+  incomingCombatantId?: string;
+  switchSlot?: BattleLabSlotCoord;
+};
+
+type BattleLabSlotMotion = {
+  attackKey?: string;
+  attackDirection?: "up" | "down";
+  targetKey?: string;
+  faintKey?: string;
+  switchInKey?: string;
+  switchOutKey?: string;
+};
+
+const BATTLE_LAB_EVENT_STEP_MS = 1050;
+
 const STATUS_PALETTE: Record<BattleStatusCondition, { label: string; tint: string; color: string }> = {
   none: { label: "", tint: "transparent", color: "" },
   burn: { label: "BRN", tint: "rgba(239, 125, 87, 0.28)", color: "#ffb8a5" },
@@ -5369,6 +5415,357 @@ function getMoveOptionFromBattleAction(state: BattleState, action: BattleAction)
 
 function isManualDamageMove(move: BattleMoveOption | null) {
   return move?.effectKind === "damage" || move?.effectKind === "fakeOut";
+}
+
+function getBattleLabSlotCoord(state: BattleState | null, combatantId: string | null | undefined): BattleLabSlotCoord | null {
+  if (!state || !combatantId) {
+    return null;
+  }
+
+  for (const side of ["ally", "enemy"] as const) {
+    const slotIndex = state.sides[side].activeIds.findIndex((id) => id === combatantId);
+    if (slotIndex === 0 || slotIndex === 1) {
+      return { side, slotIndex };
+    }
+  }
+
+  return null;
+}
+
+function sameBattleLabSlotCoord(left: BattleLabSlotCoord | null | undefined, side: BattleSide, slotIndex: 0 | 1) {
+  return Boolean(left && left.side === side && left.slotIndex === slotIndex);
+}
+
+function cloneBattleLabState(state: BattleState): BattleState {
+  return {
+    combatants: Object.fromEntries(
+      Object.entries(state.combatants).map(([id, combatant]) => [
+        id,
+        {
+          ...combatant,
+          stages: { ...combatant.stages },
+          knownMoves: [...combatant.knownMoves],
+          candidateMoves: [...combatant.candidateMoves],
+        },
+      ]),
+    ),
+    sides: {
+      ally: {
+        ...state.sides.ally,
+        activeIds: [...state.sides.ally.activeIds] as [string | null, string | null],
+        benchIds: [...state.sides.ally.benchIds],
+        allySwitchPair: state.sides.ally.allySwitchPair
+          ? ([...state.sides.ally.allySwitchPair] as [string, string])
+          : null,
+      },
+      enemy: {
+        ...state.sides.enemy,
+        activeIds: [...state.sides.enemy.activeIds] as [string | null, string | null],
+        benchIds: [...state.sides.enemy.benchIds],
+        allySwitchPair: state.sides.enemy.allySwitchPair
+          ? ([...state.sides.enemy.allySwitchPair] as [string, string])
+          : null,
+      },
+    },
+    field: { ...state.field },
+    policies: { ...state.policies },
+  };
+}
+
+function findBattleLabCombatantIdByName(state: BattleState | null, name: string) {
+  if (!state) {
+    return null;
+  }
+
+  const key = normalizePokemonNameKey(name);
+  return (
+    Object.values(state.combatants).find((combatant) => normalizePokemonNameKey(combatant.pokemon.name) === key)?.id ??
+    null
+  );
+}
+
+function getBattleLabMoveForEvent(state: BattleState, actorId: string | null, moveName: string) {
+  if (!actorId) {
+    return null;
+  }
+
+  const actor = state.combatants[actorId];
+  if (!actor) {
+    return null;
+  }
+
+  const moveKey = normalizePokemonNameKey(moveName);
+  return getBattleLabAvailableMoves(actor).find((move) => normalizePokemonNameKey(move.name) === moveKey) ?? null;
+}
+
+function clampBattleLabHp(combatant: BattleCombatantState, nextHp: number) {
+  combatant.currentHp = Math.max(0, Math.min(combatant.maxHp, Math.round(nextHp)));
+}
+
+function getBattleLabEventCombatantId(
+  state: BattleState,
+  event: TurnEvent,
+  role: "actor" | "target",
+  fallbackName?: string,
+) {
+  const explicitId = role === "actor" ? event.actorId : event.targetId;
+  return explicitId ?? (fallbackName ? findBattleLabCombatantIdByName(state, fallbackName) : null);
+}
+
+function applyBattleLabSwitchEvent(state: BattleState, event: TurnEvent, run: SimulationRun, text: string) {
+  let match = text.match(/^(.+?) switches out for (.+?)\.$/i);
+  if (match) {
+    const outgoingId = getBattleLabEventCombatantId(state, event, "actor", match[1]);
+    const incomingId =
+      getBattleLabEventCombatantId(state, event, "target", match[2]) ??
+      findBattleLabCombatantIdByName(run.finalState, match[2]);
+    const outgoing = outgoingId ? state.combatants[outgoingId] : null;
+    const incoming = incomingId ? state.combatants[incomingId] : null;
+    if (!outgoing || !incoming) {
+      return;
+    }
+
+    const sideState = state.sides[outgoing.side];
+    const activeIndex = sideState.activeIds.findIndex((id) => id === outgoing.id);
+    if (activeIndex === 0 || activeIndex === 1) {
+      sideState.activeIds[activeIndex] = incoming.id;
+      sideState.benchIds = [...sideState.benchIds.filter((id) => id !== incoming.id), outgoing.id];
+    }
+    return;
+  }
+
+  match = text.match(/^(.+?) enters the battle for (ally|enemy)\.$/i);
+  if (!match) {
+    return;
+  }
+
+  const incomingId =
+    getBattleLabEventCombatantId(state, event, "target", match[1]) ??
+    findBattleLabCombatantIdByName(run.finalState, match[1]);
+  const incoming = incomingId ? state.combatants[incomingId] : null;
+  if (!incoming) {
+    return;
+  }
+
+  const side = match[2] as BattleSide;
+  const sideState = state.sides[side];
+  const activeIndex = sideState.activeIds.findIndex((id) => !id || (state.combatants[id]?.currentHp ?? 0) <= 0);
+  if (activeIndex === 0 || activeIndex === 1) {
+    sideState.activeIds[activeIndex] = incoming.id;
+    sideState.benchIds = sideState.benchIds.filter((id) => id !== incoming.id);
+  }
+}
+
+function applyBattleLabSideConditionEvent(state: BattleState, event: TurnEvent, run: SimulationRun, text: string) {
+  let match = text.match(/^(.+?) sets Tailwind for (ally|enemy)\.$/i);
+  if (match) {
+    const side = match[2] as BattleSide;
+    state.sides[side].tailwindTurns = Math.max(run.finalState.sides[side].tailwindTurns, 1);
+    return;
+  }
+
+  match = text.match(/^(.+?) twists the dimensions\.$/i);
+  if (match) {
+    state.field.trickRoomTurns = Math.max(run.finalState.field.trickRoomTurns, 1);
+    return;
+  }
+
+  match = text.match(/^(.+?) ends Trick Room\.$/i);
+  if (match) {
+    state.field.trickRoomTurns = 0;
+    return;
+  }
+
+  match = text.match(/^(.+?) sets (Reflect|Light Screen|Aurora Veil)\.$/i);
+  if (match) {
+    const actorId = getBattleLabEventCombatantId(state, event, "actor", match[1]);
+    const actor = actorId ? state.combatants[actorId] : null;
+    if (!actor) {
+      return;
+    }
+
+    if (/reflect/i.test(match[2])) {
+      state.sides[actor.side].reflectTurns = Math.max(run.finalState.sides[actor.side].reflectTurns, 1);
+    } else if (/light screen/i.test(match[2])) {
+      state.sides[actor.side].lightScreenTurns = Math.max(run.finalState.sides[actor.side].lightScreenTurns, 1);
+    } else {
+      state.sides[actor.side].auroraVeilTurns = Math.max(run.finalState.sides[actor.side].auroraVeilTurns, 1);
+    }
+  }
+}
+
+function applyBattleLabEventToDisplayState(state: BattleState, event: TurnEvent, run: SimulationRun) {
+  const text = event.text.trim();
+  let match = text.match(/^(.+?) uses (.+?) on (.+?) for (\d+) HP/i);
+  if (match) {
+    const targetId = getBattleLabEventCombatantId(state, event, "target", match[3]);
+    const target = targetId ? state.combatants[targetId] : null;
+    if (target) {
+      clampBattleLabHp(target, target.currentHp - Number(match[4]));
+    }
+    return;
+  }
+
+  match = text.match(/^(.+?) heals (\d+) HP from (.+?)\.$/i) ?? text.match(/^(.+?) restores (\d+) HP with (.+?)\.$/i);
+  if (match) {
+    const targetId = getBattleLabEventCombatantId(state, event, "target", match[1]);
+    const target = targetId ? state.combatants[targetId] : null;
+    if (target) {
+      clampBattleLabHp(target, target.currentHp + Number(match[2]));
+    }
+    return;
+  }
+
+  match = text.match(/^(.+?) is hurt by (.+?) for (\d+) HP\.$/i);
+  if (match) {
+    const targetId = getBattleLabEventCombatantId(state, event, "target", match[1]);
+    const target = targetId ? state.combatants[targetId] : null;
+    if (target) {
+      clampBattleLabHp(target, target.currentHp - Number(match[3]));
+    }
+    return;
+  }
+
+  match = text.match(/^(.+?) takes (\d+) Life Orb recoil\.$/i);
+  if (match) {
+    const actorId = getBattleLabEventCombatantId(state, event, "actor", match[1]);
+    const actor = actorId ? state.combatants[actorId] : null;
+    if (actor) {
+      clampBattleLabHp(actor, actor.currentHp - Number(match[2]));
+    }
+    return;
+  }
+
+  match = text.match(/^(.+?) faints(?: from recoil)?\.$/i);
+  if (match) {
+    const combatantId =
+      getBattleLabEventCombatantId(state, event, "target", match[1]) ??
+      getBattleLabEventCombatantId(state, event, "actor", match[1]);
+    const combatant = combatantId ? state.combatants[combatantId] : null;
+    if (combatant) {
+      combatant.currentHp = 0;
+    }
+    return;
+  }
+
+  match = text.match(/^(.+?) is now (burn|paralysis|sleep)\.$/i);
+  if (match) {
+    const targetId = getBattleLabEventCombatantId(state, event, "target", match[1]);
+    const target = targetId ? state.combatants[targetId] : null;
+    if (target) {
+      target.statusCondition = match[2] as BattleStatusCondition;
+    }
+    return;
+  }
+
+  if (/ switches out for | enters the battle for /i.test(text)) {
+    applyBattleLabSwitchEvent(state, event, run, text);
+    return;
+  }
+
+  if (/ uses Ally Switch\.$/i.test(text)) {
+    const actor = event.actorId ? state.combatants[event.actorId] : null;
+    const target = event.targetId ? state.combatants[event.targetId] : null;
+    if (actor && target && actor.side === target.side) {
+      const activeIds = state.sides[actor.side].activeIds;
+      const actorIndex = activeIds.findIndex((id) => id === actor.id);
+      const targetIndex = activeIds.findIndex((id) => id === target.id);
+      if ((actorIndex === 0 || actorIndex === 1) && (targetIndex === 0 || targetIndex === 1)) {
+        activeIds[actorIndex] = target.id;
+        activeIds[targetIndex] = actor.id;
+      }
+    }
+    return;
+  }
+
+  applyBattleLabSideConditionEvent(state, event, run, text);
+}
+
+function buildBattleLabDisplayStateAtEvent(run: SimulationRun, eventIndex: number) {
+  if (run.events.length === 0 || eventIndex >= run.events.length) {
+    return run.finalState;
+  }
+
+  const state = cloneBattleLabState(run.startState);
+  const appliedEvents = run.events.slice(0, Math.max(0, eventIndex));
+  for (const event of appliedEvents) {
+    applyBattleLabEventToDisplayState(state, event, run);
+  }
+  return state;
+}
+
+function buildBattleLabEventMotion(
+  run: SimulationRun,
+  displayState: BattleState,
+  event: TurnEvent,
+  eventIndex: number,
+): BattleLabEventMotion | null {
+  const key = `bl-event-${eventIndex}-${event.actorId ?? "none"}-${event.targetId ?? "none"}`;
+  const text = event.text.trim();
+
+  let match = text.match(/^(.+?) uses (.+?) on (.+?) for \d+ HP/i);
+  if (match) {
+    const actorId = event.actorId ?? findBattleLabCombatantIdByName(run.startState, match[1]) ?? null;
+    const actor = actorId ? (displayState.combatants[actorId] ?? run.startState.combatants[actorId]) : null;
+    const move = getBattleLabMoveForEvent(run.startState, actorId, match[2]);
+    const isSpread = Boolean(
+      move &&
+        (move.targetKind === "allAdjacent" || move.targetKind === "allOpponents" || move.targetKind === "allAllies"),
+    );
+
+    return {
+      kind: "attack",
+      key,
+      actorId: actorId ?? "",
+      targetId: event.targetId ?? findBattleLabCombatantIdByName(displayState, match[3]) ?? null,
+      actorSlot: getBattleLabSlotCoord(displayState, actorId) ?? getBattleLabSlotCoord(run.startState, actorId),
+      targetSlot: getBattleLabSlotCoord(displayState, event.targetId) ?? getBattleLabSlotCoord(run.startState, event.targetId),
+      direction: actor?.side === "enemy" ? "down" : "up",
+      side: actor?.side ?? "ally",
+      isSpread,
+    };
+  }
+
+  match = text.match(/^(.+?) switches out for (.+?)\.$/i);
+  if (match) {
+    const outgoingId = event.actorId ?? findBattleLabCombatantIdByName(run.startState, match[1]) ?? null;
+    const incomingId = event.targetId ?? findBattleLabCombatantIdByName(displayState, match[2]) ?? null;
+    const outgoing = outgoingId ? (run.startState.combatants[outgoingId] ?? displayState.combatants[outgoingId]) : null;
+    return {
+      kind: "switch",
+      key,
+      outgoingId,
+      incomingId,
+      slot: getBattleLabSlotCoord(run.startState, outgoingId) ?? getBattleLabSlotCoord(displayState, incomingId),
+      side: outgoing?.side ?? null,
+    };
+  }
+
+  match = text.match(/^(.+?) enters the battle for (ally|enemy)\.$/i);
+  if (match) {
+    const incomingId = event.targetId ?? findBattleLabCombatantIdByName(displayState, match[1]) ?? null;
+    return {
+      kind: "switch",
+      key,
+      outgoingId: null,
+      incomingId,
+      slot: getBattleLabSlotCoord(displayState, incomingId) ?? getBattleLabSlotCoord(run.finalState, incomingId),
+      side: match[2] as BattleSide,
+    };
+  }
+
+  match = text.match(/^(.+?) faints(?: from recoil)?\.$/i);
+  if (match) {
+    const combatantId = event.targetId ?? event.actorId ?? findBattleLabCombatantIdByName(run.startState, match[1]) ?? null;
+    return {
+      kind: "faint",
+      key,
+      combatantId,
+      slot: getBattleLabSlotCoord(run.startState, combatantId) ?? getBattleLabSlotCoord(displayState, combatantId),
+    };
+  }
+
+  return null;
 }
 
 function buildUtilityOnlyPlan(state: BattleState, plan: JointActionPlan): JointActionPlan {
@@ -5640,6 +6037,7 @@ type BattleLabSlotProps = {
   onToggleEdit: () => void;
   onEditPatch: (patch: Partial<BattleSimulatorMemberState>) => void;
   simulatorPatch: BattleSimulatorMemberState | null;
+  motion?: BattleLabSlotMotion | null;
 };
 
 function BattleLabSlot({
@@ -5659,6 +6057,7 @@ function BattleLabSlot({
   onToggleEdit,
   onEditPatch,
   simulatorPatch,
+  motion = null,
 }: BattleLabSlotProps) {
   if (!combatant) {
     return (
@@ -5687,7 +6086,11 @@ function BattleLabSlot({
 
   return (
     <div
-      className={`bl-slot ${side} ${effectFlash ? `flash-${effectFlash}` : ""}`}
+      className={`bl-slot ${side} ${effectFlash ? `flash-${effectFlash}` : ""} ${
+        motion?.attackKey ? `is-attacking attack-${motion.attackDirection ?? "up"}` : ""
+      } ${motion?.targetKey ? "is-targeted" : ""} ${motion?.faintKey ? "is-fainting" : ""} ${
+        motion?.switchInKey ? "is-switching-in" : ""
+      } ${motion?.switchOutKey ? "is-switching-out" : ""}`}
       style={{ ["--status-tint" as never]: status.tint }}
     >
       <div className="bl-slot-head">
@@ -5719,6 +6122,24 @@ function BattleLabSlot({
 
       <div className="bl-slot-sprite-wrap">
         <PokemonSprite pokemon={combatant.pokemon} className="bl-slot-sprite" />
+        {motion?.attackKey ? (
+          <PokemonSprite
+            key={`attack-${motion.attackKey}-${combatant.id}`}
+            pokemon={combatant.pokemon}
+            className={`bl-attack-ghost ${motion.attackDirection ?? "up"}`}
+          />
+        ) : null}
+        {motion?.targetKey ? <span key={`impact-${motion.targetKey}-${combatant.id}`} className="bl-impact-ring" /> : null}
+        {motion?.faintKey ? (
+          <span key={`faint-${motion.faintKey}-${combatant.id}`} className="bl-faint-burst" aria-hidden="true">
+            <span className="bl-faint-skull">☠</span>
+          </span>
+        ) : null}
+        {motion?.switchInKey ? (
+          <span key={`switch-in-${motion.switchInKey}-${combatant.id}`} className="bl-switch-beam" aria-hidden="true">
+            <span>IN</span>
+          </span>
+        ) : null}
         {pulse !== 0 ? (
           <span key={`dmg-${pulse}-${combatant.id}`} className={`bl-damage-pop ${pulse < 0 ? "heal" : "damage"}`}>
             {pulse > 0 ? `-${pulse}` : `+${-pulse}`}
@@ -6173,6 +6594,8 @@ type BattleLabRosterStripProps = {
   replacementRanks: Array<"A" | "B">;
   editable: boolean;
   onAssign: (rank: "A" | "B", teamIndex: number) => void;
+  deployingCombatantId?: string | null;
+  recallingCombatantId?: string | null;
 };
 
 function BattleLabRosterStrip({
@@ -6182,6 +6605,8 @@ function BattleLabRosterStrip({
   replacementRanks,
   editable,
   onAssign,
+  deployingCombatantId = null,
+  recallingCombatantId = null,
 }: BattleLabRosterStripProps) {
   return (
     <div className={`bl-bench ${side}`}>
@@ -6204,7 +6629,9 @@ function BattleLabRosterStrip({
             return (
               <div
                 key={`bl-bench-${side}-${combatant.id}`}
-                className={`bl-bench-chip ${isFainted ? "fainted" : ""} ${activeRank ? "active" : ""}`}
+                className={`bl-bench-chip ${isFainted ? "fainted" : ""} ${activeRank ? "active" : ""} ${
+                  deployingCombatantId === combatant.id ? "deploying" : ""
+                } ${recallingCombatantId === combatant.id ? "recalling" : ""}`}
               >
                 <div className="bl-bench-avatar">
                   <PokemonSprite pokemon={combatant.pokemon} className="bl-bench-sprite" />
@@ -6442,7 +6869,6 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   ]);
   const [opponentQueries, setOpponentQueries] = useState<string[]>(createEmptyOpponentSlots);
   const [analyzedOpponentEntries, setAnalyzedOpponentEntries] = useState<LoadedOpponentEntry[]>([]);
-  const [teamPreviewSolverMode, setTeamPreviewSolverMode] = useState<TeamPreviewSolverMode>("sparse");
   const [bringSelectionMode, setBringSelectionMode] = useState<BringSelectionMode>("auto");
   const [manualBringSlotIndices, setManualBringSlotIndices] = useState<number[]>([]);
   const [knownEnemyBringSlotIndices, setKnownEnemyBringSlotIndices] = useState<number[]>([]);
@@ -6520,7 +6946,21 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const prevDisplayHpRef = useRef<Record<string, number>>({});
   const [damagePulses, setDamagePulses] = useState<Record<string, number>>({});
   const [slotFlashes, setSlotFlashes] = useState<Record<string, "protect" | "status" | null>>({});
+  const [battleLabManualMotion, setBattleLabManualMotion] = useState<BattleLabManualMotion | null>(null);
   const pulseClearTimersRef = useRef<Record<string, number>>({});
+  const manualMotionTimerRef = useRef<number | null>(null);
+
+  const playBattleLabManualMotion = (motion: Omit<BattleLabManualMotion, "serial">) => {
+    const serial = Date.now();
+    setBattleLabManualMotion({ ...motion, serial });
+    if (manualMotionTimerRef.current) {
+      window.clearTimeout(manualMotionTimerRef.current);
+    }
+    manualMotionTimerRef.current = window.setTimeout(() => {
+      setBattleLabManualMotion((current) => (current?.serial === serial ? null : current));
+      manualMotionTimerRef.current = null;
+    }, 900);
+  };
 
   const getDoublesRuntime = (side: "ally" | "enemy", slotIndex: number): DoublesMemberRuntime =>
     doublesRuntime[`${side}-${slotIndex}`] ?? DEFAULT_DOUBLES_RUNTIME;
@@ -7972,7 +8412,6 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       trickRoom: doublesTrickRoom,
       attackStage: damageAttackStage,
       defenseStage: damageDefenseStage,
-      solverMode: teamPreviewSolverMode,
     }),
     [
       damageAttackStage,
@@ -7982,7 +8421,6 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       doublesAllyTailwind,
       doublesEnemyTailwind,
       doublesTrickRoom,
-      teamPreviewSolverMode,
     ],
   );
   const deferredAnalyzedOpponentEntries = useDeferredValue(analyzedOpponentEntries);
@@ -7993,23 +8431,14 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       return null;
     }
 
-    const previewModeOptions =
-      deferredPreviewRecommendationSettings.solverMode === "sparse"
-        ? {
-            solverMode: "sparse" as const,
-            timeBudgetMs: 250,
-            allyFourCandidates: 3,
-            enemyFourCandidates: 4,
-            maxThreatLines: 4,
-            maxLeadsPerFour: 2,
-          }
-        : {
-            solverMode: "dense" as const,
-            maxCandidatesPerSide: 8,
-            tacticalDepth: 2,
-            maxJointPlansPerSide: 6,
-            maxIndividualActionsPerActor: 4,
-          };
+    const previewModeOptions = {
+      solverMode: "robust" as const,
+      timeBudgetMs: 250,
+      allyFourCandidates: 3,
+      enemyFourCandidates: 4,
+      maxThreatLines: 4,
+      maxLeadsPerFour: 2,
+    };
 
     return recommendTeamPreview({
       ally: deferredPreviewBattleEngineAllyMembers.map((member) => ({
@@ -8224,12 +8653,24 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     combatant: BattleCombatantState,
     replacementTeamIndex: number | null,
   ) => {
+    const incomingCombatant =
+      replacementTeamIndex == null
+        ? null
+        : Object.values(battleEngineCurrentState?.combatants ?? {}).find(
+            (entry) => entry.side === side && entry.teamIndex === replacementTeamIndex,
+          ) ?? null;
     markBattleLabCombatantFainted(combatant);
     setBattleLabActiveSelectionSlot(side, slotPosition, replacementTeamIndex);
     clearChosenActionForCombatant(combatant.id);
     setEditingSlotKey(null);
     setSelectedBattleScenarioId("current-board");
     setBattleLabFaintPrompt(null);
+    playBattleLabManualMotion({
+      faintedCombatantId: combatant.id,
+      faintSlot: { side, slotIndex: slotPosition },
+      incomingCombatantId: incomingCombatant?.id,
+      switchSlot: incomingCombatant ? { side, slotIndex: slotPosition } : undefined,
+    });
   };
   const triggerBattleLabFaint = (side: BattleSide, slotPosition: 0 | 1, combatantId: string) => {
     if (!battleEngineCurrentState) {
@@ -8240,6 +8681,11 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     if (!combatant || combatant.currentHp <= 0) {
       return;
     }
+
+    playBattleLabManualMotion({
+      faintedCombatantId: combatant.id,
+      faintSlot: { side, slotIndex: slotPosition },
+    });
 
     const replacementOptions = battleEngineCurrentState.sides[side].benchIds
       .map((benchId) => battleEngineCurrentState.combatants[benchId] ?? null)
@@ -8572,7 +9018,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         }
         return next;
       });
-    }, 650);
+    }, BATTLE_LAB_EVENT_STEP_MS);
     simPlayTimerRef.current = timer;
     return () => {
       window.clearInterval(timer);
@@ -8584,6 +9030,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   useEffect(() => {
     return () => {
       if (simPlayTimerRef.current) window.clearInterval(simPlayTimerRef.current);
+      if (manualMotionTimerRef.current) window.clearTimeout(manualMotionTimerRef.current);
       Object.values(pulseClearTimersRef.current).forEach((t) => window.clearTimeout(t));
     };
   }, []);
@@ -8616,33 +9063,12 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [battleEngineInputSignature]);
 
-  // Interpolated display state during simulation playback
+  // Event-stepped display state during simulation playback
   const battleLabDisplayState = useMemo<BattleState | null>(() => {
     if (!battleEngineCurrentState) return null;
     if (simViewMode === "real" || !simulationRun) return battleEngineCurrentState;
 
-    const { startState, finalState, events } = simulationRun;
-    if (events.length === 0 || simEventIndex >= events.length) return finalState;
-
-    const fraction = events.length > 0 ? simEventIndex / events.length : 1;
-    const clone: BattleState = {
-      ...finalState,
-      combatants: { ...finalState.combatants },
-      sides: {
-        ally: { ...finalState.sides.ally },
-        enemy: { ...finalState.sides.enemy },
-      },
-    };
-
-    for (const id of Object.keys(finalState.combatants)) {
-      const start = startState.combatants[id];
-      const end = finalState.combatants[id];
-      if (!start || !end) continue;
-      const interpHp = Math.round(start.currentHp + (end.currentHp - start.currentHp) * fraction);
-      clone.combatants[id] = { ...end, currentHp: interpHp };
-    }
-
-    return clone;
+    return buildBattleLabDisplayStateAtEvent(simulationRun, simEventIndex);
   }, [battleEngineCurrentState, simViewMode, simulationRun, simEventIndex]);
 
   // Drive damage pulses and effect flashes from display state changes
@@ -8671,7 +9097,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             delete copy[id];
             return copy;
           });
-        }, 900);
+        }, BATTLE_LAB_EVENT_STEP_MS);
       }
     }
   }, [battleLabDisplayState]);
@@ -8688,9 +9114,12 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     if (text.includes("protect") || text.includes("detect") || text.includes("wide guard") || text.includes("quick guard")) {
       kind = "protect";
     } else if (
+      text.includes("burn") ||
       text.includes("burned") ||
+      text.includes("paralysis") ||
       text.includes("paralyzed") ||
       text.includes("fell asleep") ||
+      text.includes("sleep") ||
       text.includes("asleep") ||
       text.includes("poisoned")
     ) {
@@ -8707,7 +9136,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         delete copy[targetId];
         return copy;
       });
-    }, 650);
+    }, BATTLE_LAB_EVENT_STEP_MS);
     return () => window.clearTimeout(tid);
   }, [simEventIndex, simulationRun]);
 
@@ -10045,24 +10474,6 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                 ))}
               </select>
             </label>
-            <label className="opponent-scan-mode">
-              <span>Preview mode</span>
-              <select
-                value={teamPreviewSolverMode}
-                onChange={(event) => {
-                  const nextMode = event.target.value as TeamPreviewSolverMode;
-                  startTransition(() => {
-                    setTeamPreviewSolverMode(nextMode);
-                  });
-                }}
-              >
-                {TEAM_PREVIEW_SCAN_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
             <button
               type="button"
               className="primary-button"
@@ -10139,7 +10550,6 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                       (max, reason) => Math.max(max, Math.abs(reason.delta)),
                       1,
                     );
-                    const solverIsDense = rec.diagnostics.solverMode === "dense";
                     const leadSet = new Set(rec.primaryLead);
                     const altLeadSet = new Set(rec.altLead ?? []);
 
@@ -10148,7 +10558,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                         <header className="bring-preview__head">
                           <div className="bring-preview__headline">
                             <span className="bring-preview__eyebrow">
-                              {solverIsDense ? "Full Scan" : "Quickscan"} · Recommendation
+                              Robust Preview · Recommendation
                             </span>
                             <h3 className="bring-preview__title">Bring Into Preview</h3>
                           </div>
@@ -10179,30 +10589,15 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                           </dl>
 
                           <ul className="bring-preview__telemetry" aria-label="Solver diagnostics">
-                            {solverIsDense ? (
-                              <>
-                                <li>
-                                  <em>{rec.candidateCounts.allyCandidates}</em>/
-                                  {rec.candidateCounts.allyStrategies} ally strats
-                                </li>
-                                <li>
-                                  <em>{rec.candidateCounts.enemyCandidates}</em>/
-                                  {rec.candidateCounts.enemyStrategies} enemy strats
-                                </li>
-                              </>
-                            ) : (
-                              <>
-                                <li>
-                                  <em>{rec.candidateCounts.allyFourCandidates}</em>/15 ally fours
-                                </li>
-                                <li>
-                                  <em>{rec.candidateCounts.enemyFourCandidates}</em>/15 enemy fours
-                                </li>
-                                <li>
-                                  <em>{rec.candidateCounts.threatLines}</em> threat lines
-                                </li>
-                              </>
-                            )}
+                            <li>
+                              <em>{rec.candidateCounts.allyFourCandidates}</em>/15 ally fours
+                            </li>
+                            <li>
+                              <em>{rec.candidateCounts.enemyFourCandidates}</em>/15 enemy fours
+                            </li>
+                            <li>
+                              <em>{rec.candidateCounts.threatLines}</em> threat lines
+                            </li>
                             <li>
                               <em>{rec.candidateCounts.matrixCells}</em> cells
                             </li>
@@ -11731,6 +12126,10 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                 simulationRun && simEventIndex > 0 && simEventIndex <= simulationRun.events.length
                   ? simulationRun.events[simEventIndex - 1]
                   : null;
+              const currentEventMotion =
+                simulationRun && currentEvent
+                  ? buildBattleLabEventMotion(simulationRun, displayState, currentEvent, simEventIndex)
+                  : null;
               const allyActiveIds = displayState.sides.ally.activeIds;
               const enemyActiveIds = displayState.sides.enemy.activeIds;
               const deckSlots: Array<{
@@ -11782,6 +12181,62 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
               );
               const visibleLogEvents =
                 simulationRun?.events.slice(0, simulationFinished ? simulationRun.events.length : simEventIndex) ?? [];
+              const activeTimelineIndex =
+                simulationRun && simEventIndex > 0 ? Math.min(simEventIndex - 1, simulationRun.events.length - 1) : -1;
+              const getSlotMotion = (
+                side: BattleSide,
+                slotIndex: 0 | 1,
+                combatantId: string | null | undefined,
+              ): BattleLabSlotMotion | null => {
+                const motion: BattleLabSlotMotion = {};
+
+                if (currentEventMotion?.kind === "attack") {
+                  if (combatantId && currentEventMotion.actorId === combatantId) {
+                    motion.attackKey = currentEventMotion.key;
+                    motion.attackDirection = currentEventMotion.direction;
+                  }
+                  if (combatantId && currentEventMotion.targetId === combatantId) {
+                    motion.targetKey = currentEventMotion.key;
+                  }
+                } else if (currentEventMotion?.kind === "faint") {
+                  if (
+                    (combatantId && currentEventMotion.combatantId === combatantId) ||
+                    sameBattleLabSlotCoord(currentEventMotion.slot, side, slotIndex)
+                  ) {
+                    motion.faintKey = currentEventMotion.key;
+                  }
+                } else if (currentEventMotion?.kind === "switch") {
+                  if (combatantId && currentEventMotion.outgoingId === combatantId) {
+                    motion.switchOutKey = currentEventMotion.key;
+                  }
+                  if (
+                    (combatantId && currentEventMotion.incomingId === combatantId) ||
+                    sameBattleLabSlotCoord(currentEventMotion.slot, side, slotIndex)
+                  ) {
+                    motion.switchInKey = currentEventMotion.key;
+                  }
+                }
+
+                if (battleLabManualMotion) {
+                  const manualKey = `manual-${battleLabManualMotion.serial}`;
+                  if (
+                    (combatantId && battleLabManualMotion.faintedCombatantId === combatantId) ||
+                    sameBattleLabSlotCoord(battleLabManualMotion.faintSlot, side, slotIndex)
+                  ) {
+                    motion.faintKey = manualKey;
+                  }
+                  if (
+                    (combatantId && battleLabManualMotion.incomingCombatantId === combatantId) ||
+                    sameBattleLabSlotCoord(battleLabManualMotion.switchSlot, side, slotIndex)
+                  ) {
+                    motion.switchInKey = manualKey;
+                  }
+                }
+
+                return Object.keys(motion).length > 0 ? motion : null;
+              };
+              const spreadPulse =
+                currentEventMotion?.kind === "attack" && currentEventMotion.isSpread ? currentEventMotion : null;
               return (
                 <section className="damage-doubles-block bl-shell">
                   <div className="bl-top">
@@ -11930,12 +12385,27 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                           activeRanksById={enemyActiveRanksById}
                           replacementRanks={enemyReplacementRanks}
                           editable={simViewMode === "real"}
+                          deployingCombatantId={
+                            currentEventMotion?.kind === "switch" && currentEventMotion.side === "enemy"
+                              ? currentEventMotion.incomingId
+                              : battleLabManualMotion?.switchSlot?.side === "enemy"
+                                ? battleLabManualMotion.incomingCombatantId ?? null
+                                : null
+                          }
+                          recallingCombatantId={
+                            currentEventMotion?.kind === "switch" && currentEventMotion.side === "enemy"
+                              ? currentEventMotion.outgoingId
+                              : null
+                          }
                           onAssign={(rank, slotIndex) => assignDoublesEnemySelection(slotIndex, rank === "A" ? 0 : 1)}
                         />
                       </div>
 
                       <div className="bl-board-wrap">
-                        <div className="bl-board">
+                        <div className={`bl-board ${spreadPulse ? `has-spread-pulse ${spreadPulse.side}` : ""}`}>
+                          {spreadPulse ? (
+                            <span key={`spread-${spreadPulse.key}`} className={`bl-spread-pulse ${spreadPulse.side}`} />
+                          ) : null}
                           <div className="bl-board-row enemy">
                             {(["A", "B"] as const).map((rank, i) => {
                               const id = enemyActiveIds[i];
@@ -11967,6 +12437,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                                   }
                                   pulse={id ? damagePulses[id] ?? 0 : 0}
                                   effectFlash={id ? slotFlashes[id] ?? null : null}
+                                  motion={getSlotMotion("enemy", i === 0 ? 0 : 1, id)}
                                   editing={editingSlotKey === slotKey && simViewMode === "real"}
                                   quickEditing={simViewMode === "real"}
                                   canFaint={simViewMode === "real" && Boolean(combatant && combatant.currentHp > 0)}
@@ -12056,6 +12527,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                                   }
                                   pulse={id ? damagePulses[id] ?? 0 : 0}
                                   effectFlash={id ? slotFlashes[id] ?? null : null}
+                                  motion={getSlotMotion("ally", i === 0 ? 0 : 1, id)}
                                   editing={editingSlotKey === slotKey && simViewMode === "real"}
                                   quickEditing={simViewMode === "real"}
                                   canFaint={simViewMode === "real" && Boolean(combatant && combatant.currentHp > 0)}
@@ -12078,6 +12550,35 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                             })}
                           </div>
                         </div>
+
+                        {simulationRun ? (
+                          <ol className="bl-turn-order" aria-label="Simulation turn order">
+                            {simulationRun.events.map((event, index) => {
+                              const stateClass =
+                                index < activeTimelineIndex || simulationFinished
+                                  ? "done"
+                                  : index === activeTimelineIndex
+                                    ? "active"
+                                    : "pending";
+                              const ownerSide =
+                                event.actorId?.startsWith("ally-") || event.targetId?.startsWith("ally-")
+                                  ? "ally"
+                                  : event.actorId?.startsWith("enemy-") || event.targetId?.startsWith("enemy-")
+                                    ? "enemy"
+                                    : "neutral";
+                              return (
+                                <li
+                                  key={`bl-turn-order-${index}-${event.actorId ?? "none"}-${event.targetId ?? "none"}`}
+                                  className={`bl-turn-order-step ${stateClass} ${ownerSide}`}
+                                  title={event.text}
+                                >
+                                  <span className="bl-turn-order-index">{index + 1}</span>
+                                  <span className="bl-turn-order-text">{summarizeBattleLabEvent(event.text)}</span>
+                                </li>
+                              );
+                            })}
+                          </ol>
+                        ) : null}
 
                         <div className="bl-sim-strip">
                           <button
@@ -12162,6 +12663,18 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                           activeRanksById={allyActiveRanksById}
                           replacementRanks={allyReplacementRanks}
                           editable={simViewMode === "real"}
+                          deployingCombatantId={
+                            currentEventMotion?.kind === "switch" && currentEventMotion.side === "ally"
+                              ? currentEventMotion.incomingId
+                              : battleLabManualMotion?.switchSlot?.side === "ally"
+                                ? battleLabManualMotion.incomingCombatantId ?? null
+                                : null
+                          }
+                          recallingCombatantId={
+                            currentEventMotion?.kind === "switch" && currentEventMotion.side === "ally"
+                              ? currentEventMotion.outgoingId
+                              : null
+                          }
                           onAssign={(rank, slotIndex) => assignDoublesAllySelection(slotIndex, rank === "A" ? 0 : 1)}
                         />
                       </div>

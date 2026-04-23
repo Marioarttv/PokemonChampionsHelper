@@ -307,6 +307,10 @@ function scoreToLikelihoodFactor(score: number) {
   return Math.exp(Math.max(-3, Math.min(3, score / 90)));
 }
 
+function getEnemyConditionalLikelihoodScore(policyWeight: number, allyPerspectiveScore: number) {
+  return policyWeight * scoreToLikelihoodFactor(-allyPerspectiveScore);
+}
+
 function buildEnemyActionPriorLookup(enemyPlans: JointActionPlan[]) {
   const rawActionWeightsByActor = new Map<string, Map<string, number>>();
 
@@ -572,6 +576,7 @@ function evaluateNode(
       preview: SearchPlanEvaluation["preview"];
       bundle: CachedSearchBundle;
       policyWeight: number;
+      likelihoodScore: number;
     } | null = null;
     let remainingWeight = 1;
     let cutoffTriggered = false;
@@ -613,12 +618,14 @@ function evaluateNode(
       likelyScore += childBundle.likelyScore * enemyEntry.policyWeight;
       remainingWeight -= enemyEntry.policyWeight;
 
-      if (!predictedEntry || enemyEntry.policyWeight > predictedEntry.policyWeight) {
+      const predictedLikelihoodScore = getEnemyConditionalLikelihoodScore(enemyEntry.policyWeight, childBundle.likelyScore);
+      if (!predictedEntry || predictedLikelihoodScore > predictedEntry.likelihoodScore) {
         predictedEntry = {
           plan: enemyEntry.plan,
           preview: selectedPreview,
           bundle: childBundle,
           policyWeight: enemyEntry.policyWeight,
+          likelihoodScore: predictedLikelihoodScore,
         };
       }
 
@@ -765,6 +772,7 @@ function scoreRootPlans(
     let predictedPreview: SearchPlanEvaluation["preview"] = null;
     let predictedBundle: CachedSearchBundle | null = null;
     let predictedPolicyWeight = 0;
+    let predictedLikelihoodScore = Number.NEGATIVE_INFINITY;
     let remainingWeight = 1;
     let cutoffTriggered = false;
 
@@ -808,7 +816,12 @@ function scoreRootPlans(
       likelyScore += branchBundle.likelyScore * enemyEntry.policyWeight;
       remainingWeight -= enemyEntry.policyWeight;
 
-      if (enemyEntry.policyWeight > predictedPolicyWeight) {
+      const enemyConditionalLikelihoodScore = getEnemyConditionalLikelihoodScore(
+        enemyEntry.policyWeight,
+        branchBundle.likelyScore,
+      );
+      if (enemyConditionalLikelihoodScore > predictedLikelihoodScore) {
+        predictedLikelihoodScore = enemyConditionalLikelihoodScore;
         predictedPolicyWeight = enemyEntry.policyWeight;
         predictedEntry = enemyEntry.plan;
         predictedPreview = averagePreview;

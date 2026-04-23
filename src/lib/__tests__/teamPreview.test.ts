@@ -35,20 +35,10 @@ const MOVES = {
 
 const MOVE_LOOKUP = createMoveLookup(...Object.values(MOVES));
 
-function sparsePreview(args: Omit<TeamPreviewOptions, "moveByKey">) {
+function robustPreview(args: Omit<TeamPreviewOptions, "moveByKey">) {
   return recommendTeamPreview({
-    solverMode: "sparse",
+    solverMode: "robust",
     timeBudgetMs: 400,
-    ...args,
-    moveByKey: MOVE_LOOKUP,
-  });
-}
-
-function densePreview(args: Omit<TeamPreviewOptions, "moveByKey">) {
-  return recommendTeamPreview({
-    solverMode: "dense",
-    timeBudgetMs: 400,
-    maxCandidatesPerSide: 8,
     ...args,
     moveByKey: MOVE_LOOKUP,
   });
@@ -80,7 +70,7 @@ describe("team preview must-answer coverage", () => {
     const gholdengo = makePokemon("Gholdengo", { types: ["Steel", "Ghost"], baseStats: { spa: 133, spe: 84 } });
     const rillaboom = makePokemon("Rillaboom", { types: ["Grass"], baseStats: { atk: 125, spe: 85 } });
 
-    const recommendation = sparsePreview({
+    const recommendation = robustPreview({
       ally: [
         makeMember({ side: "ally", slot: 0, pokemon: incineroar, moveNames: ["Fake Out", "Flare Blitz"], abilityName: "Intimidate" }),
         makeMember({ side: "ally", slot: 1, pokemon: amoonguss, moveNames: ["Spore"] }),
@@ -130,7 +120,7 @@ describe("team preview weather packages", () => {
     const ironHands = makePokemon("Iron Hands", { types: ["Fighting", "Electric"], baseStats: { atk: 140, spe: 50 } });
     const rillaboom = makePokemon("Rillaboom", { types: ["Grass"], baseStats: { atk: 125, spe: 85 } });
 
-    const recommendation = sparsePreview({
+    const recommendation = robustPreview({
       ally: [
         makeMember({ side: "ally", slot: 0, pokemon: megaCharizardY, moveNames: ["Heat Wave", "Solar Beam"], abilityName: "Drought" }),
         makeMember({ side: "ally", slot: 1, pokemon: sneasler, moveNames: ["Close Combat", "Fake Out"] }),
@@ -173,7 +163,7 @@ describe("team preview Trick Room packages", () => {
     const ironHands = makePokemon("Iron Hands", { types: ["Fighting", "Electric"], baseStats: { atk: 140, spe: 50 } });
     const pelipper = makePokemon("Pelipper", { types: ["Water", "Flying"], baseStats: { spa: 95, spe: 65 } });
 
-    const recommendation = sparsePreview({
+    const recommendation = robustPreview({
       ally: [
         makeMember({ side: "ally", slot: 0, pokemon: whimsicott, moveNames: ["Taunt", "Tailwind"] }),
         makeMember({ side: "ally", slot: 1, pokemon: incineroar, moveNames: ["Fake Out", "Flare Blitz"], abilityName: "Intimidate" }),
@@ -215,7 +205,7 @@ describe("team preview spread pressure", () => {
     const ironHands = makePokemon("Iron Hands", { types: ["Fighting", "Electric"], baseStats: { atk: 140, spe: 50 } });
     const amoonguss = makePokemon("Amoonguss", { types: ["Grass", "Poison"], baseStats: { hp: 114, spa: 85, spe: 30 } });
 
-    const recommendation = sparsePreview({
+    const recommendation = robustPreview({
       ally: [
         makeMember({ side: "ally", slot: 0, pokemon: whimsicott, moveNames: ["Tailwind", "Taunt"] }),
         makeMember({ side: "ally", slot: 1, pokemon: incineroar, moveNames: ["Fake Out", "Flare Blitz"], abilityName: "Intimidate" }),
@@ -238,6 +228,47 @@ describe("team preview spread pressure", () => {
     expect(recommendation?.bestFour).toContain(5);
     expect(topEnemyFoursContain(recommendation!, [0, 1]) || topEnemyFoursContain(recommendation!, [0, 2])).toBe(true);
   });
+
+  it("keeps matchup-specific spread answers even when the ally four beam is narrow", () => {
+    const whimsicott = makePokemon("Whimsicott", { types: ["Grass", "Fairy"], baseStats: { spa: 77, spe: 116 } });
+    const incineroar = makePokemon("Incineroar", { types: ["Fire", "Dark"], baseStats: { atk: 115, spe: 60 }, abilities: { "0": "Intimidate" } });
+    const gholdengo = makePokemon("Gholdengo", { types: ["Steel", "Ghost"], baseStats: { spa: 133, spe: 84 } });
+    const rotomWash = makePokemon("Rotom-Wash", { types: ["Electric", "Water"], baseStats: { spa: 105, spe: 86 } });
+    const rillaboom = makePokemon("Rillaboom", { types: ["Grass"], baseStats: { atk: 125, spe: 85 } });
+    const hariyama = makePokemon("Hariyama", { types: ["Fighting"], baseStats: { hp: 144, atk: 120, spe: 50 } });
+
+    const garchomp = makePokemon("Garchomp", { types: ["Dragon", "Ground"], baseStats: { atk: 130, spe: 102 } });
+    const talonflame = makePokemon("Talonflame", { types: ["Fire", "Flying"], baseStats: { atk: 81, spe: 126 } });
+    const charizard = makePokemon("Charizard", { types: ["Fire", "Flying"], baseStats: { spa: 109, spe: 100 } });
+    const pelipper = makePokemon("Pelipper", { types: ["Water", "Flying"], baseStats: { spa: 95, spe: 65 } });
+    const ironHands = makePokemon("Iron Hands", { types: ["Fighting", "Electric"], baseStats: { atk: 140, spe: 50 } });
+    const amoonguss = makePokemon("Amoonguss", { types: ["Grass", "Poison"], baseStats: { hp: 114, spa: 85, spe: 30 } });
+
+    const recommendation = robustPreview({
+      allyFourCandidates: 1,
+      maxThreatLines: 4,
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: whimsicott, moveNames: ["Tailwind", "Taunt"] }),
+        makeMember({ side: "ally", slot: 1, pokemon: incineroar, moveNames: ["Fake Out", "Flare Blitz"], abilityName: "Intimidate" }),
+        makeMember({ side: "ally", slot: 2, pokemon: gholdengo, moveNames: ["Shadow Ball"] }),
+        makeMember({ side: "ally", slot: 3, pokemon: rotomWash, moveNames: ["Hydro Pump", "Thunderbolt"] }),
+        makeMember({ side: "ally", slot: 4, pokemon: rillaboom, moveNames: ["Grassy Glide", "Fake Out"] }),
+        makeMember({ side: "ally", slot: 5, pokemon: hariyama, moveNames: ["Wide Guard", "Close Combat"] }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: garchomp, moveNames: ["Earthquake", "Rock Slide"] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: talonflame, moveNames: ["Tailwind"] }),
+        makeMember({ side: "enemy", slot: 2, pokemon: charizard, moveNames: ["Heat Wave"] }),
+        makeMember({ side: "enemy", slot: 3, pokemon: pelipper, moveNames: ["Hurricane", "Muddy Water"] }),
+        makeMember({ side: "enemy", slot: 4, pokemon: ironHands, moveNames: ["Close Combat", "Fake Out"] }),
+        makeMember({ side: "enemy", slot: 5, pokemon: amoonguss, moveNames: ["Spore"] }),
+      ],
+    });
+
+    expect(recommendation).not.toBeNull();
+    expect(recommendation?.candidateCounts.allyFourCandidates).toBe(1);
+    expect(recommendation?.bestFour).toContain(5);
+  });
 });
 
 describe("team preview answer overload", () => {
@@ -256,7 +287,10 @@ describe("team preview answer overload", () => {
     const amoonguss = makePokemon("Amoonguss", { types: ["Grass", "Poison"], baseStats: { hp: 114, spa: 85, spe: 30 } });
     const gholdengo = makePokemon("Gholdengo", { types: ["Steel", "Ghost"], baseStats: { spa: 133, spe: 84 } });
 
-    const recommendation = densePreview({
+    const recommendation = robustPreview({
+      allyFourCandidates: 6,
+      maxThreatLines: 6,
+      maxLeadsPerFour: 3,
       ally: [
         makeMember({ side: "ally", slot: 0, pokemon: incineroar, moveNames: ["Fake Out", "Flare Blitz"], abilityName: "Intimidate" }),
         makeMember({ side: "ally", slot: 1, pokemon: rillaboom, moveNames: ["Grassy Glide", "Fake Out"] }),
@@ -301,7 +335,7 @@ describe("team preview lead alignment", () => {
     const ironHands = makePokemon("Iron Hands", { types: ["Fighting", "Electric"], baseStats: { atk: 140, spe: 50 } });
     const rillaboom = makePokemon("Rillaboom", { types: ["Grass"], baseStats: { atk: 125, spe: 85 } });
 
-    const recommendation = sparsePreview({
+    const recommendation = robustPreview({
       ally: [
         makeMember({ side: "ally", slot: 0, pokemon: megaCharizardY, moveNames: ["Heat Wave", "Solar Beam"], abilityName: "Drought" }),
         makeMember({ side: "ally", slot: 1, pokemon: whimsicott, moveNames: ["Tailwind", "Taunt"] }),
@@ -342,7 +376,7 @@ describe("team preview hidden-info beliefs", () => {
     const ironHands = makePokemon("Iron Hands", { types: ["Fighting", "Electric"], baseStats: { atk: 140, spe: 50 } });
     const pelipper = makePokemon("Pelipper", { types: ["Water", "Flying"], baseStats: { spa: 95, spe: 65 } });
 
-    const recommendation = sparsePreview({
+    const recommendation = robustPreview({
       ally: [
         makeMember({ side: "ally", slot: 0, pokemon: whimsicott, moveNames: ["Taunt", "Tailwind"] }),
         makeMember({ side: "ally", slot: 1, pokemon: incineroar, moveNames: ["Fake Out", "Flare Blitz"], abilityName: "Intimidate" }),
