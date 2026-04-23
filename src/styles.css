@@ -9272,7 +9272,7 @@ textarea::placeholder {
 /* Main two-column layout: board + engine */
 .bl-main {
   display: grid;
-  grid-template-columns: minmax(220px, 0.72fr) minmax(0, 1.35fr) minmax(280px, 0.9fr);
+  grid-template-columns: minmax(190px, 0.58fr) minmax(0, 1.66fr) minmax(248px, 0.76fr);
   gap: 0.6rem;
   align-items: stretch;
 }
@@ -9430,15 +9430,29 @@ textarea::placeholder {
 
 .bl-board-wrap {
   display: grid;
-  gap: 0.5rem;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.bl-board-stage {
+  display: grid;
+  grid-template-columns: minmax(126px, 0.22fr) minmax(0, 1fr) minmax(126px, 0.22fr);
+  gap: 0.42rem;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.bl-side-rail {
+  min-width: 0;
+  display: grid;
 }
 
 .bl-board {
   display: grid;
   grid-template-rows: auto auto auto;
-  gap: 0.4rem;
-  padding: 0.55rem;
-  border-radius: 16px;
+  gap: 0.32rem;
+  padding: 0.46rem;
+  border-radius: 15px;
   background:
     radial-gradient(ellipse at 50% 20%, rgba(255, 85, 101, 0.08), transparent 60%),
     radial-gradient(ellipse at 50% 85%, rgba(74, 222, 128, 0.08), transparent 60%),
@@ -9449,14 +9463,14 @@ textarea::placeholder {
 .bl-board-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.4rem;
+  gap: 0.38rem;
 }
 
 .bl-board-center {
   display: grid;
   justify-items: center;
   gap: 0.2rem;
-  padding: 0.3rem 0.5rem;
+  padding: 0.26rem 0.44rem;
   border-radius: 10px;
   background: rgba(16, 22, 44, 0.55);
   border: 1px solid rgba(226, 232, 255, 0.05);
@@ -9510,8 +9524,8 @@ textarea::placeholder {
 .bl-slot {
   position: relative;
   display: grid;
-  gap: 0.3rem;
-  padding: 0.5rem 0.55rem;
+  gap: 0.24rem;
+  padding: 0.42rem 0.46rem;
   border-radius: 14px;
   background: rgba(22, 30, 56, 0.82);
   border: 1px solid rgba(226, 232, 255, 0.08);
@@ -9549,10 +9563,12 @@ textarea::placeholder {
 }
 
 .bl-slot-head {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.35rem;
   position: relative;
+  min-width: 0;
 }
 
 .bl-slot-rank {
@@ -9582,16 +9598,43 @@ textarea::placeholder {
   text-overflow: ellipsis;
 }
 
+.bl-slot-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22rem;
+}
+
+.bl-slot-faint {
+  appearance: none;
+  border: 1px solid rgba(255, 85, 101, 0.28);
+  background: rgba(255, 85, 101, 0.14);
+  color: #ffb3be;
+  border-radius: 999px;
+  min-width: 1.78rem;
+  height: 1.28rem;
+  padding: 0 0.36rem;
+  cursor: pointer;
+  font-size: 0.58rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.bl-slot-faint:hover {
+  background: rgba(255, 85, 101, 0.22);
+  color: #ffd3d9;
+}
+
 .bl-slot-edit {
   appearance: none;
   background: rgba(10, 16, 34, 0.8);
   color: var(--ink-soft);
   border: 1px solid rgba(226, 232, 255, 0.1);
   border-radius: 999px;
-  width: 1.4rem;
-  height: 1.4rem;
+  width: 1.28rem;
+  height: 1.28rem;
   cursor: pointer;
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   line-height: 1;
   padding: 0;
 }
@@ -9606,8 +9649,8 @@ textarea::placeholder {
 }
 
 .bl-slot-sprite {
-  width: 3.4rem;
-  height: 3.4rem;
+  width: 3rem;
+  height: 3rem;
   image-rendering: pixelated;
 }
 
@@ -9699,6 +9742,9 @@ textarea::placeholder {
   font-size: 0.62rem;
   font-weight: 800;
   letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .bl-slot-hp-projection.damage small {
@@ -9711,13 +9757,14 @@ textarea::placeholder {
 
 .bl-slot-hp-quick {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.35rem;
   padding: 0.28rem 0.4rem;
   border-radius: 9px;
   background: rgba(10, 14, 30, 0.62);
   border: 1px solid rgba(226, 232, 255, 0.07);
+  min-width: 0;
 }
 
 .bl-slot-hp-quick span,
@@ -9931,18 +9978,15 @@ textarea::placeholder {
 }
 
 /* Bench strips */
-.bl-bench-grid {
-  display: grid;
-  gap: 0.35rem;
-}
-
 .bl-bench {
   display: grid;
-  gap: 0.3rem;
-  padding: 0.42rem 0.5rem;
+  gap: 0.22rem;
+  padding: 0.36rem 0.4rem;
   border-radius: 12px;
   background: rgba(10, 14, 30, 0.58);
   border: 1px solid rgba(226, 232, 255, 0.06);
+  align-content: start;
+  min-height: 100%;
 }
 
 .bl-bench.ally {
@@ -9955,15 +9999,15 @@ textarea::placeholder {
 
 .bl-bench-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: 0.35rem;
 }
 
 .bl-bench-head span,
 .bl-bench-head strong,
 .bl-bench-head small {
-  font-size: 0.64rem;
+  font-size: 0.6rem;
   letter-spacing: 0.04em;
 }
 
@@ -9981,15 +10025,17 @@ textarea::placeholder {
 
 .bl-bench-track {
   display: grid;
-  gap: 0.28rem;
+  gap: 0.22rem;
+  align-content: start;
 }
 
 .bl-bench-chip {
+  position: relative;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.28rem 0.4rem;
+  gap: 0.28rem;
+  padding: 0.24rem 0.32rem;
   border-radius: 10px;
   background: rgba(16, 22, 44, 0.74);
   border: 1px solid rgba(226, 232, 255, 0.06);
@@ -9999,10 +10045,47 @@ textarea::placeholder {
   opacity: 0.65;
 }
 
+.bl-bench-chip.active {
+  border-color: rgba(122, 160, 255, 0.26);
+  background: rgba(24, 34, 64, 0.92);
+}
+
+.bl-bench.ally .bl-bench-chip.active {
+  border-color: rgba(74, 222, 128, 0.3);
+  box-shadow: inset 0 0 0 1px rgba(74, 222, 128, 0.08);
+}
+
+.bl-bench.enemy .bl-bench-chip.active {
+  border-color: rgba(255, 85, 101, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(255, 85, 101, 0.08);
+}
+
+.bl-bench-avatar {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
 .bl-bench-sprite {
-  width: 1.6rem;
-  height: 1.6rem;
+  width: 1.35rem;
+  height: 1.35rem;
   image-rendering: pixelated;
+}
+
+.bl-bench-skull {
+  position: absolute;
+  inset: auto -0.1rem -0.15rem auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 999px;
+  background: rgba(10, 14, 30, 0.92);
+  color: #ffd4db;
+  font-size: 0.58rem;
+  border: 1px solid rgba(255, 85, 101, 0.28);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28);
 }
 
 .bl-bench-copy {
@@ -10012,7 +10095,7 @@ textarea::placeholder {
 
 .bl-bench-copy strong {
   color: var(--ink-strong);
-  font-size: 0.68rem;
+  font-size: 0.64rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -10020,7 +10103,7 @@ textarea::placeholder {
 
 .bl-bench-copy span {
   color: var(--ink-soft);
-  font-size: 0.6rem;
+  font-size: 0.56rem;
   font-weight: 700;
 }
 
@@ -10048,25 +10131,162 @@ textarea::placeholder {
 
 .bl-bench-state {
   color: var(--ink-soft);
-  font-size: 0.58rem;
+  font-size: 0.54rem;
   font-weight: 900;
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
+.bl-bench-state.active {
+  color: var(--ink-strong);
+}
+
 .bl-bench-empty {
-  padding: 0.4rem 0.1rem 0.2rem;
+  padding: 0.26rem 0.1rem 0.1rem;
   color: var(--ink-soft);
-  font-size: 0.66rem;
+  font-size: 0.62rem;
   font-weight: 700;
+}
+
+.bl-side-rail .bl-bench-head {
+  flex-direction: column;
+}
+
+.bl-side-rail .bl-bench-head strong,
+.bl-side-rail .bl-bench-head small {
+  font-size: 0.56rem;
+}
+
+.bl-side-rail .bl-bench-chip {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.bl-side-rail .bl-bench-actions,
+.bl-side-rail .bl-bench-state {
+  grid-column: 2;
+  justify-self: start;
+}
+
+.bl-faint-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(6, 10, 24, 0.76);
+  backdrop-filter: blur(8px);
+}
+
+.bl-faint-modal__dialog {
+  width: min(28rem, 100%);
+  display: grid;
+  gap: 0.85rem;
+  padding: 1rem;
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(14, 22, 44, 0.98), rgba(9, 14, 30, 0.98)),
+    radial-gradient(circle at top, rgba(122, 160, 255, 0.12), transparent 55%);
+  border: 1px solid rgba(226, 232, 255, 0.12);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.42);
+}
+
+.bl-faint-modal__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.bl-faint-modal__header h3 {
+  margin: 0.12rem 0 0;
+  color: var(--ink-strong);
+  font-size: 1rem;
+}
+
+.bl-faint-modal__close {
+  appearance: none;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  border: 1px solid rgba(226, 232, 255, 0.12);
+  background: rgba(18, 26, 50, 0.88);
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.bl-faint-modal__body {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.bl-faint-modal__body p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.bl-faint-modal__options {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.bl-faint-modal__option {
+  appearance: none;
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 14px;
+  border: 1px solid rgba(122, 160, 255, 0.16);
+  background: rgba(18, 26, 50, 0.9);
+  cursor: pointer;
+  text-align: left;
+}
+
+.bl-faint-modal__option:hover {
+  border-color: rgba(122, 160, 255, 0.32);
+  background: rgba(24, 34, 64, 0.96);
+}
+
+.bl-faint-modal__sprite {
+  width: 2rem;
+  height: 2rem;
+  image-rendering: pixelated;
+}
+
+.bl-faint-modal__copy {
+  display: grid;
+  min-width: 0;
+}
+
+.bl-faint-modal__copy strong {
+  color: var(--ink-strong);
+  font-size: 0.78rem;
+}
+
+.bl-faint-modal__copy small {
+  color: var(--ink-soft);
+  font-size: 0.67rem;
+  font-weight: 700;
+}
+
+.bl-faint-modal__footer {
+  display: flex;
+  justify-content: flex-end;
 }
 
 /* Sim strip */
 .bl-sim-strip {
   display: grid;
-  grid-template-columns: auto auto auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto auto minmax(9rem, 1fr) auto;
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.35rem;
   padding: 0.45rem 0.55rem;
   border-radius: 12px;
   background: rgba(10, 14, 30, 0.7);
@@ -10103,9 +10323,10 @@ textarea::placeholder {
 .bl-sim-btn:disabled { opacity: 0.4; cursor: not-allowed; filter: none; }
 
 .bl-sim-progress {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(7rem, 1fr);
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.35rem;
   min-width: 0;
 }
 
@@ -10114,6 +10335,9 @@ textarea::placeholder {
   color: var(--ink-strong);
   font-weight: 800;
   letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .bl-sim-progress-label.muted { color: var(--ink-soft); font-weight: 700; }
@@ -10731,6 +10955,7 @@ textarea::placeholder {
 
 @media (max-width: 1180px) {
   .bl-main { grid-template-columns: minmax(0, 1fr); }
+  .bl-board-stage { grid-template-columns: minmax(0, 1fr); }
   .bl-decks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .bl-threat-columns { grid-template-columns: minmax(0, 1fr); }
   .bl-log-list { max-height: 14rem; }
@@ -10739,6 +10964,12 @@ textarea::placeholder {
 @media (max-width: 720px) {
   .bl-top { grid-template-columns: 1fr; }
   .bl-top-fields { justify-content: flex-start; }
+  .bl-side-rail .bl-bench-chip { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .bl-side-rail .bl-bench-actions,
+  .bl-side-rail .bl-bench-state {
+    grid-column: auto;
+    justify-self: end;
+  }
   .bl-sim-strip { grid-template-columns: repeat(3, auto) 1fr; }
   .bl-sim-strip .bl-sim-btn.next { grid-column: 1 / -1; }
 }

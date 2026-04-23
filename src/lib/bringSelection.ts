@@ -13,6 +13,12 @@ export type ResolveBringSelectionOptions = {
   maxBringCount?: number;
 };
 
+export type ResolveKnownBringOptions = {
+  filledSlotIndices: number[];
+  knownBringSlotIndices?: number[] | null;
+  maxBringCount?: number;
+};
+
 export type ResolvedBringSelection = BringSelectionRequirements & {
   bringSlotIndices: number[];
   benchSlotIndices: number[];
@@ -21,6 +27,13 @@ export type ResolvedBringSelection = BringSelectionRequirements & {
   recommendedBringSlotIndices: number[];
   recommendedBenchSlotIndices: number[];
   hasCompleteManualSelection: boolean;
+};
+
+export type ResolvedKnownBring = BringSelectionRequirements & {
+  knownBringSlotIndices: number[];
+  candidateSlotIndices: number[];
+  eliminatedSlotIndices: number[];
+  hasConfirmedBring: boolean;
 };
 
 function uniqueOrdered(values: number[]) {
@@ -103,6 +116,69 @@ export function resolveBringSelection(options: ResolveBringSelectionOptions): Re
     recommendedBenchSlotIndices,
     hasCompleteManualSelection: mode === "manual" && lockedBringSlotIndices.length === bringCount,
   };
+}
+
+export function resolveKnownBring(options: ResolveKnownBringOptions): ResolvedKnownBring {
+  const { filledSlotIndices, knownBringSlotIndices = [], maxBringCount = 4 } = options;
+  const normalizedFilledSlotIndices = uniqueSorted(filledSlotIndices);
+  const { bringCount, benchCount } = getBringSelectionRequirements(normalizedFilledSlotIndices, maxBringCount);
+  const filledSet = new Set(normalizedFilledSlotIndices);
+  const normalizedKnownBringSlotIndices = uniqueOrdered(
+    (knownBringSlotIndices ?? []).filter((slotIndex) => filledSet.has(slotIndex)),
+  ).slice(0, bringCount);
+
+  if (normalizedFilledSlotIndices.length <= bringCount) {
+    return {
+      bringCount,
+      benchCount,
+      knownBringSlotIndices: normalizedFilledSlotIndices,
+      candidateSlotIndices: normalizedFilledSlotIndices,
+      eliminatedSlotIndices: [],
+      hasConfirmedBring: normalizedFilledSlotIndices.length > 0,
+    };
+  }
+
+  const knownBringSet = new Set(normalizedKnownBringSlotIndices);
+  const hasConfirmedBring = bringCount > 0 && normalizedKnownBringSlotIndices.length === bringCount;
+
+  return {
+    bringCount,
+    benchCount,
+    knownBringSlotIndices: normalizedKnownBringSlotIndices,
+    candidateSlotIndices: hasConfirmedBring
+      ? normalizedFilledSlotIndices.filter((slotIndex) => knownBringSet.has(slotIndex))
+      : normalizedFilledSlotIndices,
+    eliminatedSlotIndices: hasConfirmedBring
+      ? normalizedFilledSlotIndices.filter((slotIndex) => !knownBringSet.has(slotIndex))
+      : [],
+    hasConfirmedBring,
+  };
+}
+
+export function rememberBringSelectionSlot(options: {
+  currentKnownBringSlotIndices: number[];
+  slotIndex: number | null;
+  filledSlotIndices: number[];
+  maxBringCount?: number;
+}) {
+  const { currentKnownBringSlotIndices, slotIndex, filledSlotIndices, maxBringCount = 4 } = options;
+  const normalizedFilledSlotIndices = uniqueSorted(filledSlotIndices);
+  const { bringCount } = getBringSelectionRequirements(normalizedFilledSlotIndices, maxBringCount);
+  const filledSet = new Set(normalizedFilledSlotIndices);
+  const safeCurrentKnownBringSlotIndices = uniqueOrdered(
+    currentKnownBringSlotIndices.filter((candidate) => filledSet.has(candidate)),
+  ).slice(0, bringCount);
+
+  if (
+    slotIndex === null ||
+    !filledSet.has(slotIndex) ||
+    safeCurrentKnownBringSlotIndices.includes(slotIndex) ||
+    safeCurrentKnownBringSlotIndices.length >= bringCount
+  ) {
+    return safeCurrentKnownBringSlotIndices;
+  }
+
+  return [...safeCurrentKnownBringSlotIndices, slotIndex];
 }
 
 export function toggleBringSelection(options: {

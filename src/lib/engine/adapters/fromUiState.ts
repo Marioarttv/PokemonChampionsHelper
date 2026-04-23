@@ -10,7 +10,6 @@ import type { PokemonRecord } from "../../pokemonDb";
 import type { PersistedKnownMove, PersistedSavedAttack } from "../../savedTeams";
 import type { PersistedSpeciesMoveset } from "../../speciesMovesets";
 import { buildBattleEngineInputSignature } from "../signature";
-import { buildEnemyMoveKnowledge } from "../knowledge";
 import type { BattleStateMemberInput } from "../types";
 
 type StoredMovesetSource = "custom" | "preset" | "none";
@@ -160,58 +159,10 @@ function resolveKnownMoves(
 }
 
 export function inferEngineMoveNames(options: InferEngineMoveNamesInput) {
-  const { pokemon, knownMoveNames, presetMoveNames, moveByKey, movesetSource } = options;
-  const knownNames = new Set(
-    [...knownMoveNames, ...presetMoveNames]
-      .map((value) => normalizeMoveKey(value))
-      .filter(Boolean),
-  );
-
-  const addIfPresent = (bucket: string[], moveName: string) => {
-    const key = normalizeMoveKey(moveName);
-    if (knownNames.has(key)) {
-      return;
-    }
-
-    const move = moveByKey.get(moveName.toLowerCase()) ?? moveByKey.get(key) ?? null;
-    if (!move) {
-      return;
-    }
-
-    bucket.push(move.name);
-    knownNames.add(key);
-  };
-
-  const inferred: string[] = [];
-  addIfPresent(inferred, "Protect");
-
-  const bulkScore = pokemon.baseStats.hp + pokemon.baseStats.def + pokemon.baseStats.spd;
-  const speed = pokemon.baseStats.spe;
-
-  if (speed <= 60) {
-    addIfPresent(inferred, "Trick Room");
-  }
-  if (speed >= 95) {
-    addIfPresent(inferred, "Taunt");
-  }
-  if (speed >= 105) {
-    addIfPresent(inferred, "Feint");
-  }
-  if (bulkScore >= 290) {
-    addIfPresent(inferred, "Safeguard");
-  }
-  if (bulkScore >= 300 && speed >= 70) {
-    addIfPresent(inferred, "Ally Switch");
-  }
-  if (movesetSource !== "custom" && speed >= 80) {
-    addIfPresent(inferred, pokemon.types.includes("Electric") ? "Electroweb" : "Icy Wind");
-  }
-  if (movesetSource === "none") {
-    addIfPresent(inferred, "Disable");
-    addIfPresent(inferred, "Encore");
-  }
-
-  return inferred.slice(0, 4);
+  void options;
+  // Enemy planning should only use moves already present in our stored or preset moveset data.
+  // Heuristic-only move invention can fabricate illegal options like Incineroar + Trick Room.
+  return [];
 }
 
 export function resolveStoredOrPresetMoveset(input: ResolveStoredOrPresetMovesetInput): ResolvedUiMoveset {
@@ -301,6 +252,32 @@ function buildStabProxyKnownMoves(pokemon: PokemonRecord) {
   ];
 }
 
+function buildKnownMovesFromMoveNames(
+  moveNames: string[],
+  moveByKey: ReadonlyMap<string, MoveRecord>,
+) {
+  return dedupeKnownMoves(
+    moveNames.flatMap((moveName) => {
+      const move = moveByKey.get(moveName.toLowerCase()) ?? moveByKey.get(normalizeMoveKey(moveName)) ?? null;
+      if (!move) {
+        return [];
+      }
+
+      return [
+        {
+          id: move.id,
+          name: move.name,
+          label: move.name,
+          type: getTypeFromLabel(move.type) ?? undefined,
+          basePower: move.basePower > 0 ? move.basePower : undefined,
+          category: move.category === "Status" ? "status" : (move.category.toLowerCase() as "physical" | "special"),
+          isSpreadMove: move.target === "allAdjacentFoes" || move.target === "allAdjacent",
+        } satisfies PersistedKnownMove,
+      ];
+    }),
+  );
+}
+
 export function buildAllyBattleStateMember(input: AllyMemberInput & { moveByKey: ReadonlyMap<string, MoveRecord> }) {
   const maxHp = getChampionsComputedStats(input.pokemon, {
     spread: input.resolvedMoveset.statSpread,
@@ -339,22 +316,12 @@ export function buildAllyBattleStateMember(input: AllyMemberInput & { moveByKey:
 }
 
 export function buildEnemyBattleStateMember(input: EnemyMemberInput) {
-  const resolvedKnownMoveNames = input.resolvedMoveset.knownMoves.map((move) => getMoveName(move));
-  const observedKnownMoveNames =
-    input.resolvedMoveset.movesetSource === "custom" ? resolvedKnownMoveNames : [];
-  const inferredMoveNames = inferEngineMoveNames({
-    pokemon: input.pokemon,
-    knownMoveNames: observedKnownMoveNames,
-    presetMoveNames: input.resolvedMoveset.allMoveNames,
-    moveByKey: input.moveByKey,
-    movesetSource: input.resolvedMoveset.movesetSource,
-  });
-  const knowledge = buildEnemyMoveKnowledge({
-    knownMoveNames: observedKnownMoveNames,
-    presetMoveNames: input.resolvedMoveset.allMoveNames,
-    inferredMoveNames,
-    movesetSource: input.resolvedMoveset.movesetSource,
-  });
+  const knownMoves =
+    input.resolvedMoveset.knownMoves.length > 0
+      ? input.resolvedMoveset.knownMoves
+      : buildKnownMovesFromMoveNames(input.resolvedMoveset.allMoveNames, input.moveByKey);
+  const knowledge =
+    input.resolvedMoveset.movesetSource === "none" && knownMoves.length === 0 ? "unknown" : "known";
 
   return {
     id: `enemy-${input.slotIndex}`,
@@ -365,12 +332,12 @@ export function buildEnemyBattleStateMember(input: EnemyMemberInput) {
     currentHpPercent: input.runtime.hpPercent,
     abilityName: input.resolvedMoveset.abilityName,
     itemName: input.resolvedMoveset.itemName,
-    savedAttacks: input.resolvedMoveset.movesetSource === "custom" ? input.resolvedMoveset.savedAttacks : [],
-    knownMoves: input.resolvedMoveset.movesetSource === "custom" ? input.resolvedMoveset.knownMoves : [],
-    moveNames: knowledge.moveNames,
+    savedAttacks: input.resolvedMoveset.savedAttacks,
+    knownMoves,
+    moveNames: input.resolvedMoveset.allMoveNames,
     inferredMoveNames: [],
-    candidateMoves: knowledge.candidateMoves,
-    knowledge: knowledge.knowledge,
+    candidateMoves: [],
+    knowledge,
     stages: toStageBlock(input.runtime),
     statusCondition: input.runtime.statusCondition,
     sleepTurns: input.runtime.statusCondition === "sleep" ? input.runtime.sleepTurns : 0,

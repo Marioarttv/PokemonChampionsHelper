@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { buildEnemyBattleStateMember } from "../lib/engine";
 import { buildBattleEngineInputSignature } from "../lib/engine/signature";
-import { makePokemon, makeSavedAttack } from "../lib/engine/__tests__/fixtures";
+import { createMoveLookup, makePokemon, makeSavedAttack, makeMove } from "../lib/engine/__tests__/fixtures";
 import type { BattleStateMemberInput } from "../lib/engine";
 
 function makeMember(overrides: Partial<BattleStateMemberInput> = {}): BattleStateMemberInput {
@@ -77,5 +78,62 @@ describe("battle engine adapter smoke coverage", () => {
     });
 
     expect(changed).not.toBe(base);
+  });
+
+  it("uses only the stored preset enemy move quartet without speculative candidates", () => {
+    const incineroar = makePokemon("Incineroar", {
+      id: "incineroar",
+      baseSpecies: "Incineroar",
+      types: ["Fire", "Dark"],
+      baseStats: { hp: 95, atk: 115, def: 90, spa: 80, spd: 90, spe: 60 },
+    });
+    const moves = [
+      makeMove("Fake Out", { type: "Normal", category: "Physical", basePower: 40, priority: 3, target: "normal" }),
+      makeMove("Flare Blitz", { type: "Fire", category: "Physical", basePower: 120, target: "normal" }),
+      makeMove("Knock Off", { type: "Dark", category: "Physical", basePower: 65, target: "normal" }),
+      makeMove("Taunt", { type: "Dark", category: "Status", basePower: 0, target: "normal" }),
+      makeMove("Trick Room", { type: "Psychic", category: "Status", basePower: 0, target: "all" }),
+    ];
+
+    const member = buildEnemyBattleStateMember({
+      slotIndex: 0,
+      pokemon: incineroar,
+      resolvedMoveset: {
+        savedAttacks: [],
+        knownMoves: [],
+        allMoveNames: ["Fake Out", "Flare Blitz", "Knock Off", "Taunt"],
+        abilityName: "Intimidate",
+        itemName: "Sitrus Berry",
+        statSpread: null,
+        movesetSource: "preset",
+      },
+      runtime: {
+        hpPercent: 100,
+        attackStage: 0,
+        defenseStage: 0,
+        specialAttackStage: 0,
+        specialDefenseStage: 0,
+        speedStage: 0,
+        statusCondition: "none",
+        sleepTurns: 0,
+        tauntTurns: 0,
+        encoreTurns: 0,
+        encoredMoveId: null,
+        disableTurns: 0,
+        disabledMoveId: null,
+        helpingHandTurns: 0,
+        lastMoveId: null,
+        turnsActive: 0,
+        protectStreak: 0,
+      },
+      isActive: true,
+      moveByKey: createMoveLookup(...moves),
+    });
+
+    expect(member.knownMoves.map((move) => move.name)).toEqual(["Fake Out", "Flare Blitz", "Knock Off", "Taunt"]);
+    expect(member.moveNames).toEqual(["Fake Out", "Flare Blitz", "Knock Off", "Taunt"]);
+    expect(member.candidateMoves).toEqual([]);
+    expect(member.knowledge).toBe("known");
+    expect(member.knownMoves.some((move) => move.name === "Trick Room")).toBe(false);
   });
 });

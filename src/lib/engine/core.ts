@@ -1606,7 +1606,12 @@ function addBenchId(sideState: BattleState["sides"][BattleSide], combatantId: st
   }
 }
 
-function executeSwitch(state: BattleState, action: BattleAction & { type: "switch" }, events: TurnEvent[]) {
+function executeSwitch(
+  state: BattleState,
+  action: BattleAction & { type: "switch" },
+  events: TurnEvent[],
+  switchedActiveIds?: Map<string, string>,
+) {
   const actor = state.combatants[action.actorId];
   const switchIn = state.combatants[action.switchInId];
   if (!actor || !switchIn || actor.currentHp <= 0 || switchIn.currentHp <= 0) {
@@ -1620,6 +1625,7 @@ function executeSwitch(state: BattleState, action: BattleAction & { type: "switc
   }
 
   sideState.activeIds[activeIndex] = switchIn.id;
+  switchedActiveIds?.set(actor.id, switchIn.id);
   removeBenchId(sideState, switchIn.id);
   addBenchId(sideState, actor.id);
   actor.protectStreak = 0;
@@ -2253,6 +2259,25 @@ function getTargetIdsForAction(state: BattleState, actor: BattleCombatantState, 
   return [];
 }
 
+function remapMoveTargetAfterSwitches(action: PlannedAction, switchedActiveIds: Map<string, string>) {
+  if (action.action.type !== "move" || !action.action.targetId) {
+    return action;
+  }
+
+  const remappedTargetId = switchedActiveIds.get(action.action.targetId);
+  if (!remappedTargetId) {
+    return action;
+  }
+
+  return {
+    ...action,
+    action: {
+      ...action.action,
+      targetId: remappedTargetId,
+    },
+  };
+}
+
 function isBlockedByGuard(state: BattleState, attacker: BattleCombatantState, target: BattleCombatantState, move: BattleMoveOption) {
   if (attacker.side === target.side) {
     return false;
@@ -2831,16 +2856,18 @@ export function resolveTurn(
   const startingActiveIds = new Set([...getActiveIds(state, "ally"), ...getActiveIds(state, "enemy")]);
   const asleepThisTurn = resolveStartOfTurnSleep(state, events);
   const allActions = [...(allyPlan?.actions ?? []), ...(enemyPlan?.actions ?? [])];
+  const switchedActiveIds = new Map<string, string>();
 
   for (const action of allActions) {
     if (action.action.type === "switch") {
-      executeSwitch(state, action.action, events);
+      executeSwitch(state, action.action, events, switchedActiveIds);
     }
   }
 
   const actedIds = new Set<string>();
   const moveActions = allActions
     .filter((action) => action.action.type !== "switch")
+    .map((action) => remapMoveTargetAfterSwitches(action, switchedActiveIds))
     .sort((left, right) => compareActionOrder(state, left, right, state.field.trickRoomTurns > 0));
 
   for (const action of moveActions) {

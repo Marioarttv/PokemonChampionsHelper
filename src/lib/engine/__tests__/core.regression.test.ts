@@ -60,6 +60,39 @@ describe("engine regression coverage", () => {
     expect(result.events.some((event) => event.text.includes("Enemy Lead uses Tackle"))).toBe(false);
   });
 
+  it("retargets queued attacks onto the switch-in occupying that slot", () => {
+    const sneasler = makePokemon("Sneasler", { baseStats: { hp: 100, def: 80, spe: 120 } });
+    const garchomp = makePokemon("Garchomp", { types: ["Dragon", "Ground"], baseStats: { hp: 120, def: 95, spe: 102 } });
+    const enemySneasler = makePokemon("Enemy Sneasler", { baseStats: { atk: 130, spe: 120 } });
+    const fakeOut = makeMove("Fake Out", {
+      type: "Normal",
+      category: "Physical",
+      basePower: 40,
+      priority: 3,
+      target: "normal",
+    });
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: sneasler, moveNames: [] }),
+        makeMember({ side: "ally", slot: 1, pokemon: garchomp, moveNames: [], isActive: false }),
+      ],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: enemySneasler, moveNames: ["Fake Out"] })],
+      moves: [fakeOut],
+    });
+
+    const result = resolveTurn(
+      state,
+      buildSwitchPlan(state, "ally", [{ actorId: "ally-0", switchInId: "ally-1" }]),
+      buildMovePlan(state, "enemy", [{ actorId: "enemy-0", moveName: "Fake Out", targetId: "ally-0" }]),
+    );
+
+    expect(result.state.sides.ally.activeIds[0]).toBe("ally-1");
+    expect(result.state.combatants["ally-0"].currentHp).toBe(result.state.combatants["ally-0"].maxHp);
+    expect(result.state.combatants["ally-1"].currentHp).toBeLessThan(result.state.combatants["ally-1"].maxHp);
+    expect(result.events.some((event) => event.text.includes("uses Fake Out on Garchomp"))).toBe(true);
+    expect(result.events.some((event) => event.text.includes("Sneasler flinches from Fake Out"))).toBe(false);
+  });
+
   it("does not generate Fake Out into Ghost-type targets", () => {
     const fakeOutUser = makePokemon("Fake Out User", { baseStats: { atk: 110, spe: 120 } });
     const partner = makePokemon("Partner");

@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   getBringSelectionRequirements,
   getRecommendedBenchSlotIndices,
+  rememberBringSelectionSlot,
   resolveBringSelection,
+  resolveKnownBring,
   toggleBringSelection,
 } from "../bringSelection";
 
@@ -83,5 +85,83 @@ describe("bringSelection", () => {
         bringCount: 4,
       }),
     ).toEqual([1, 2, 3, 4]);
+  });
+
+  it("tracks unique enemy bring reveals until the bring is full", () => {
+    expect(
+      rememberBringSelectionSlot({
+        currentKnownBringSlotIndices: [2, 4, 2],
+        slotIndex: 5,
+        filledSlotIndices: [0, 1, 2, 3, 4, 5],
+      }),
+    ).toEqual([2, 4, 5]);
+  });
+
+  it("ignores invalid, duplicate, and overflow enemy bring reveals", () => {
+    expect(
+      rememberBringSelectionSlot({
+        currentKnownBringSlotIndices: [0, 1, 2, 3],
+        slotIndex: 5,
+        filledSlotIndices: [0, 1, 2, 3, 4, 5],
+      }),
+    ).toEqual([0, 1, 2, 3]);
+
+    expect(
+      rememberBringSelectionSlot({
+        currentKnownBringSlotIndices: [0, 1],
+        slotIndex: 1,
+        filledSlotIndices: [0, 1, 2, 3, 4, 5],
+      }),
+    ).toEqual([0, 1]);
+
+    expect(
+      rememberBringSelectionSlot({
+        currentKnownBringSlotIndices: [0, 1],
+        slotIndex: 7,
+        filledSlotIndices: [0, 1, 2, 3, 4, 5],
+      }),
+    ).toEqual([0, 1]);
+  });
+
+  it("keeps the full enemy roster available until four brought mons are confirmed", () => {
+    expect(
+      resolveKnownBring({
+        filledSlotIndices: [0, 1, 2, 3, 4, 5],
+        knownBringSlotIndices: [5, 1, 4],
+      }),
+    ).toMatchObject({
+      knownBringSlotIndices: [5, 1, 4],
+      candidateSlotIndices: [0, 1, 2, 3, 4, 5],
+      eliminatedSlotIndices: [],
+      hasConfirmedBring: false,
+    });
+  });
+
+  it("eliminates the remaining two enemy slots once the brought four are known", () => {
+    expect(
+      resolveKnownBring({
+        filledSlotIndices: [0, 1, 2, 3, 4, 5],
+        knownBringSlotIndices: [5, 1, 4, 2],
+      }),
+    ).toMatchObject({
+      knownBringSlotIndices: [5, 1, 4, 2],
+      candidateSlotIndices: [1, 2, 4, 5],
+      eliminatedSlotIndices: [0, 3],
+      hasConfirmedBring: true,
+    });
+  });
+
+  it("treats a four-mon enemy roster as fully known immediately", () => {
+    expect(
+      resolveKnownBring({
+        filledSlotIndices: [0, 1, 2, 3],
+        knownBringSlotIndices: [],
+      }),
+    ).toMatchObject({
+      knownBringSlotIndices: [0, 1, 2, 3],
+      candidateSlotIndices: [0, 1, 2, 3],
+      eliminatedSlotIndices: [],
+      hasConfirmedBring: true,
+    });
   });
 });
