@@ -87,7 +87,7 @@ export function predictEnemyBringDistribution(options: {
   const { choices } = options;
   const temperature = options.temperature ?? 650;
   const floor = options.floor ?? 0.03;
-  const topMassRetention = clamp(options.topMassRetention ?? 0.88, 0.55, 1);
+  void clamp(options.topMassRetention ?? 0.88, 0.55, 1);
 
   const scores = choices.map((choice) => {
     return (
@@ -110,17 +110,9 @@ export function predictEnemyBringDistribution(options: {
     }))
     .sort((left, right) => right.probability - left.probability);
 
-  let retained = 0;
-  const kept = ranked.filter((entry) => {
-    if (retained < topMassRetention) {
-      retained += entry.probability;
-      return true;
-    }
-    return entry.probability >= floor * 0.65;
-  });
-  const total = kept.reduce((sum, entry) => sum + entry.probability, 0) || 1;
+  const total = ranked.reduce((sum, entry) => sum + entry.probability, 0) || 1;
 
-  return kept.map((entry) => ({
+  return ranked.map((entry) => ({
     ...entry,
     probability: entry.probability / total,
   })) satisfies PredictedEnemyFour[];

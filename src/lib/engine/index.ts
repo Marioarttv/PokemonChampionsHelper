@@ -8,7 +8,8 @@ export {
   inferEngineMoveNames,
   resolveStoredOrPresetMoveset,
 } from "./adapters/fromUiState";
-export { getBelievedMoves, summarizeEnemyBeliefs } from "./beliefs";
+export { getBelievedMoves, getSetHypotheses, summarizeEnemyBeliefs } from "./beliefs";
+export { buildMechanicSupportReport, getGroundedState } from "./mechanicsSupport";
 export { recommendBestPlan, recommendBestPlanAsync } from "./search";
 export type {
   BattleAction,
@@ -38,4 +39,11 @@ export type {
   TurnBranch,
   TurnEvent,
   TurnResult,
+  PreviewInfoMode,
+  SetHypothesis,
 } from "./types";
+export type {
+  MechanicSupportLevel,
+  MechanicSupportReport,
+  UnsupportedMechanicMarker,
+} from "./mechanicsSupport";

@@ -48,6 +48,9 @@ type FixtureMemberOptions = {
   lastMoveId?: string | null;
   turnsActive?: number;
   protectStreak?: number;
+  infoMode?: BattleStateMemberInput["infoMode"];
+  setHypotheses?: BattleStateMemberInput["setHypotheses"];
+  volatileState?: BattleStateMemberInput["volatileState"];
   isActive?: boolean;
 };
 
@@ -137,6 +140,9 @@ export function makeMember(options: FixtureMemberOptions): BattleStateMemberInpu
     lastMoveId: options.lastMoveId ?? null,
     turnsActive: options.turnsActive ?? 0,
     protectStreak: options.protectStreak ?? 0,
+    infoMode: options.infoMode,
+    setHypotheses: options.setHypotheses,
+    volatileState: options.volatileState,
     isActive: options.isActive ?? true,
   };
 }

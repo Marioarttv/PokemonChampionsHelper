@@ -193,6 +193,7 @@ type LoadedTeamSlot = TeamSlotState & {
 type TeamMatrixMode = "defense" | "offense";
 type DamageCalcMode = "attack" | "defend";
 type TeamBuilderFormat = "all" | "regulationMA";
+type MegaSelectionMode = "auto" | "manual";
 type LeadSummary = {
   slotIndex: number;
   pokemon: PokemonRecord;
@@ -234,6 +235,11 @@ type ResolvedSpeciesMoveset = {
   itemName: string | null;
   statSpread: ChampionsStatSpread | null;
   movesetSource: StoredMovesetSource;
+};
+type PotentialMegaSlot = {
+  slotIndex: number;
+  megaPokemon: PokemonRecord;
+  basePokemon: PokemonRecord;
 };
 type OhkoSpeedFilter = "any" | "outspeeds" | "notSlower" | "slowerOrTie";
 type OhkoSurvivalFilter = "any" | "survivesBestHit";
@@ -611,6 +617,10 @@ function getPokemonBaseSpeciesKey(pokemon: Pick<PokemonRecord, "baseSpecies" | "
   return normalizePokemonNameKey(pokemon.baseSpecies || pokemon.name);
 }
 
+function getPokemonBaseFormKey(pokemon: Pick<PokemonRecord, "baseSpecies" | "name">) {
+  return normalizePokemonNameKey(pokemon.baseSpecies || pokemon.name);
+}
+
 function getInheritedMovesetKey(pokemon: Pick<PokemonRecord, "baseSpecies" | "forme" | "id" | "name">) {
   if (!pokemon.forme) {
     return null;
@@ -635,6 +645,19 @@ function isChampionsMegaEntry(pokemon: Pick<PokemonRecord, "baseSpecies" | "name
     pokemon.forme === "Original-Mega" ||
     pokemon.forme === "Primal"
   );
+}
+
+function getEffectivePokemonForMegaSelection(
+  slotIndex: number,
+  pokemon: PokemonRecord,
+  activeMegaSlotIndex: number | null,
+  basePokemonBySpeciesKey: ReadonlyMap<string, PokemonRecord>,
+) {
+  if (!isChampionsMegaEntry(pokemon) || slotIndex === activeMegaSlotIndex) {
+    return pokemon;
+  }
+
+  return basePokemonBySpeciesKey.get(getPokemonBaseFormKey(pokemon)) ?? pokemon;
 }
 
 function getPokemonPrimaryAbilityName(pokemon: PokemonRecord | null | undefined) {
@@ -2467,6 +2490,87 @@ function getStoredOrPresetSavedAttacks(
     getInheritedMovesetKey,
     sanitizeSavedAttacks,
     sanitizeKnownMovesToSavedAttacks,
+  });
+}
+
+function resolveEffectiveTeamSlotForMegaSelection(
+  slot: LoadedTeamSlot,
+  slotIndex: number,
+  activeMegaSlotIndex: number | null,
+  basePokemonBySpeciesKey: ReadonlyMap<string, PokemonRecord>,
+  speciesMovesetByKey: ReadonlyMap<string, PersistedSpeciesMoveset>,
+  moveByKey: ReadonlyMap<string, MoveRecord>,
+): LoadedTeamSlot {
+  if (!slot.pokemon) {
+    return slot;
+  }
+
+  const effectivePokemon = getEffectivePokemonForMegaSelection(
+    slotIndex,
+    slot.pokemon,
+    activeMegaSlotIndex,
+    basePokemonBySpeciesKey,
+  );
+
+  if (effectivePokemon.id === slot.pokemon.id) {
+    return slot;
+  }
+
+  const defaultStatSpread =
+    getStoredOrPresetSavedAttacks(
+      effectivePokemon,
+      speciesMovesetByKey,
+      moveByKey,
+      MAX_SPECIES_MOVESET_SIZE,
+    ).statSpread ?? getDefaultChampionsStatSpreadForPokemon(effectivePokemon);
+  const resolvedStatSpread = normalizeChampionsStatSpread(slot.statSpread ?? undefined, defaultStatSpread);
+
+  return {
+    ...slot,
+    pokemon: effectivePokemon,
+    defaultStatSpread,
+    resolvedStatSpread,
+  };
+}
+
+function buildPreviewBattleEngineAllyMembersFromTeam(
+  team: LoadedTeamSlot[],
+  speciesMovesetByKey: ReadonlyMap<string, PersistedSpeciesMoveset>,
+  moveByKey: ReadonlyMap<string, MoveRecord>,
+) {
+  return team.flatMap((slot, slotIndex) => {
+    if (!slot.pokemon) {
+      return [];
+    }
+
+    const resolvedMoveset = resolveStoredOrPresetMoveset({
+      pokemon: slot.pokemon,
+      speciesMovesetByKey,
+      moveByKey,
+      limit: MAX_SPECIES_MOVESET_SIZE,
+      normalizePokemonNameKey,
+      getResolvedPresetAbilityName,
+      isChampionsMegaEntry,
+      getInheritedMovesetKey,
+      sanitizeSavedAttacks,
+      sanitizeKnownMovesToSavedAttacks,
+    });
+
+    return [
+      buildAllyBattleStateMember({
+        slotIndex,
+        pokemon: slot.pokemon,
+        slotSavedAttacks: slot.savedAttacks,
+        resolvedMoveset: {
+          ...resolvedMoveset,
+          itemName: slot.itemName,
+          statSpread: slot.resolvedStatSpread,
+        },
+        moveByKey,
+        runtime: DEFAULT_BATTLE_SIMULATOR_MEMBER_STATE,
+        isActive: false,
+      }),
+    ];
   });
 }
 
@@ -6222,273 +6326,315 @@ function BattleLabSlot({
         </div>
       ) : null}
 
-      {editing && simulatorPatch ? (
-        <div className={`bl-slot-editor ${side}`}>
-          <label>
-            <span>HP %</span>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              step={1}
-              value={Math.round(simulatorPatch.hpPercent)}
-              onChange={(e) => onEditPatch({ hpPercent: clampPercent(Number(e.target.value)) })}
-            />
-            <strong>{Math.round(simulatorPatch.hpPercent)}%</strong>
-          </label>
-          {side === "ally" ? (
-            <label className="bl-slot-editor-hp-input">
-              <span>HP</span>
-              <input
-                type="number"
-                min={0}
-                max={combatant.maxHp}
-                step={1}
-                value={getLevel50CurrentHpFromPercent(combatant.maxHp, simulatorPatch.hpPercent)}
-                onChange={(e) => {
-                  const nextHp = Math.max(0, Math.min(combatant.maxHp, Math.round(Number(e.target.value) || 0)));
-                  const nextPercent = combatant.maxHp > 0 ? (nextHp / combatant.maxHp) * 100 : 0;
-                  onEditPatch({ hpPercent: clampPercent(nextPercent) });
-                }}
-              />
-              <strong>/ {combatant.maxHp}</strong>
-            </label>
-          ) : (
-            <label className="bl-slot-editor-hp-input">
-              <span>Range</span>
-              <input
-                type="number"
-                min={0}
-                max={100}
-                step={1}
-                value={Math.round(simulatorPatch.hpPercent)}
-                onChange={(e) => {
-                  onEditPatch({ hpPercent: clampPercent(Number(e.target.value) || 0) });
-                }}
-              />
-              <strong>%</strong>
-            </label>
-          )}
-          <label>
-            <span>Status</span>
-            <select
-              value={simulatorPatch.statusCondition}
-              onChange={(e) => {
-                const next = e.target.value as BattleStatusCondition;
-                onEditPatch({
-                  statusCondition: next,
-                  sleepTurns: next === "sleep" ? Math.max(1, simulatorPatch.sleepTurns || 2) : 0,
-                });
+      {editing && simulatorPatch && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="bl-slot-editor-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-label={`${combatant.pokemon.name} settings`}
+              onClick={(event) => {
+                if (event.target === event.currentTarget) {
+                  onToggleEdit();
+                }
               }}
             >
-              {BATTLE_STATUS_OPTIONS.map((o) => (
-                <option key={`bl-ed-status-${o.value}`} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <details className="bl-slot-editor-stage-panel">
-            <summary>
-              <span>Stat Stages</span>
-              <span className="bl-slot-editor-stage-summary">
-                {BATTLE_LAB_STAGE_CONTROLS.some(([, key]) => simulatorPatch[key] !== 0) ? (
-                  BATTLE_LAB_STAGE_CONTROLS.filter(([, key]) => simulatorPatch[key] !== 0).map(([label, key]) => (
-                    <span
-                      key={`bl-ed-stage-pill-${combatant.id}-${key}`}
-                      className={`bl-stage-pill ${simulatorPatch[key] > 0 ? "up" : "down"}`}
-                    >
-                      {label}
-                      {simulatorPatch[key] > 0 ? `+${simulatorPatch[key]}` : simulatorPatch[key]}
-                    </span>
-                  ))
-                ) : (
-                  <span className="bl-slot-editor-stage-neutral">All neutral</span>
-                )}
-              </span>
-            </summary>
-            <div className="bl-slot-editor-stages">
-              {BATTLE_LAB_STAGE_CONTROLS.map(([label, key]) => (
-                <label key={`bl-ed-stage-${combatant.id}-${key}`}>
-                  <span>{label}</span>
-                  <div className="bl-stage-ctrl">
-                    <button
-                      type="button"
-                      onClick={() => onEditPatch({ [key]: clampStatStage(simulatorPatch[key] - 1) })}
-                    >
-                      −
-                    </button>
-                    <strong>{simulatorPatch[key] >= 0 ? `+${simulatorPatch[key]}` : simulatorPatch[key]}</strong>
-                    <button
-                      type="button"
-                      onClick={() => onEditPatch({ [key]: clampStatStage(simulatorPatch[key] + 1) })}
-                    >
-                      +
-                    </button>
+              <div className={`bl-slot-editor-dialog ${side}`}>
+                <div className="bl-slot-editor-header">
+                  <div>
+                    <span className={`bl-slot-editor-rank ${side}`}>{rankLabel}</span>
+                    <h3>{combatant.pokemon.name}</h3>
                   </div>
-                </label>
-              ))}
-            </div>
-          </details>
-          <details className="bl-slot-editor-stage-panel">
-            <summary>
-              <span>Turn State</span>
-              <span className="bl-slot-editor-stage-summary">
-                {lastMove ? <span className="bl-stage-pill up">Last: {lastMove.name}</span> : null}
-                {simulatorPatch.turnsActive > 0 ? (
-                  <span className="bl-stage-pill up">Active {simulatorPatch.turnsActive}</span>
-                ) : null}
-                {simulatorPatch.protectStreak > 0 ? (
-                  <span className="bl-stage-pill down">Protect {simulatorPatch.protectStreak}</span>
-                ) : null}
-                {simulatorPatch.tauntTurns > 0 ? (
-                  <span className="bl-stage-pill down">Taunt {simulatorPatch.tauntTurns}</span>
-                ) : null}
-                {simulatorPatch.encoreTurns > 0 ? (
-                  <span className="bl-stage-pill down">
-                    Encore {simulatorPatch.encoreTurns}
-                    {encoredMove ? ` · ${encoredMove.name}` : ""}
-                  </span>
-                ) : null}
-                {simulatorPatch.disableTurns > 0 ? (
-                  <span className="bl-stage-pill down">
-                    Disable {simulatorPatch.disableTurns}
-                    {disabledMove ? ` · ${disabledMove.name}` : ""}
-                  </span>
-                ) : null}
-                {simulatorPatch.sleepTurns > 0 && simulatorPatch.statusCondition === "sleep" ? (
-                  <span className="bl-stage-pill up">Sleep {simulatorPatch.sleepTurns}</span>
-                ) : null}
-                {!lastMove &&
-                simulatorPatch.turnsActive === 0 &&
-                simulatorPatch.protectStreak === 0 &&
-                simulatorPatch.tauntTurns === 0 &&
-                simulatorPatch.encoreTurns === 0 &&
-                simulatorPatch.disableTurns === 0 &&
-                (simulatorPatch.statusCondition !== "sleep" || simulatorPatch.sleepTurns === 0) ? (
-                  <span className="bl-slot-editor-stage-neutral">No extra turn-state overrides</span>
-                ) : null}
-              </span>
-            </summary>
-            <div className="bl-slot-editor-meta">
-              <label>
-                <span>Turns Active</span>
-                <input
-                  type="number"
-                  min={0}
-                  max={99}
-                  step={1}
-                  value={simulatorPatch.turnsActive}
-                  onChange={(e) => onEditPatch({ turnsActive: Math.max(0, Math.round(Number(e.target.value) || 0)) })}
-                />
-              </label>
-              <label>
-                <span>Protect Streak</span>
-                <input
-                  type="number"
-                  min={0}
-                  max={9}
-                  step={1}
-                  value={simulatorPatch.protectStreak}
-                  onChange={(e) => onEditPatch({ protectStreak: Math.max(0, Math.round(Number(e.target.value) || 0)) })}
-                />
-              </label>
-              {simulatorPatch.statusCondition === "sleep" ? (
-                <label>
-                  <span>Sleep Turns</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={4}
-                    step={1}
-                    value={Math.max(1, simulatorPatch.sleepTurns || 1)}
-                    onChange={(e) => onEditPatch({ sleepTurns: Math.max(1, Math.round(Number(e.target.value) || 1)) })}
-                  />
-                </label>
-              ) : null}
-              <label>
-                <span>Taunt Turns</span>
-                <input
-                  type="number"
-                  min={0}
-                  max={4}
-                  step={1}
-                  value={simulatorPatch.tauntTurns}
-                  onChange={(e) => onEditPatch({ tauntTurns: Math.max(0, Math.round(Number(e.target.value) || 0)) })}
-                />
-              </label>
-              <label>
-                <span>Encore Turns</span>
-                <input
-                  type="number"
-                  min={0}
-                  max={4}
-                  step={1}
-                  value={simulatorPatch.encoreTurns}
-                  onChange={(e) => {
-                    const nextTurns = Math.max(0, Math.round(Number(e.target.value) || 0));
-                    onEditPatch({
-                      encoreTurns: nextTurns,
-                      encoredMoveId:
-                        nextTurns > 0 ? simulatorPatch.encoredMoveId ?? simulatorPatch.lastMoveId : null,
-                    });
-                  }}
-                />
-              </label>
-              {simulatorPatch.encoreTurns > 0 ? (
-                <label className="bl-slot-editor-full">
-                  <span>Encored Move</span>
-                  <select
-                    value={simulatorPatch.encoredMoveId ?? ""}
-                    onChange={(e) => onEditPatch({ encoredMoveId: e.target.value || null })}
+                  <button
+                    type="button"
+                    className="bl-slot-editor-close"
+                    onClick={onToggleEdit}
+                    aria-label="Close slot settings"
                   >
-                    <option value="">None</option>
-                    {availableMoves.map((move) => (
-                      <option key={`bl-ed-encore-move-${combatant.id}-${move.id}`} value={move.id}>
-                        {move.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-              <label>
-                <span>Disable Turns</span>
-                <input
-                  type="number"
-                  min={0}
-                  max={4}
-                  step={1}
-                  value={simulatorPatch.disableTurns}
-                  onChange={(e) => {
-                    const nextTurns = Math.max(0, Math.round(Number(e.target.value) || 0));
-                    onEditPatch({
-                      disableTurns: nextTurns,
-                      disabledMoveId:
-                        nextTurns > 0 ? simulatorPatch.disabledMoveId ?? simulatorPatch.lastMoveId : null,
-                    });
-                  }}
-                />
-              </label>
-              {simulatorPatch.disableTurns > 0 ? (
-                <label className="bl-slot-editor-full">
-                  <span>Disabled Move</span>
-                  <select
-                    value={simulatorPatch.disabledMoveId ?? ""}
-                    onChange={(e) => onEditPatch({ disabledMoveId: e.target.value || null })}
-                  >
-                    <option value="">None</option>
-                    {availableMoves.map((move) => (
-                      <option key={`bl-ed-disable-move-${combatant.id}-${move.id}`} value={move.id}>
-                        {move.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-            </div>
-          </details>
-        </div>
-      ) : null}
+                    ×
+                  </button>
+                </div>
+                <div className={`bl-slot-editor ${side}`}>
+                  <label>
+                    <span>HP %</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={Math.round(simulatorPatch.hpPercent)}
+                      onChange={(e) => onEditPatch({ hpPercent: clampPercent(Number(e.target.value)) })}
+                    />
+                    <strong>{Math.round(simulatorPatch.hpPercent)}%</strong>
+                  </label>
+                  {side === "ally" ? (
+                    <label className="bl-slot-editor-hp-input">
+                      <span>HP</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={combatant.maxHp}
+                        step={1}
+                        value={getLevel50CurrentHpFromPercent(combatant.maxHp, simulatorPatch.hpPercent)}
+                        onChange={(e) => {
+                          const nextHp = Math.max(
+                            0,
+                            Math.min(combatant.maxHp, Math.round(Number(e.target.value) || 0)),
+                          );
+                          const nextPercent = combatant.maxHp > 0 ? (nextHp / combatant.maxHp) * 100 : 0;
+                          onEditPatch({ hpPercent: clampPercent(nextPercent) });
+                        }}
+                      />
+                      <strong>/ {combatant.maxHp}</strong>
+                    </label>
+                  ) : (
+                    <label className="bl-slot-editor-hp-input">
+                      <span>Range</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        step={1}
+                        value={Math.round(simulatorPatch.hpPercent)}
+                        onChange={(e) => {
+                          onEditPatch({ hpPercent: clampPercent(Number(e.target.value) || 0) });
+                        }}
+                      />
+                      <strong>%</strong>
+                    </label>
+                  )}
+                  <label>
+                    <span>Status</span>
+                    <select
+                      value={simulatorPatch.statusCondition}
+                      onChange={(e) => {
+                        const next = e.target.value as BattleStatusCondition;
+                        onEditPatch({
+                          statusCondition: next,
+                          sleepTurns: next === "sleep" ? Math.max(1, simulatorPatch.sleepTurns || 2) : 0,
+                        });
+                      }}
+                    >
+                      {BATTLE_STATUS_OPTIONS.map((o) => (
+                        <option key={`bl-ed-status-${o.value}`} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <details className="bl-slot-editor-stage-panel">
+                    <summary>
+                      <span>Stat Stages</span>
+                      <span className="bl-slot-editor-stage-summary">
+                        {BATTLE_LAB_STAGE_CONTROLS.some(([, key]) => simulatorPatch[key] !== 0) ? (
+                          BATTLE_LAB_STAGE_CONTROLS.filter(([, key]) => simulatorPatch[key] !== 0).map(([label, key]) => (
+                            <span
+                              key={`bl-ed-stage-pill-${combatant.id}-${key}`}
+                              className={`bl-stage-pill ${simulatorPatch[key] > 0 ? "up" : "down"}`}
+                            >
+                              {label}
+                              {simulatorPatch[key] > 0 ? `+${simulatorPatch[key]}` : simulatorPatch[key]}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="bl-slot-editor-stage-neutral">All neutral</span>
+                        )}
+                      </span>
+                    </summary>
+                    <div className="bl-slot-editor-stages">
+                      {BATTLE_LAB_STAGE_CONTROLS.map(([label, key]) => (
+                        <label key={`bl-ed-stage-${combatant.id}-${key}`}>
+                          <span>{label}</span>
+                          <div className="bl-stage-ctrl">
+                            <button
+                              type="button"
+                              onClick={() => onEditPatch({ [key]: clampStatStage(simulatorPatch[key] - 1) })}
+                            >
+                              −
+                            </button>
+                            <strong>{simulatorPatch[key] >= 0 ? `+${simulatorPatch[key]}` : simulatorPatch[key]}</strong>
+                            <button
+                              type="button"
+                              onClick={() => onEditPatch({ [key]: clampStatStage(simulatorPatch[key] + 1) })}
+                            >
+                              +
+                            </button>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </details>
+                  <details className="bl-slot-editor-stage-panel">
+                    <summary>
+                      <span>Turn State</span>
+                      <span className="bl-slot-editor-stage-summary">
+                        {lastMove ? <span className="bl-stage-pill up">Last: {lastMove.name}</span> : null}
+                        {simulatorPatch.turnsActive > 0 ? (
+                          <span className="bl-stage-pill up">Active {simulatorPatch.turnsActive}</span>
+                        ) : null}
+                        {simulatorPatch.protectStreak > 0 ? (
+                          <span className="bl-stage-pill down">Protect {simulatorPatch.protectStreak}</span>
+                        ) : null}
+                        {simulatorPatch.tauntTurns > 0 ? (
+                          <span className="bl-stage-pill down">Taunt {simulatorPatch.tauntTurns}</span>
+                        ) : null}
+                        {simulatorPatch.encoreTurns > 0 ? (
+                          <span className="bl-stage-pill down">
+                            Encore {simulatorPatch.encoreTurns}
+                            {encoredMove ? ` · ${encoredMove.name}` : ""}
+                          </span>
+                        ) : null}
+                        {simulatorPatch.disableTurns > 0 ? (
+                          <span className="bl-stage-pill down">
+                            Disable {simulatorPatch.disableTurns}
+                            {disabledMove ? ` · ${disabledMove.name}` : ""}
+                          </span>
+                        ) : null}
+                        {simulatorPatch.sleepTurns > 0 && simulatorPatch.statusCondition === "sleep" ? (
+                          <span className="bl-stage-pill up">Sleep {simulatorPatch.sleepTurns}</span>
+                        ) : null}
+                        {!lastMove &&
+                        simulatorPatch.turnsActive === 0 &&
+                        simulatorPatch.protectStreak === 0 &&
+                        simulatorPatch.tauntTurns === 0 &&
+                        simulatorPatch.encoreTurns === 0 &&
+                        simulatorPatch.disableTurns === 0 &&
+                        (simulatorPatch.statusCondition !== "sleep" || simulatorPatch.sleepTurns === 0) ? (
+                          <span className="bl-slot-editor-stage-neutral">No extra turn-state overrides</span>
+                        ) : null}
+                      </span>
+                    </summary>
+                    <div className="bl-slot-editor-meta">
+                      <label>
+                        <span>Turns Active</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={99}
+                          step={1}
+                          value={simulatorPatch.turnsActive}
+                          onChange={(e) =>
+                            onEditPatch({ turnsActive: Math.max(0, Math.round(Number(e.target.value) || 0)) })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span>Protect Streak</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={9}
+                          step={1}
+                          value={simulatorPatch.protectStreak}
+                          onChange={(e) =>
+                            onEditPatch({ protectStreak: Math.max(0, Math.round(Number(e.target.value) || 0)) })
+                          }
+                        />
+                      </label>
+                      {simulatorPatch.statusCondition === "sleep" ? (
+                        <label>
+                          <span>Sleep Turns</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={4}
+                            step={1}
+                            value={Math.max(1, simulatorPatch.sleepTurns || 1)}
+                            onChange={(e) =>
+                              onEditPatch({ sleepTurns: Math.max(1, Math.round(Number(e.target.value) || 1)) })
+                            }
+                          />
+                        </label>
+                      ) : null}
+                      <label>
+                        <span>Taunt Turns</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={4}
+                          step={1}
+                          value={simulatorPatch.tauntTurns}
+                          onChange={(e) =>
+                            onEditPatch({ tauntTurns: Math.max(0, Math.round(Number(e.target.value) || 0)) })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span>Encore Turns</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={4}
+                          step={1}
+                          value={simulatorPatch.encoreTurns}
+                          onChange={(e) => {
+                            const nextTurns = Math.max(0, Math.round(Number(e.target.value) || 0));
+                            onEditPatch({
+                              encoreTurns: nextTurns,
+                              encoredMoveId:
+                                nextTurns > 0 ? simulatorPatch.encoredMoveId ?? simulatorPatch.lastMoveId : null,
+                            });
+                          }}
+                        />
+                      </label>
+                      {simulatorPatch.encoreTurns > 0 ? (
+                        <label className="bl-slot-editor-full">
+                          <span>Encored Move</span>
+                          <select
+                            value={simulatorPatch.encoredMoveId ?? ""}
+                            onChange={(e) => onEditPatch({ encoredMoveId: e.target.value || null })}
+                          >
+                            <option value="">None</option>
+                            {availableMoves.map((move) => (
+                              <option key={`bl-ed-encore-move-${combatant.id}-${move.id}`} value={move.id}>
+                                {move.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : null}
+                      <label>
+                        <span>Disable Turns</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={4}
+                          step={1}
+                          value={simulatorPatch.disableTurns}
+                          onChange={(e) => {
+                            const nextTurns = Math.max(0, Math.round(Number(e.target.value) || 0));
+                            onEditPatch({
+                              disableTurns: nextTurns,
+                              disabledMoveId:
+                                nextTurns > 0 ? simulatorPatch.disabledMoveId ?? simulatorPatch.lastMoveId : null,
+                            });
+                          }}
+                        />
+                      </label>
+                      {simulatorPatch.disableTurns > 0 ? (
+                        <label className="bl-slot-editor-full">
+                          <span>Disabled Move</span>
+                          <select
+                            value={simulatorPatch.disabledMoveId ?? ""}
+                            onChange={(e) => onEditPatch({ disabledMoveId: e.target.value || null })}
+                          >
+                            <option value="">None</option>
+                            {availableMoves.map((move) => (
+                              <option key={`bl-ed-disable-move-${combatant.id}-${move.id}`} value={move.id}>
+                                {move.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : null}
+                    </div>
+                  </details>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
@@ -6871,6 +7017,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const [analyzedOpponentEntries, setAnalyzedOpponentEntries] = useState<LoadedOpponentEntry[]>([]);
   const [bringSelectionMode, setBringSelectionMode] = useState<BringSelectionMode>("auto");
   const [manualBringSlotIndices, setManualBringSlotIndices] = useState<number[]>([]);
+  const [megaSelectionMode, setMegaSelectionMode] = useState<MegaSelectionMode>("auto");
+  const [manualMegaSlotIndex, setManualMegaSlotIndex] = useState<number | null>(null);
   const [knownEnemyBringSlotIndices, setKnownEnemyBringSlotIndices] = useState<number[]>([]);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [database, setDatabase] = useState<PokemonRecord[] | null>(null);
@@ -7143,6 +7291,20 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     return map;
   }, [database]);
 
+  const basePokemonBySpeciesKey = useMemo(() => {
+    const map = new Map<string, PokemonRecord>();
+
+    for (const pokemon of database ?? []) {
+      if (pokemon.forme !== null) {
+        continue;
+      }
+
+      map.set(getPokemonBaseFormKey(pokemon), pokemon);
+    }
+
+    return map;
+  }, [database]);
+
   const abilityByKey = useMemo(() => {
     const map = new Map<string, AbilityRecord>();
 
@@ -7228,6 +7390,24 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const selectedPokemon = team
     .map((slot) => slot.pokemon)
     .filter((pokemon): pokemon is PokemonRecord => Boolean(pokemon));
+  const potentialMegaSlots = useMemo<PotentialMegaSlot[]>(
+    () =>
+      team.flatMap((slot, slotIndex) => {
+        if (!slot.pokemon || !isChampionsMegaEntry(slot.pokemon)) {
+          return [];
+        }
+
+        const basePokemon = basePokemonBySpeciesKey.get(getPokemonBaseFormKey(slot.pokemon)) ?? null;
+        return basePokemon ? [{ slotIndex, megaPokemon: slot.pokemon, basePokemon }] : [];
+      }),
+    [basePokemonBySpeciesKey, team],
+  );
+  const potentialMegaSlotSet = useMemo(
+    () => new Set(potentialMegaSlots.map((entry) => entry.slotIndex)),
+    [potentialMegaSlots],
+  );
+  const manualActiveMegaSlotIndex =
+    manualMegaSlotIndex !== null && potentialMegaSlotSet.has(manualMegaSlotIndex) ? manualMegaSlotIndex : null;
   const filledTeamSlotIndices = useMemo(
     () =>
       team
@@ -7235,6 +7415,14 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         .filter((slotIndex): slotIndex is number => slotIndex !== null),
     [team],
   );
+  useEffect(() => {
+    if (manualMegaSlotIndex !== null && !potentialMegaSlotSet.has(manualMegaSlotIndex)) {
+      setManualMegaSlotIndex(null);
+    }
+    if (potentialMegaSlots.length === 0 && megaSelectionMode !== "auto") {
+      setMegaSelectionMode("auto");
+    }
+  }, [manualMegaSlotIndex, megaSelectionMode, potentialMegaSlotSet, potentialMegaSlots.length]);
 
   const selectedSavedAttackCount = useMemo(
     () => team.reduce((total, slot) => total + slot.savedAttacks.length, 0),
@@ -8340,44 +8528,6 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     }),
     [doublesAllyTailwind, doublesEnemyTailwind, doublesTrickRoom],
   );
-  const previewBattleEngineAllyMembers = useMemo<BattleStateMemberInput[]>(
-    () =>
-      team.flatMap((slot, slotIndex) => {
-        if (!slot.pokemon) {
-          return [];
-        }
-
-        const resolvedMoveset = resolveStoredOrPresetMoveset({
-          pokemon: slot.pokemon,
-          speciesMovesetByKey,
-          moveByKey,
-          limit: MAX_SPECIES_MOVESET_SIZE,
-          normalizePokemonNameKey,
-          getResolvedPresetAbilityName,
-          isChampionsMegaEntry,
-          getInheritedMovesetKey,
-          sanitizeSavedAttacks,
-          sanitizeKnownMovesToSavedAttacks,
-        });
-
-        return [
-          buildAllyBattleStateMember({
-            slotIndex,
-            pokemon: slot.pokemon,
-            slotSavedAttacks: slot.savedAttacks,
-            resolvedMoveset: {
-              ...resolvedMoveset,
-              itemName: slot.itemName,
-              statSpread: slot.resolvedStatSpread,
-            },
-            moveByKey,
-            runtime: DEFAULT_BATTLE_SIMULATOR_MEMBER_STATE,
-            isActive: false,
-          }),
-        ];
-      }),
-    [moveByKey, speciesMovesetByKey, team],
-  );
   const battleEngineEnemyMembers = useMemo<BattleStateMemberInput[]>(
     () =>
       enemyBattleEntries.map((entry) => {
@@ -8424,10 +8574,12 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     ],
   );
   const deferredAnalyzedOpponentEntries = useDeferredValue(analyzedOpponentEntries);
-  const deferredPreviewBattleEngineAllyMembers = useDeferredValue(previewBattleEngineAllyMembers);
   const deferredPreviewRecommendationSettings = useDeferredValue(previewRecommendationSettings);
-  const teamPreviewRecommendation = useMemo<TeamPreviewRecommendation | null>(() => {
-    if (deferredPreviewBattleEngineAllyMembers.length < 4 || deferredAnalyzedOpponentEntries.length < 4) {
+  const teamPreviewResult = useMemo<{
+    recommendation: TeamPreviewRecommendation;
+    activeMegaSlotIndex: number | null;
+  } | null>(() => {
+    if (filledTeamSlotIndices.length < 4 || deferredAnalyzedOpponentEntries.length < 4) {
       return null;
     }
 
@@ -8440,14 +8592,53 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       maxLeadsPerFour: 2,
     };
 
-    return recommendTeamPreview({
-      ally: deferredPreviewBattleEngineAllyMembers.map((member) => ({
+    const scenarioMegaSlotIndices =
+      megaSelectionMode === "manual"
+        ? [manualActiveMegaSlotIndex]
+        : potentialMegaSlots.length > 0
+          ? potentialMegaSlots.map((entry) => entry.slotIndex)
+          : [null];
+    const enemy = deferredAnalyzedOpponentEntries.map((entry) => {
+      return buildPreviewEnemyBattleStateMember({
+        slotIndex: entry.slotIndex,
+        pokemon: entry.pokemon,
+        resolvedMoveset: {
+          savedAttacks: entry.savedAttacks.length > 0 ? entry.savedAttacks : createStabProxySavedAttacks(entry.pokemon),
+          knownMoves: entry.knownMoves,
+          allMoveNames: entry.presetMoveNames,
+          abilityName: entry.abilityName,
+          itemName: entry.itemName,
+          statSpread: entry.statSpread,
+          movesetSource: entry.movesetSource,
+        },
+        moveByKey,
+        isActive: entry.slotIndex < 2,
+      });
+    });
+    let bestResult: { recommendation: TeamPreviewRecommendation; activeMegaSlotIndex: number | null } | null = null;
+
+    for (const activeMegaSlotIndex of scenarioMegaSlotIndices) {
+      const scenarioTeam = team.map((slot, slotIndex) =>
+        resolveEffectiveTeamSlotForMegaSelection(
+          slot,
+          slotIndex,
+          activeMegaSlotIndex,
+          basePokemonBySpeciesKey,
+          speciesMovesetByKey,
+          moveByKey,
+        ),
+      );
+      const ally = buildPreviewBattleEngineAllyMembersFromTeam(
+        scenarioTeam,
+        speciesMovesetByKey,
+        moveByKey,
+      ).map((member) => ({
         ...member,
         isActive: false,
         currentHp: undefined,
         currentHpPercent: 100,
         stages: undefined,
-        statusCondition: "none",
+        statusCondition: "none" as const,
         sleepTurns: 0,
         tauntTurns: 0,
         encoreTurns: 0,
@@ -8459,40 +8650,79 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         isProtected: false,
         isFlinched: false,
         wasSwitchedInThisTurn: false,
-      })),
-      enemy: deferredAnalyzedOpponentEntries.map((entry) => {
-        return buildPreviewEnemyBattleStateMember({
-          slotIndex: entry.slotIndex,
-          pokemon: entry.pokemon,
-          resolvedMoveset: {
-            savedAttacks: entry.savedAttacks.length > 0 ? entry.savedAttacks : createStabProxySavedAttacks(entry.pokemon),
-            knownMoves: entry.knownMoves,
-            allMoveNames: entry.presetMoveNames,
-            abilityName: entry.abilityName,
-            itemName: entry.itemName,
-            statSpread: entry.statSpread,
-            movesetSource: entry.movesetSource,
-          },
-          moveByKey,
-          isActive: entry.slotIndex < 2,
-        });
-      }),
-      moveByKey,
-      weather: deferredPreviewRecommendationSettings.weather,
-      terrain: deferredPreviewRecommendationSettings.terrain,
-      allyTailwind: deferredPreviewRecommendationSettings.allyTailwind,
-      enemyTailwind: deferredPreviewRecommendationSettings.enemyTailwind,
-      trickRoom: deferredPreviewRecommendationSettings.trickRoom,
-      attackStage: deferredPreviewRecommendationSettings.attackStage,
-      defenseStage: deferredPreviewRecommendationSettings.defenseStage,
-      ...previewModeOptions,
-    });
+      }));
+
+      if (ally.length < 4) {
+        continue;
+      }
+
+      const recommendation = recommendTeamPreview({
+        ally,
+        enemy,
+        moveByKey,
+        weather: deferredPreviewRecommendationSettings.weather,
+        terrain: deferredPreviewRecommendationSettings.terrain,
+        allyTailwind: deferredPreviewRecommendationSettings.allyTailwind,
+        enemyTailwind: deferredPreviewRecommendationSettings.enemyTailwind,
+        trickRoom: deferredPreviewRecommendationSettings.trickRoom,
+        attackStage: deferredPreviewRecommendationSettings.attackStage,
+        defenseStage: deferredPreviewRecommendationSettings.defenseStage,
+        ...previewModeOptions,
+      });
+
+      if (!recommendation) {
+        continue;
+      }
+
+      if (
+        !bestResult ||
+        recommendation.robustScore > bestResult.recommendation.robustScore ||
+        (
+          recommendation.robustScore === bestResult.recommendation.robustScore &&
+          recommendation.averageScore > bestResult.recommendation.averageScore
+        )
+      ) {
+        bestResult = { recommendation, activeMegaSlotIndex };
+      }
+    }
+
+    return bestResult;
   }, [
+    basePokemonBySpeciesKey,
     deferredAnalyzedOpponentEntries,
-    deferredPreviewBattleEngineAllyMembers,
     deferredPreviewRecommendationSettings,
+    filledTeamSlotIndices.length,
+    manualActiveMegaSlotIndex,
+    megaSelectionMode,
     moveByKey,
+    potentialMegaSlots,
+    speciesMovesetByKey,
+    team,
   ]);
+  const teamPreviewRecommendation = teamPreviewResult?.recommendation ?? null;
+  const activeMegaSlotIndex =
+    megaSelectionMode === "manual"
+      ? manualActiveMegaSlotIndex
+      : teamPreviewResult?.activeMegaSlotIndex ??
+        (potentialMegaSlots.length === 1 ? potentialMegaSlots[0]?.slotIndex ?? null : null);
+  const effectiveTeam = useMemo(
+    () =>
+      team.map((slot, slotIndex) =>
+        resolveEffectiveTeamSlotForMegaSelection(
+          slot,
+          slotIndex,
+          activeMegaSlotIndex,
+          basePokemonBySpeciesKey,
+          speciesMovesetByKey,
+          moveByKey,
+        ),
+      ),
+    [activeMegaSlotIndex, basePokemonBySpeciesKey, moveByKey, speciesMovesetByKey, team],
+  );
+  const previewBattleEngineAllyMembers = useMemo<BattleStateMemberInput[]>(
+    () => buildPreviewBattleEngineAllyMembersFromTeam(effectiveTeam, speciesMovesetByKey, moveByKey),
+    [effectiveTeam, moveByKey, speciesMovesetByKey],
+  );
   const solverBringOrder = useMemo(() => {
     if (!teamPreviewRecommendation) {
       return [];
@@ -8537,13 +8767,13 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     () =>
       bringSelection.bringSlotIndices
         .map((slotIndex) => {
-          const slot = team[slotIndex];
+          const slot = effectiveTeam[slotIndex];
           return slot?.pokemon ? { slotIndex, slot, pokemon: slot.pokemon } : null;
         })
         .filter(
           (entry): entry is { slotIndex: number; slot: LoadedTeamSlot; pokemon: PokemonRecord } => Boolean(entry),
         ),
-    [bringSelection.bringSlotIndices, team],
+    [bringSelection.bringSlotIndices, effectiveTeam],
   );
   const bringSelectedPokemon = useMemo(
     () => bringSelectedTeam.map(({ pokemon }) => pokemon),
@@ -9463,7 +9693,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         return [];
       }
 
-      return team
+      return effectiveTeam
         .map((slot, slotIndex) => {
           if (!bringSelectedSlotSet.has(slotIndex) || !slot.pokemon) {
             return null;
@@ -9516,7 +9746,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         )
         .sort((left, right) => compareMatchupEloSummaries(left, right));
     },
-    [analyzedOpponentEntries, bringSelectedSlotSet, damageAttackStage, damageDefenseStage, damageTerrain, damageWeather, team],
+    [analyzedOpponentEntries, bringSelectedSlotSet, damageAttackStage, damageDefenseStage, damageTerrain, damageWeather, effectiveTeam],
   );
   const teamMatchupEloCoversAll = teamMatchupEloRows.filter((row) => row.coverageCount === analyzedOpponentEntries.length);
   const teamMatchupEloGuaranteesAll = teamMatchupEloRows.filter(
@@ -10095,6 +10325,68 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           />
         ))}
       </section>
+
+      {potentialMegaSlots.length > 0 ? (
+        <section className="mega-picker-panel" aria-label="Potential mega evolutions">
+          <div className="mega-picker-panel__head">
+            <div>
+              <p className="eyebrow">Potential Mega Evolutions</p>
+              <h3>Active mega for preview scoring</h3>
+            </div>
+            <span className="mini-type-pill neutral-pill">
+              {activeMegaSlotIndex !== null
+                ? `Slot ${activeMegaSlotIndex + 1} mega`
+                : megaSelectionMode === "auto" && potentialMegaSlots.length > 1 && !teamPreviewRecommendation
+                  ? "Auto waits for solve"
+                  : "No mega active"}
+            </span>
+          </div>
+
+          <div className="mega-picker-panel__actions">
+            <button
+              type="button"
+              className={`mega-picker-button mega-picker-button--auto${megaSelectionMode === "auto" ? " is-selected" : ""}`}
+              onClick={() => {
+                setMegaSelectionMode("auto");
+                setManualMegaSlotIndex(null);
+              }}
+              aria-pressed={megaSelectionMode === "auto"}
+            >
+              <span className="mega-picker-button__title">Auto</span>
+              <span className="mega-picker-button__meta">
+                {teamPreviewRecommendation ? "Solver picked the best mega scenario" : "Solver will compare mega scenarios"}
+              </span>
+            </button>
+
+            {potentialMegaSlots.map(({ slotIndex, megaPokemon, basePokemon }) => {
+              const isSelected = activeMegaSlotIndex === slotIndex;
+              return (
+                <button
+                  key={`mega-picker-${slotIndex}`}
+                  type="button"
+                  className={`mega-picker-button${isSelected ? " is-selected" : ""}`}
+                  onClick={() => {
+                    setMegaSelectionMode("manual");
+                    setManualMegaSlotIndex(slotIndex);
+                  }}
+                  aria-pressed={isSelected}
+                  aria-label={`Set ${megaPokemon.name} as the active mega evolution`}
+                >
+                  <span className="mega-picker-button__slot">Slot {slotIndex + 1}</span>
+                  <span className="mega-picker-button__sprites" aria-hidden="true">
+                    <PokemonSprite pokemon={megaPokemon} className="mega-picker-button__sprite" />
+                    <PokemonSprite pokemon={basePokemon} className="mega-picker-button__sprite is-base" />
+                  </span>
+                  <span className="mega-picker-button__title">{megaPokemon.name}</span>
+                  <span className="mega-picker-button__meta">
+                    Other mega slots score as their normal form
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
 
       <section className="team-analysis-layout">
         <section className="board-panel team-matrix-panel">
@@ -10803,7 +11095,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                           {Array.from({ length: bringSelection.bringCount }, (_, orderIndex) => {
                             const slotIndex = bringSelection.bringSlotIndices[orderIndex];
                             const pokemon =
-                              slotIndex !== undefined && slotIndex !== null ? team[slotIndex]?.pokemon ?? null : null;
+                              slotIndex !== undefined && slotIndex !== null ? effectiveTeam[slotIndex]?.pokemon ?? null : null;
                             const isLocked =
                               slotIndex !== undefined && slotIndex !== null && lockedBringSlotSet.has(slotIndex);
                             const isAutoFilled =
@@ -10846,7 +11138,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                         <div className="bring-order-tray__chips">
                           {bringSelection.benchSlotIndices.length > 0 ? (
                             bringSelection.benchSlotIndices.map((slotIndex) => {
-                              const pokemon = team[slotIndex]?.pokemon;
+                              const pokemon = effectiveTeam[slotIndex]?.pokemon;
                               return pokemon ? (
                                 <span key={`bench-chip-${slotIndex}`} className="bring-order-mini-chip is-bench">
                                   <PokemonSprite pokemon={pokemon} className="bring-order-mini-chip__sprite" />
@@ -10863,10 +11155,16 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
 
                     <div className="bring-order-grid">
                       {filledTeamSlotIndices.map((slotIndex) => {
-                        const pokemon = team[slotIndex]?.pokemon;
+                        const originalPokemon = team[slotIndex]?.pokemon;
+                        const pokemon = effectiveTeam[slotIndex]?.pokemon;
                         if (!pokemon) {
                           return null;
                         }
+                        const isMegaAdjusted =
+                          originalPokemon !== undefined &&
+                          originalPokemon !== null &&
+                          originalPokemon.id !== pokemon.id &&
+                          isChampionsMegaEntry(originalPokemon);
 
                         const selectionRank = bringPickOrderBySlot.get(slotIndex);
                         const isLocked = selectionRank !== undefined;
@@ -10903,7 +11201,13 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                             <PokemonSprite pokemon={pokemon} className="bring-order-card__sprite" />
                             <strong>{pokemon.name}</strong>
                             <span className="bring-order-card__state">
-                              {isLocked ? `Bring ${selectionRank}` : isAutoFilled ? "Solver fill" : "Available"}
+                              {isMegaAdjusted
+                                ? "Normal form"
+                                : isLocked
+                                  ? `Bring ${selectionRank}`
+                                  : isAutoFilled
+                                    ? "Solver fill"
+                                    : "Available"}
                             </span>
                             <span className="bring-order-card__hint">{helperLabel}</span>
                           </button>

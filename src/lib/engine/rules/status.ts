@@ -1,16 +1,9 @@
 import { normalizeMoveKey } from "../moveRegistry";
+import { getGroundedState } from "../mechanicsSupport";
 import type { BattleCombatantState, BattleMoveOption, BattleState, BattleStatusCondition } from "../types";
 
-function isGrounded(combatant: BattleCombatantState) {
-  if (normalizeMoveKey(combatant.abilityName ?? combatant.abilityId) === "levitate") {
-    return false;
-  }
-
-  return !combatant.pokemon.types.includes("Flying");
-}
-
 function blocksStatusByTerrain(state: BattleState, target: BattleCombatantState, statusCondition: BattleStatusCondition) {
-  if (!isGrounded(target)) {
+  if (!getGroundedState(target, state.field).grounded) {
     return false;
   }
 
@@ -38,7 +31,27 @@ function blocksStatusByType(target: BattleCombatantState, statusCondition: Battl
     return true;
   }
 
+  if (
+    move?.effectData?.powderMove &&
+    (normalizeMoveKey(target.abilityName ?? target.abilityId) === "overcoat" ||
+      normalizeMoveKey(target.itemName ?? target.itemId) === "safetygoggles")
+  ) {
+    return true;
+  }
+
   return false;
+}
+
+function blocksPowderMove(target: BattleCombatantState, move: BattleMoveOption | null) {
+  if (!move?.effectData?.powderMove) {
+    return false;
+  }
+
+  return (
+    target.pokemon.types.includes("Grass") ||
+    normalizeMoveKey(target.abilityName ?? target.abilityId) === "overcoat" ||
+    normalizeMoveKey(target.itemName ?? target.itemId) === "safetygoggles"
+  );
 }
 
 export function canApplyStatusCondition(
@@ -52,6 +65,10 @@ export function canApplyStatusCondition(
   }
 
   if (state.sides[target.side].safeguardTurns > 0) {
+    return false;
+  }
+
+  if (blocksPowderMove(target, move)) {
     return false;
   }
 

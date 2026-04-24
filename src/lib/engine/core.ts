@@ -12,6 +12,7 @@ import { doesDefenderItemReduceDamage, isResistBerryItem, normalizeDamageItemId 
 import { getEffectiveSpeedForBattleState } from "./rules/speed";
 import { canApplyStatusCondition } from "./rules/status";
 import { getBelievedMoves } from "./beliefs";
+import { getGroundedState } from "./mechanicsSupport";
 import { getSpecialMoveDefinition, hasSelfProtectMove, isProtectFamilyMoveName, normalizeMoveKey } from "./moveRegistry";
 import type {
   BattleAction,
@@ -65,6 +66,18 @@ function clampUnit(value: number) {
 
 function getAbilityKey(combatant: BattleCombatantState) {
   return normalizeMoveKey(combatant.abilityName ?? combatant.abilityId);
+}
+
+function getItemKey(combatant: BattleCombatantState) {
+  return normalizeMoveKey(combatant.itemName ?? combatant.itemId);
+}
+
+function hasAnyAbilityKey(combatant: BattleCombatantState, keys: readonly string[]) {
+  return keys.includes(getAbilityKey(combatant));
+}
+
+function hasAnyItemKey(combatant: BattleCombatantState, keys: readonly string[]) {
+  return keys.includes(getItemKey(combatant));
 }
 
 function getMoveFromLookup(moveName: string, moveByKey: ReadonlyMap<string, MoveRecord>) {
@@ -346,6 +359,20 @@ function createCombatantState(
   const statusCondition = member.statusCondition ?? "none";
   const sleepTurns =
     statusCondition === "sleep" ? Math.max(1, Math.round(member.sleepTurns ?? DEFAULT_SLEEP_TURNS)) : 0;
+  const infoMode = member.infoMode ?? "custom";
+  const hypothesisCandidateMoves =
+    infoMode === "closedSheet"
+      ? (member.setHypotheses ?? []).flatMap((hypothesis) =>
+          hypothesis.moves.map((moveName) => ({
+            name: moveName,
+            source: hypothesis.source === "preset" ? ("preset" as const) : hypothesis.source === "known" || hypothesis.source === "user" ? ("observed" as const) : ("inferred" as const),
+            weight: Math.max(0.01, hypothesis.probability),
+            confidence: "candidate" as const,
+          })),
+        )
+      : [];
+  const candidateMoves = infoMode === "openTeamSheet" ? [] : [...(member.candidateMoves ?? []), ...hypothesisCandidateMoves];
+  const inferredMoveNames = infoMode === "openTeamSheet" ? [] : member.inferredMoveNames;
   const moves = buildKnownMoves(
     member.id,
     member.savedAttacks,
@@ -353,8 +380,8 @@ function createCombatantState(
     member.moveNames,
     moveByKey,
     universalProtect,
-    member.candidateMoves,
-    member.inferredMoveNames,
+    candidateMoves,
+    inferredMoveNames,
   );
   const inferredProtectStreak =
     typeof member.protectStreak === "number"
@@ -404,6 +431,9 @@ function createCombatantState(
     isProtected: member.isProtected ?? false,
     isFlinched: member.isFlinched ?? false,
     wasSwitchedInThisTurn: member.wasSwitchedInThisTurn ?? false,
+    infoMode,
+    setHypotheses: member.setHypotheses ?? [],
+    volatileState: member.volatileState,
   };
 }
 
@@ -460,6 +490,7 @@ function createSideState(
       quickGuardActive: false,
       wideGuardActive: false,
       redirectionTargetId: null,
+      redirectionIsPowder: false,
       allySwitchPair: null,
     },
   };
@@ -523,6 +554,7 @@ export function createBattleState(input: CreateBattleStateInput): BattleState {
       weather: input.fieldState?.weather ?? input.weather ?? "none",
       terrain: input.fieldState?.terrain ?? input.terrain ?? "none",
       trickRoomTurns,
+      gravityTurns: input.fieldState?.gravityTurns ?? 0,
       turn: input.fieldState?.turn ?? 1,
     },
     policies: {
@@ -546,6 +578,8 @@ export function cloneBattleState(state: BattleState): BattleState {
           stages: { ...combatant.stages },
           knownMoves: [...combatant.knownMoves],
           candidateMoves: [...combatant.candidateMoves],
+          setHypotheses: [...combatant.setHypotheses],
+          volatileState: combatant.volatileState ? { ...combatant.volatileState } : undefined,
         },
       ]),
     ),
@@ -561,6 +595,7 @@ export function cloneBattleState(state: BattleState): BattleState {
         quickGuardActive: state.sides.ally.quickGuardActive,
         wideGuardActive: state.sides.ally.wideGuardActive,
         redirectionTargetId: state.sides.ally.redirectionTargetId,
+        redirectionIsPowder: state.sides.ally.redirectionIsPowder,
         allySwitchPair: state.sides.ally.allySwitchPair ? [...state.sides.ally.allySwitchPair] as [string, string] : null,
       },
       enemy: {
@@ -574,6 +609,7 @@ export function cloneBattleState(state: BattleState): BattleState {
         quickGuardActive: state.sides.enemy.quickGuardActive,
         wideGuardActive: state.sides.enemy.wideGuardActive,
         redirectionTargetId: state.sides.enemy.redirectionTargetId,
+        redirectionIsPowder: state.sides.enemy.redirectionIsPowder,
         allySwitchPair: state.sides.enemy.allySwitchPair ? [...state.sides.enemy.allySwitchPair] as [string, string] : null,
       },
     },
@@ -636,7 +672,17 @@ export function getEffectiveSpeed(state: BattleState, combatantId: string) {
   return getEffectiveSpeedForBattleState(state, combatant);
 }
 
-export function isGrounded(combatant: BattleCombatantState) {
+export function isGrounded(combatant: BattleCombatantState, state?: BattleState) {
+  if (state) {
+    return getGroundedState(combatant, state.field).grounded;
+  }
+
+  if (combatant.itemId === "ironball") {
+    return true;
+  }
+  if (combatant.itemId === "airballoon" && !combatant.itemConsumed) {
+    return false;
+  }
   if (combatant.abilityId === "levitate") {
     return false;
   }
@@ -735,8 +781,8 @@ export function getDamagePreview(
     isSpreadMove: move.isSpreadMove,
     weather: state.field.weather,
     terrain: state.field.terrain,
-    attackerGrounded: isGrounded(attacker),
-    defenderGrounded: isGrounded(defender),
+    attackerGrounded: isGrounded(attacker, state),
+    defenderGrounded: isGrounded(defender, state),
     attackerStatStage: move.category === "physical" ? attacker.stages.attack : attacker.stages.specialAttack,
     defenderStatStage: move.category === "physical" ? defender.stages.defense : defender.stages.specialDefense,
     attackerAbility: attacker.abilityId,
@@ -801,6 +847,22 @@ function compareActionOrder(
   }
 
   return left.actorId.localeCompare(right.actorId);
+}
+
+function actionsAreSpeedTied(state: BattleState, left: PlannedAction, right: PlannedAction, trickRoomActive: boolean) {
+  if (left.actorId === right.actorId) {
+    return false;
+  }
+  if (getActionPriority(state, left.action) !== getActionPriority(state, right.action)) {
+    return false;
+  }
+  const leftActor = state.combatants[left.actorId];
+  const rightActor = state.combatants[right.actorId];
+  if (!leftActor || !rightActor || leftActor.side === rightActor.side) {
+    return false;
+  }
+  void trickRoomActive;
+  return getEffectiveSpeed(state, left.actorId) === getEffectiveSpeed(state, right.actorId);
 }
 
 function sumProjectedDamage(state: BattleState, actorId: string, move: BattleMoveOption, targetIds: string[]) {
@@ -1118,6 +1180,7 @@ function getStateAfterPassiveTurn(state: BattleState) {
   decaySideConditions(projected.sides.ally);
   decaySideConditions(projected.sides.enemy);
   projected.field.trickRoomTurns = Math.max(0, projected.field.trickRoomTurns - 1);
+  projected.field.gravityTurns = Math.max(0, (projected.field.gravityTurns ?? 0) - 1);
   return projected;
 }
 
@@ -1741,6 +1804,10 @@ function generateActionsForActor(
       continue;
     }
 
+    if (move.effectKind === "redirection" && getOtherActiveAllyIds(state, actorId).length === 0) {
+      continue;
+    }
+
     if (
       move.targetKind === "field" ||
       move.targetKind === "self" ||
@@ -1761,6 +1828,13 @@ function generateActionsForActor(
 
     for (const targetId of enemyIds) {
       if ((move.effectKind === "damage" || move.effectKind === "fakeOut") && isTargetImmuneByTyping(state, actorId, targetId, move)) {
+        continue;
+      }
+      if (
+        move.effectKind === "status" &&
+        move.effectData?.statusCondition &&
+        !canApplyStatusCondition(state, state.combatants[targetId], move.effectData.statusCondition, move)
+      ) {
         continue;
       }
       actions.push(buildPlannedAction(state, actorId, { type: "move", actorId, moveId: move.id, targetId }));
@@ -2923,6 +2997,7 @@ function applyReactiveStageDelta(
       abilityKey === "clearbody" ||
       abilityKey === "whitesmoke" ||
       abilityKey === "fullmetalbody" ||
+      target.itemId === "clearamulet" ||
       (cause === "intimidate" &&
         (abilityKey === "innerfocus" ||
           abilityKey === "owntempo" ||
@@ -2933,7 +3008,7 @@ function applyReactiveStageDelta(
       if (hasAnyStageDelta(negativeDelta)) {
         events.push({
           targetId: target.id,
-          text: `${target.pokemon.name}'s ${target.abilityName ?? "ability"} prevents the stat drop.`,
+          text: `${target.pokemon.name}'s ${target.itemId === "clearamulet" ? (target.itemName ?? "Clear Amulet") : (target.abilityName ?? "ability")} prevents the stat drop.`,
         });
       }
     } else if (abilityKey === "mirrorarmor" && allowReflection) {
@@ -3238,7 +3313,44 @@ function resolveSingleTarget(state: BattleState, actor: BattleCombatantState, or
     return abilityRedirectId ?? originalTargetId;
   }
 
+  if (state.sides[originalTarget.side].redirectionIsPowder && isPowderImmune(originalTarget)) {
+    const abilityRedirectId = getAbsorbRedirectTargetId(state, originalTarget.side, move);
+    return abilityRedirectId ?? originalTargetId;
+  }
+
   return redirectedId;
+}
+
+function isPowderImmune(target: BattleCombatantState) {
+  return (
+    target.pokemon.types.includes("Grass") ||
+    hasAnyAbilityKey(target, ["overcoat"]) ||
+    hasAnyItemKey(target, ["safetygoggles"])
+  );
+}
+
+function isPriorityBlockedByAbility(state: BattleState, attacker: BattleCombatantState, target: BattleCombatantState, move: BattleMoveOption) {
+  if (move.priority <= 0 || attacker.side === target.side) {
+    return false;
+  }
+
+  return getActiveIds(state, target.side).some((combatantId) => {
+    const ally = state.combatants[combatantId];
+    return ally ? hasAnyAbilityKey(ally, ["queenlymajesty", "dazzling", "armortail"]) : false;
+  });
+}
+
+function isPriorityBlockedByTerrain(state: BattleState, attacker: BattleCombatantState, target: BattleCombatantState, move: BattleMoveOption) {
+  return (
+    move.priority > 0 &&
+    attacker.side !== target.side &&
+    state.field.terrain === "psychic" &&
+    getGroundedState(target, state.field).grounded
+  );
+}
+
+function isFakeOutFlinchPrevented(target: BattleCombatantState) {
+  return hasAnyAbilityKey(target, ["innerfocus", "shielddust"]) || hasAnyItemKey(target, ["covertcloak"]);
 }
 
 function shouldMoveHit(move: BattleMoveOption, accuracyMode: "conservative" | "expected" | "optimistic") {
@@ -3330,6 +3442,10 @@ function isBlockedByGuard(state: BattleState, attacker: BattleCombatantState, ta
   }
 
   const targetSide = state.sides[target.side];
+  if (isPriorityBlockedByTerrain(state, attacker, target, move) || isPriorityBlockedByAbility(state, attacker, target, move)) {
+    return true;
+  }
+
   if (targetSide.quickGuardActive && move.priority > 0) {
     return true;
   }
@@ -3517,6 +3633,7 @@ function executeMove(
 
   if (move.effectKind === "redirection") {
     state.sides[actor.side].redirectionTargetId = actor.id;
+    state.sides[actor.side].redirectionIsPowder = Boolean(move.effectData?.powderMove);
     events.push({ actorId: actor.id, text: `${actor.pokemon.name} redirects attention with ${move.name}.` });
     return;
   }
@@ -3710,12 +3827,18 @@ function executeMove(
       });
     }
 
-    if (move.effectKind === "fakeOut" && target.currentHp > 0 && !actedIds.has(targetId)) {
+    if (move.effectKind === "fakeOut" && target.currentHp > 0 && !actedIds.has(targetId) && !isFakeOutFlinchPrevented(target)) {
       target.isFlinched = true;
       events.push({
         actorId: actor.id,
         targetId,
         text: `${target.pokemon.name} flinches from Fake Out.`,
+      });
+    } else if (move.effectKind === "fakeOut" && target.currentHp > 0 && isFakeOutFlinchPrevented(target)) {
+      events.push({
+        actorId: actor.id,
+        targetId,
+        text: `${target.pokemon.name} is protected from Fake Out's flinch.`,
       });
     }
 
@@ -3797,6 +3920,7 @@ function decaySideConditions(sideState: BattleState["sides"][BattleSide]) {
   sideState.quickGuardActive = false;
   sideState.wideGuardActive = false;
   sideState.redirectionTargetId = null;
+  sideState.redirectionIsPowder = false;
   sideState.allySwitchPair = null;
 }
 
@@ -3888,6 +4012,7 @@ function finalizeTurn(state: BattleState, startingActiveIds: Set<string>, events
   decaySideConditions(state.sides.ally);
   decaySideConditions(state.sides.enemy);
   state.field.trickRoomTurns = Math.max(0, state.field.trickRoomTurns - 1);
+  state.field.gravityTurns = Math.max(0, (state.field.gravityTurns ?? 0) - 1);
   state.field.turn += 1;
 }
 
@@ -3912,10 +4037,33 @@ export function resolveTurn(
   }
 
   const actedIds = new Set<string>();
-  const moveActions = allActions
+  const unsortedMoveActions = allActions
     .filter((action) => action.action.type !== "switch")
-    .map((action) => remapMoveTargetAfterSwitches(action, switchedActiveIds))
-    .sort((left, right) => compareActionOrder(state, left, right, state.field.trickRoomTurns > 0));
+    .map((action) => remapMoveTargetAfterSwitches(action, switchedActiveIds));
+  for (let leftIndex = 0; leftIndex < unsortedMoveActions.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < unsortedMoveActions.length; rightIndex += 1) {
+      const left = unsortedMoveActions[leftIndex];
+      const right = unsortedMoveActions[rightIndex];
+      if (!actionsAreSpeedTied(state, left, right, state.field.trickRoomTurns > 0)) {
+        continue;
+      }
+      const leftActor = state.combatants[left.actorId];
+      const rightActor = state.combatants[right.actorId];
+      events.push({
+        actorId: left.actorId,
+        targetId: right.actorId,
+        text: `Line depends on speed tie between ${leftActor?.pokemon.name ?? left.actorId} and ${rightActor?.pokemon.name ?? right.actorId}.`,
+        unsupportedMechanic: {
+          mechanic: "speed tie",
+          supportLevel: "approximate",
+          reason: "Equal-priority equal-speed actions are annotated as a 50/50 dependency; this resolver still emits one representative order.",
+          affectedCombatantId: left.actorId,
+          severity: "warning",
+        },
+      });
+    }
+  }
+  const moveActions = unsortedMoveActions.sort((left, right) => compareActionOrder(state, left, right, state.field.trickRoomTurns > 0));
 
   for (const action of moveActions) {
     if (action.action.type === "pass") {

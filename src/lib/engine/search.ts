@@ -2,6 +2,7 @@ import { getBelievedMoves, summarizeEnemyBeliefs } from "./beliefs";
 import { ENGINE_DEFAULTS, generateJointActionPlans, getActiveIds, getMoveOption, getOpponentSide, resolveTurn } from "./core";
 import { evaluateBattleState } from "./evaluate";
 import { buildSearchStateKey } from "./hash";
+import { buildMechanicSupportReport, dedupeMarkers } from "./mechanicsSupport";
 import { TranspositionTable, type CachedSearchBundle } from "./transposition";
 import type {
   BranchPolicy,
@@ -89,7 +90,7 @@ const DEFAULT_MAX_NODES: Record<SearchMode, number> = {
 
 const DEFAULT_MAX_MS: Record<SearchMode, number> = {
   fast: 20,
-  balanced: 60,
+  balanced: 120,
   deep: 140,
 };
 
@@ -209,7 +210,26 @@ function createSearchDiagnostics(
     ),
     enemyBeliefs,
     pv: [],
+    unsupportedMechanics: enemyBeliefs.some((combatant) => combatant.dependsOnInferredMoves)
+      ? [
+          {
+            mechanic: "closed-sheet set hypotheses",
+            supportLevel: "approximate",
+            reason: "Complete set hypotheses were unavailable for at least one opponent, so independent move beliefs were used.",
+            affectedSide: "enemy",
+            severity: "warning",
+          },
+        ]
+      : [],
   };
+}
+
+function recordTurnDiagnostics(diagnostics: SearchDiagnostics, preview: { events: Array<{ unsupportedMechanic?: SearchDiagnostics["unsupportedMechanics"][number] }> }) {
+  const markers = preview.events.flatMap((event) => event.unsupportedMechanic ? [event.unsupportedMechanic] : []);
+  if (markers.length === 0) {
+    return;
+  }
+  diagnostics.unsupportedMechanics = dedupeMarkers([...diagnostics.unsupportedMechanics, ...markers]);
 }
 
 function bundleFromScalar(score: number): CachedSearchBundle {
@@ -548,6 +568,7 @@ function selectDeepSearchCandidates(
           accuracyMode: branch.accuracyMode,
           secondaryMode: branch.secondaryMode,
         });
+        recordTurnDiagnostics(context.diagnostics, preview);
         weightedScore += evaluateBattleState(preview.state) * branch.weight;
       }
       worstRobust = Math.min(worstRobust, weightedScore);
@@ -697,6 +718,7 @@ function evaluateNode(
           accuracyMode: branch.accuracyMode,
           secondaryMode: branch.secondaryMode,
         });
+        recordTurnDiagnostics(context.diagnostics, preview);
         const childBundle = evaluateNode(preview.state, depth - 1, ply + 1, extensionsRemaining, context);
 
         robustScore += childBundle.robustScore * branch.weight;
@@ -899,6 +921,7 @@ function scoreRootPlans(
           accuracyMode: branch.accuracyMode,
           secondaryMode: branch.secondaryMode,
         });
+        recordTurnDiagnostics(context.diagnostics, preview);
         const childBundle = depth > 1
           ? evaluateNode(preview.state, depth - 1, 1, context.budget.maxSelectiveExtensions, context)
           : bundleFromScalar(evaluateBattleState(preview.state));
@@ -1101,6 +1124,8 @@ export function recommendBestPlan(state: BattleState, options?: SearchOptions): 
   };
 
   finalizeDiagnostics(context, result.depthReached, result.pv);
+  diagnostics.unsupportedMechanics = dedupeMarkers(diagnostics.unsupportedMechanics);
+  diagnostics.mechanicsSupportReport = buildMechanicSupportReport(diagnostics.unsupportedMechanics);
   return {
     ...result,
     diagnostics: {
@@ -1108,6 +1133,8 @@ export function recommendBestPlan(state: BattleState, options?: SearchOptions): 
       elapsedMs: diagnostics.elapsedMs,
       depthReached: result.depthReached,
       pv: result.pv,
+      unsupportedMechanics: diagnostics.unsupportedMechanics,
+      mechanicsSupportReport: diagnostics.mechanicsSupportReport,
     },
   };
 }

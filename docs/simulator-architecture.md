@@ -50,6 +50,7 @@ Implemented now:
 - team-preview request generation plus lead validation/application
 - dedicated `forcedReplacement` request kind generation
 - explicit unsupported-mechanic markers for unimplemented turn resolution
+- shared `UnsupportedMechanicMarker` / `MechanicSupportReport` shape used by the tactical engine and future simulator path
 
 Not implemented yet:
 
@@ -70,8 +71,11 @@ Today:
 
 - `src/lib/engine/` is still the only working turn resolver for the browser helper UI.
 - `src/lib/sim/` now has isolated state creation, cloned public projections, persisted RNG state, and validated team-preview application, but it is not a full move-accurate resolver yet.
+- tactical search may annotate approximate mechanics such as speed ties, groundedness, redirection exceptions, and hidden-set fallbacks. Those annotations are not proof of cartridge accuracy.
 
 The authoritative path must never silently fake unsupported cartridge logic. Until a mechanic is implemented there, the kernel should emit an explicit unsupported marker.
+
+Accuracy claims must be backed by differential tests. Until then, the project should describe implemented transitions as engine-exact or approximate, not cartridge-exact.
 
 ## Hidden Information
 
@@ -83,7 +87,9 @@ The simulator stores truth:
 
 The planner stores uncertainty:
 
-- moveset membership beliefs
+- open-team-sheet fixed knowledge
+- closed-sheet weighted `SetHypothesis` entries
+- fallback independent move membership beliefs when complete hypotheses are unavailable
 - current-turn action priors
 - sampling/hypothesis logic
 

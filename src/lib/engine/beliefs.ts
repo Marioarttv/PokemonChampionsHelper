@@ -4,6 +4,7 @@ import type {
   BattleMoveOption,
   BattleState,
   EnemyAssumptionSummary,
+  SetHypothesis,
 } from "./types";
 
 export type BelievedMove = {
@@ -77,6 +78,41 @@ export function getBelievedMoves(
     // `policyWeight` remains the normalized move-on-set belief for existing consumers.
     policyWeight: entry.rawMembershipWeight / totalWeight,
   }));
+}
+
+export function getSetHypotheses(combatant: BattleCombatantState): SetHypothesis[] {
+  if (combatant.setHypotheses.length > 0) {
+    const total = combatant.setHypotheses.reduce((sum, hypothesis) => sum + Math.max(0, hypothesis.probability), 0) || 1;
+    return combatant.setHypotheses.map((hypothesis) => ({
+      ...hypothesis,
+      probability: Math.max(0, hypothesis.probability) / total,
+    }));
+  }
+
+  const knownMoves = combatant.knownMoves.map((move) => move.name);
+  if (combatant.infoMode === "openTeamSheet") {
+    return [
+      {
+        moves: knownMoves,
+        item: combatant.itemName,
+        ability: combatant.abilityName,
+        probability: 1,
+        source: "known",
+      },
+    ];
+  }
+
+  const believedMoves = getBelievedMoves(combatant, { topN: 4 });
+  return [
+    {
+      moves: believedMoves.map((entry) => entry.move.name),
+      item: combatant.itemName,
+      ability: combatant.abilityName,
+      probability: 1,
+      source: believedMoves.some((entry) => entry.inferred) ? "inferred" : "known",
+      roleTags: ["approximate-independent-move-beliefs"],
+    },
+  ];
 }
 
 export function findBelievedMoveWeight(

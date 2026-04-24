@@ -1,4 +1,10 @@
 export type BringSelectionMode = "auto" | "manual";
+export type BringSelectionFallbackReason =
+  | "recommendation_incomplete"
+  | "recommendation_invalid"
+  | "not_enough_filled_slots"
+  | "manual_selection_incomplete"
+  | "none";
 
 export type BringSelectionRequirements = {
   bringCount: number;
@@ -27,6 +33,10 @@ export type ResolvedBringSelection = BringSelectionRequirements & {
   recommendedBringSlotIndices: number[];
   recommendedBenchSlotIndices: number[];
   hasCompleteManualSelection: boolean;
+  fallbackUsed: boolean;
+  fallbackReason?: BringSelectionFallbackReason;
+  confidence: "high" | "medium" | "low";
+  warnings: string[];
 };
 
 export type ResolvedKnownBring = BringSelectionRequirements & {
@@ -81,11 +91,23 @@ export function resolveBringSelection(options: ResolveBringSelectionOptions): Re
   const normalizedFilledSlotIndices = uniqueSorted(filledSlotIndices);
   const { bringCount, benchCount } = getBringSelectionRequirements(normalizedFilledSlotIndices, maxBringCount);
   const filledSet = new Set(normalizedFilledSlotIndices);
+  const requestedRecommendedSlotIndices = uniqueOrdered(recommendedFourSlotIndices ?? []);
+  const invalidRecommendedSlotIndices = requestedRecommendedSlotIndices.filter((slotIndex) => !filledSet.has(slotIndex));
   const recommendedBringSlotIndices = uniqueOrdered(
     (recommendedFourSlotIndices ?? []).filter((slotIndex) => filledSet.has(slotIndex)),
   ).slice(0, bringCount);
   const recommendedBenchSlotIndices = getRecommendedBenchSlotIndices(normalizedFilledSlotIndices, recommendedBringSlotIndices, benchCount);
   const fallbackBringSlotIndices = normalizedFilledSlotIndices.slice(0, bringCount);
+  const recommendationFallbackReason: BringSelectionFallbackReason =
+    normalizedFilledSlotIndices.length < maxBringCount
+      ? "not_enough_filled_slots"
+      : invalidRecommendedSlotIndices.length > 0
+        ? "recommendation_invalid"
+        : recommendedBringSlotIndices.length > 0 && recommendedBringSlotIndices.length < bringCount
+          ? "recommendation_incomplete"
+          : "none";
+  const recommendationFallbackUsed =
+    mode !== "manual" && recommendationFallbackReason !== "none" && recommendedBringSlotIndices.length !== bringCount;
   const baseBringSlotIndices =
     recommendedBringSlotIndices.length === bringCount ? recommendedBringSlotIndices : fallbackBringSlotIndices;
   const safeManualBringSlotIndices = manualBringSlotIndices ?? [];
@@ -104,6 +126,33 @@ export function resolveBringSelection(options: ResolveBringSelectionOptions): Re
       : baseBringSlotIndices;
   const bringSlotSet = new Set(bringSlotIndices);
   const benchSlotIndices = normalizedFilledSlotIndices.filter((slotIndex) => !bringSlotSet.has(slotIndex));
+  const manualSelectionIncomplete = mode === "manual" && lockedBringSlotIndices.length > 0 && lockedBringSlotIndices.length < bringCount;
+  const warnings: string[] = [];
+
+  if (invalidRecommendedSlotIndices.length > 0) {
+    warnings.push(`Ignored invalid recommended slot(s): ${invalidRecommendedSlotIndices.join(", ")}.`);
+  }
+  if (recommendationFallbackUsed) {
+    warnings.push("Recommendation was incomplete or invalid; using the first filled slots as a low-confidence fallback.");
+  }
+  if (manualSelectionIncomplete && autoFilledBringSlotIndices.length > 0) {
+    warnings.push(`Manual selection was incomplete; auto-filled slot(s): ${autoFilledBringSlotIndices.join(", ")}.`);
+  }
+
+  const fallbackUsed = recommendationFallbackUsed || manualSelectionIncomplete;
+  const fallbackReason: BringSelectionFallbackReason = manualSelectionIncomplete
+    ? "manual_selection_incomplete"
+    : recommendationFallbackUsed
+      ? recommendationFallbackReason
+      : "none";
+  const confidence =
+    fallbackReason === "none" && mode === "manual" && lockedBringSlotIndices.length === bringCount
+      ? "high"
+      : fallbackUsed
+        ? "low"
+        : recommendedBringSlotIndices.length === bringCount
+          ? "high"
+          : "medium";
 
   return {
     bringCount,
@@ -115,6 +164,10 @@ export function resolveBringSelection(options: ResolveBringSelectionOptions): Re
     recommendedBringSlotIndices,
     recommendedBenchSlotIndices,
     hasCompleteManualSelection: mode === "manual" && lockedBringSlotIndices.length === bringCount,
+    fallbackUsed,
+    fallbackReason,
+    confidence,
+    warnings,
   };
 }
 

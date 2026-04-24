@@ -35,6 +35,8 @@ describe("bringSelection", () => {
       lockedBringSlotIndices: [5, 2, 4, 0],
       autoFilledBringSlotIndices: [],
       recommendedBenchSlotIndices: [4, 5],
+      fallbackUsed: false,
+      confidence: "high",
     });
   });
 
@@ -51,7 +53,66 @@ describe("bringSelection", () => {
       benchSlotIndices: [3, 5],
       lockedBringSlotIndices: [4],
       autoFilledBringSlotIndices: [0, 1, 2],
+      fallbackUsed: true,
+      fallbackReason: "manual_selection_incomplete",
+      confidence: "low",
     });
+  });
+
+  it("does not include invalid recommended indices in the final bring set", () => {
+    const resolved = resolveBringSelection({
+      filledSlotIndices: [0, 1, 2, 3, 4, 5],
+      recommendedFourSlotIndices: [0, 1, 8, 9],
+    });
+
+    expect(resolved.bringSlotIndices).toEqual([0, 1, 2, 3]);
+    expect(resolved.bringSlotIndices).not.toContain(8);
+    expect(resolved.bringSlotIndices).not.toContain(9);
+    expect(resolved.fallbackUsed).toBe(true);
+    expect(resolved.fallbackReason).toBe("recommendation_invalid");
+    expect(resolved.confidence).toBe("low");
+    expect(resolved.warnings.join(" ")).toMatch(/invalid recommended slot/i);
+  });
+
+  it("marks incomplete recommendations as low-confidence fallbacks", () => {
+    const resolved = resolveBringSelection({
+      filledSlotIndices: [0, 1, 2, 3, 4, 5],
+      recommendedFourSlotIndices: [2, 4],
+    });
+
+    expect(resolved.bringSlotIndices).toEqual([0, 1, 2, 3]);
+    expect(resolved.fallbackUsed).toBe(true);
+    expect(resolved.fallbackReason).toBe("recommendation_incomplete");
+    expect(resolved.confidence).toBe("low");
+  });
+
+  it("flags manual partial selections and names auto-filled slots", () => {
+    const resolved = resolveBringSelection({
+      filledSlotIndices: [0, 1, 2, 3, 4, 5],
+      recommendedFourSlotIndices: [1, 2, 3, 4],
+      manualBringSlotIndices: [5, 1],
+      mode: "manual",
+    });
+
+    expect(resolved.bringSlotIndices).toEqual([5, 1, 2, 3]);
+    expect(resolved.autoFilledBringSlotIndices).toEqual([2, 3]);
+    expect(resolved.fallbackUsed).toBe(true);
+    expect(resolved.fallbackReason).toBe("manual_selection_incomplete");
+    expect(resolved.warnings.join(" ")).toMatch(/auto-filled slot\(s\): 2, 3/i);
+  });
+
+  it("marks completed manual selections as high-confidence", () => {
+    const resolved = resolveBringSelection({
+      filledSlotIndices: [0, 1, 2, 3, 4, 5],
+      recommendedFourSlotIndices: [0, 1, 2, 3],
+      manualBringSlotIndices: [5, 4, 3, 2],
+      mode: "manual",
+    });
+
+    expect(resolved.hasCompleteManualSelection).toBe(true);
+    expect(resolved.fallbackUsed).toBe(false);
+    expect(resolved.confidence).toBe("high");
+    expect(resolved.warnings).toEqual([]);
   });
 
   it("appends manual picks until bring order is full", () => {

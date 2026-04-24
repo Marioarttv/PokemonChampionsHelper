@@ -15,7 +15,9 @@ The engine remains synchronous at its core for testability and determinism. The 
 - `core.ts`
   Builds battle states, generates legal actions, resolves turns, and scores action heuristics.
 - `beliefs.ts`
-  Central belief helper for known plus candidate move modeling.
+  Central belief helper for known moves, candidate moves, and complete set hypotheses.
+- `mechanicsSupport.ts`
+  Shared support-level and unsupported-mechanic diagnostics.
 - `evaluate.ts`
   Belief-aware positional evaluator.
 - `search.ts`
@@ -122,7 +124,14 @@ The staging score is still intentionally objective-agnostic, so deep-mode candid
 
 ## Hidden Information and Beliefs
 
-Enemy move handling is now belief-aware.
+Enemy move handling is now belief-aware and distinguishes information modes:
+
+- `openTeamSheet`
+  Species/form, ability, item, listed moves, and Tera Type are treated as fixed when supplied. The engine does not invent extra candidate moves/items/abilities in this mode.
+- `closedSheet`
+  The preferred model is a weighted list of complete `SetHypothesis` entries. Each hypothesis can carry moves, item, ability, Tera Type, speed bucket, role tags, source, and probability.
+- `custom`
+  Preserves the older mixed behavior for UI flows that provide partial user data.
 
 `getBelievedMoves(combatant, options)`:
 
@@ -130,6 +139,12 @@ Enemy move handling is now belief-aware.
 - includes candidate moves with normalized weights
 - supports top-`N` truncation
 - returns move-on-set belief weights and confidence summaries usable by both evaluation and diagnostics
+
+`getSetHypotheses(combatant)`:
+
+- returns normalized complete set hypotheses when available
+- returns a fixed known set for open-team-sheet combatants
+- falls back to the older independent move-belief approximation when complete hypotheses are unavailable
 
 This belief helper is now used in:
 
@@ -143,6 +158,8 @@ This belief helper is now used in:
 - evaluator pressure, bench-quality, and tempo terms
 
 For fully known custom enemy sets, the behavior remains deterministic because there are no candidate moves to blend in.
+
+When closed-sheet complete hypotheses are unavailable, diagnostics include an approximate support marker. The recommendation should not present that fallback as high-confidence hidden-information modeling.
 
 Search-specific note:
 
@@ -204,6 +221,8 @@ Each recommendation now exposes:
 - `objectiveMode`
 - `searchMode`
 - `enemyBeliefs`
+- `unsupportedMechanics`
+- `mechanicsSupportReport`
 - `pv`
 
 The UI explanation panel surfaces:
@@ -261,14 +280,33 @@ npm run bench:engine
 
 The engine is stronger than before, but it is still approximate.
 
+Mechanics support levels are explicit:
+
+| Mechanic | Support |
+| --- | --- |
+| Direct single/spread damage with current rough damage model | exact within this engine, approximate vs cartridge |
+| Protect streak odds | approximate |
+| Wide Guard / Quick Guard blocking | approximate |
+| Feint breaking Protect/guards | approximate |
+| Fake Out first-active-turn, Ghost immunity, Inner Focus/Covert Cloak/Shield Dust prevention | approximate |
+| Psychic Terrain priority blocking for grounded targets | approximate |
+| Armor Tail / Dazzling / Queenly Majesty priority blocking | approximate |
+| Follow Me / Rage Powder with Grass, Overcoat, Safety Goggles exceptions | approximate |
+| Storm Drain / Lightning Rod redirection and absorption when represented | approximate |
+| Groundedness from Flying, Levitate, Air Balloon, Iron Ball, Gravity, represented volatile state | approximate |
+| Equal-priority equal-speed order | approximate, reported as speed-tie dependency |
+| Switch-in Intimidate, weather setter order, terrain setter order | approximate |
+| Forced replacement flow | approximate |
+| PP, exhaustive secondary effects, hazards, full residual ordering | unsupported |
+
 Still simplified:
 
 - exact cartridge probability trees are not modeled
 - secondaries remain coarse branch policies rather than full distributions
-- there is no full hidden-information search over complete moveset combinations
+- complete closed-sheet set hypotheses are supported, but there is not yet a full probabilistic search over every set combination across both teams
 - transposition caching stores exact values only, not alpha/beta bounds
 - action likelihoods are heuristic, not learned policies
-- repeated Protect success odds, PP, hazards, item micro-rules, and many move-specific edge cases remain simplified
+- PP, hazards, item micro-rules, and many move-specific edge cases remain simplified or unsupported
 - the evaluator is still handcrafted and local rather than trained
 
 ## Recommended Next Steps

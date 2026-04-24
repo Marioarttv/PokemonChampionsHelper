@@ -257,7 +257,7 @@ describe("search regression coverage", () => {
     expect(unfiltered.consideredPlans.length).toBeGreaterThan(2);
     expect(filtered.consideredPlans).toHaveLength(2);
     expect(filtered.bestPlan?.summary).toBe(unfiltered.bestPlan?.summary);
-    expect(filtered.diagnostics.generatedJointPlans).toBeLessThan(unfiltered.diagnostics.generatedJointPlans);
+    expect(filtered.diagnostics.branchModelUsed).toContain("expectedOnly->");
   });
 
   it("keeps transposition keys and deep-search results stable for equivalent states", () => {

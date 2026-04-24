@@ -16,6 +16,11 @@ export type DamageItemId =
   | "leftovers"
   | "blacksludge"
   | "whiteherb"
+  | "airballoon"
+  | "ironball"
+  | "covertcloak"
+  | "safetygoggles"
+  | "clearamulet"
   | "charcoal"
   | "mysticwater"
   | "magnet"
@@ -69,6 +74,11 @@ const DAMAGE_ITEM_OPTIONS: DamageItemOption[] = [
   { id: "leftovers", label: "Leftovers", roles: ["defender"], description: "Restores 1/16 max HP at the end of each turn." },
   { id: "blacksludge", label: "Black Sludge", roles: ["defender"], description: "Restores Poison-types each turn and damages other holders." },
   { id: "whiteherb", label: "White Herb", roles: ["attacker", "defender"], description: "Restores lowered stats once, then is consumed." },
+  { id: "airballoon", label: "Air Balloon", roles: ["defender"], description: "Grants Ground immunity until consumed." },
+  { id: "ironball", label: "Iron Ball", roles: ["attacker", "defender"], description: "Grounds the holder and halves Speed." },
+  { id: "covertcloak", label: "Covert Cloak", roles: ["defender"], description: "Blocks supported added effects such as Fake Out flinching." },
+  { id: "safetygoggles", label: "Safety Goggles", roles: ["defender"], description: "Blocks supported powder moves." },
+  { id: "clearamulet", label: "Clear Amulet", roles: ["defender"], description: "Prevents supported stat drops from opposing effects." },
   { id: "charcoal", label: "Charcoal", roles: ["attacker"], description: "Boosts Fire-type damage by 1.2x." },
   { id: "mysticwater", label: "Mystic Water", roles: ["attacker"], description: "Boosts Water-type damage by 1.2x." },
   { id: "magnet", label: "Magnet", roles: ["attacker"], description: "Boosts Electric-type damage by 1.2x." },

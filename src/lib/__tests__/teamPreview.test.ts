@@ -407,3 +407,45 @@ describe("team preview hidden-info beliefs", () => {
     expect(topEnemyFoursContain(recommendation!, [0, 1])).toBe(true);
   });
 });
+
+describe("team preview scenario-first diagnostics", () => {
+  function makeSix(side: "ally" | "enemy", prefix: string) {
+    return [
+      makeMember({ side, slot: 0, pokemon: makePokemon(`${prefix} Fire`, { types: ["Fire"], baseStats: { spa: 120, spe: 100 } }), moveNames: ["Heat Wave"] }),
+      makeMember({ side, slot: 1, pokemon: makePokemon(`${prefix} Water`, { types: ["Water"], baseStats: { spa: 110, spe: 85 } }), moveNames: ["Hydro Pump"] }),
+      makeMember({ side, slot: 2, pokemon: makePokemon(`${prefix} Fighter`, { types: ["Fighting"], baseStats: { atk: 125, spe: 75 } }), moveNames: ["Close Combat"] }),
+      makeMember({ side, slot: 3, pokemon: makePokemon(`${prefix} Dragon`, { types: ["Dragon"], baseStats: { atk: 125, spe: 102 } }), moveNames: ["Dragon Claw"] }),
+      makeMember({ side, slot: 4, pokemon: makePokemon(`${prefix} Fairy`, { types: ["Fairy"], baseStats: { spa: 115, spe: 60 } }), moveNames: ["Moonblast"] }),
+      makeMember({ side, slot: 5, pokemon: makePokemon(`${prefix} Support`, { types: ["Grass"], baseStats: { hp: 115, spe: 30 } }), moveNames: ["Spore"] }),
+    ];
+  }
+
+  it("retains all ally and enemy fours in the scenario matrix for six-Pokemon teams", () => {
+    const recommendation = robustPreview({
+      ally: makeSix("ally", "Ally"),
+      enemy: makeSix("enemy", "Enemy"),
+      timeBudgetMs: 120,
+    });
+
+    expect(recommendation).not.toBeNull();
+    expect(recommendation?.scenarioMatrix?.allyFourCount).toBe(15);
+    expect(recommendation?.scenarioMatrix?.enemyFourCount).toBe(15);
+    expect(recommendation?.enemyBringDistribution).toHaveLength(15);
+    expect(recommendation?.candidateCounts.enemyFourCandidates).toBe(15);
+  });
+
+  it("explains every omitted ally slot and exposes confidence diagnostics", () => {
+    const recommendation = robustPreview({
+      ally: makeSix("ally", "Ally"),
+      enemy: makeSix("enemy", "Enemy"),
+      timeBudgetMs: 120,
+    });
+
+    expect(recommendation).not.toBeNull();
+    const omittedSlots = recommendation?.bestFour ? [0, 1, 2, 3, 4, 5].filter((slot) => !recommendation.bestFour.includes(slot)) : [];
+    expect(recommendation?.omittedSlotExplanations?.map((entry) => entry.slotIndex).sort()).toEqual(omittedSlots);
+    expect(recommendation?.confidence).toMatch(/high|medium|low/);
+    expect(recommendation?.confidenceReasons?.length).toBeGreaterThan(0);
+    expect(recommendation?.diagnostics.mechanicsSupportReport).toBeDefined();
+  });
+});

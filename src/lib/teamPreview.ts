@@ -4,13 +4,22 @@ import type { MoveRecord } from "./battleData";
 import type { DamageTerrain, DamageWeather } from "./damage";
 import {
   createBattleState,
+  buildMechanicSupportReport,
   getDamagePreview,
   recommendBestPlan,
   type BattleState,
   type BattleStateMemberInput,
+  type MechanicSupportReport,
   type SearchBranchModel,
   type SearchDiagnostics,
+  type UnsupportedMechanicMarker,
 } from "./engine";
+import {
+  buildScenarioMatrixSummary,
+  type EnemyBringDistributionEntry,
+  type TeamPreviewConfidence,
+  type TeamPreviewScenarioMatrixSummary,
+} from "./teamPreview/scenarioModel";
 import {
   buildCoverageDangerNotes,
   buildCoverageReasons,
@@ -120,6 +129,9 @@ type PreviewPreparation = {
   coarseStageMs: number;
   allyFourChoiceCount: number;
   enemyFourChoiceCount: number;
+  allAllyFours: number[][];
+  allEnemyFours: number[][];
+  scenarioMatrix: TeamPreviewScenarioMatrixSummary;
 };
 
 type TacticalCellEvaluation = {
@@ -151,6 +163,12 @@ export type TeamPreviewDiagnostics = {
   resolveTurnCalls: number;
   generatedJointPlans: number;
   planPairEvaluations: number;
+  searchedScenarioCount: number;
+  searchDepth: number;
+  objective: TeamPreviewObjectiveMode;
+  topLineSummary: string | null;
+  tacticalRiskNotes: string[];
+  mechanicsSupportReport: MechanicSupportReport;
 };
 
 export type TeamPreviewReason = {
@@ -182,6 +200,14 @@ export type TeamPreviewRecommendation = {
   uncoveredThreats?: UncoveredThreatExplanation[];
   coverageSummary?: CoverageSummaryEntry[];
   objectiveBreakdown?: PreviewObjectiveBreakdown;
+  confidence?: TeamPreviewConfidence;
+  confidenceReasons?: string[];
+  unsupportedMechanics?: UnsupportedMechanicMarker[];
+  scenarioMatrix?: TeamPreviewScenarioMatrixSummary;
+  omittedSlotExplanations?: Array<{ slotIndex: number; explanation: string }>;
+  enemyBringDistribution?: EnemyBringDistributionEntry[];
+  leadRiskNotes?: string[];
+  lowProbabilityHighRegretNotes?: string[];
   candidateCounts: {
     allyStrategies: number;
     enemyStrategies: number;
@@ -214,6 +240,7 @@ export type TeamPreviewOptions = {
   maxLeadsPerFour?: number;
   refinementMargin?: number;
   previewObjectiveMode?: TeamPreviewObjectiveMode;
+  infoMode?: "openTeamSheet" | "closedSheet" | "custom";
   enemyBringTemperature?: number;
   enemyBringProbabilityFloor?: number;
   enemyLeadTemperature?: number;
@@ -317,6 +344,12 @@ function createPreviewDiagnostics(
     resolveTurnCalls: 0,
     generatedJointPlans: 0,
     planPairEvaluations: 0,
+    searchedScenarioCount: 0,
+    searchDepth: 0,
+    objective: DEFAULT_PREVIEW_OBJECTIVE_MODE,
+    topLineSummary: null,
+    tacticalRiskNotes: [],
+    mechanicsSupportReport: buildMechanicSupportReport(),
   };
 }
 
@@ -325,6 +358,10 @@ function mergeSearchDiagnostics(target: TeamPreviewDiagnostics, source: SearchDi
   target.resolveTurnCalls += source.resolveTurnCalls;
   target.generatedJointPlans += source.generatedJointPlans;
   target.planPairEvaluations += source.planPairEvaluations;
+  target.mechanicsSupportReport = buildMechanicSupportReport([
+    ...target.mechanicsSupportReport.markers,
+    ...(source.unsupportedMechanics ?? []),
+  ]);
 }
 
 function createReferenceState(options: TeamPreviewOptions) {
@@ -2025,6 +2062,98 @@ function buildPriorityReason(feature: string, delta: number): TeamPreviewReason 
   };
 }
 
+function buildOmittedSlotExplanations(bestFour: number[], allyMetas: PreviewCombatantMeta[], coverage: FourCoverageEvaluation) {
+  const chosenSet = new Set(bestFour);
+  const answerSlots = new Set(coverage.uniqueAnswerSlots);
+  return allyMetas
+    .filter((meta) => !chosenSet.has(meta.member.teamIndex))
+    .map((meta) => {
+      const tags = [...meta.roleTags].slice(0, 3);
+      const roleText = tags.length > 0 ? ` (${tags.join(", ")})` : "";
+      const answerText = answerSlots.has(meta.member.teamIndex)
+        ? " It has matchup answers, but the selected four covers the higher-weight threats with less overload."
+        : " It was not a required answer for the highest-weight threat coverage.";
+      return {
+        slotIndex: meta.member.teamIndex,
+        explanation: `${meta.member.pokemon.name}${roleText} was benched because this four scored better on coverage, lead stability, and endgame value.${answerText}`,
+      };
+    });
+}
+
+function buildLeadRiskNotes(best: RankedPreviewStrategy, predictions: PredictedEnemyFour[]) {
+  const leadSet = new Set(best.entry.candidate.strategy.lead);
+  return predictions
+    .flatMap((prediction) =>
+      prediction.leads.map((lead) => ({
+        probability: prediction.probability * lead.probability,
+        note: `Enemy lead ${lead.lead.join("+")} is a notable turn-one line into ${[...leadSet].join("+")}.`,
+      })),
+    )
+    .sort((left, right) => right.probability - left.probability)
+    .slice(0, 3)
+    .map((entry) => entry.note);
+}
+
+function buildLowProbabilityHighRegretNotes(
+  bestFour: number[],
+  preparation: PreviewPreparation,
+) {
+  const bestCoverage = preparation.coverageByFourKey.get(`four:${bestFour.join(",")}`);
+  const uncoveredIds = new Set(bestCoverage?.uncoveredThreats.map((threat) => threat.threatId) ?? []);
+  if (uncoveredIds.size === 0) {
+    return [];
+  }
+
+  return preparation.enemyPredictions
+    .filter((prediction) => prediction.probability < 0.12)
+    .flatMap((prediction) => {
+      const relevantThreats = preparation.enemyThreats.filter(
+        (threat) =>
+          uncoveredIds.has(threat.id) &&
+          threat.memberTeamIndices.some((teamIndex) => prediction.four.includes(teamIndex)),
+      );
+      if (relevantThreats.length === 0) {
+        return [];
+      }
+      return [
+        `Low-probability enemy four ${prediction.four.join(",")} has high regret because it exposes ${relevantThreats
+          .map((threat) => threat.label)
+          .slice(0, 2)
+          .join(" and ")}.`,
+      ];
+    })
+    .slice(0, 3);
+}
+
+function getRecommendationConfidence(options: {
+  preparation: PreviewPreparation;
+  diagnostics: TeamPreviewDiagnostics;
+  uncoveredThreatCount: number;
+  stoppedByBudget: boolean;
+}) {
+  const reasons: string[] = [];
+  if (options.preparation.enemyPredictions.length === options.preparation.enemyFourChoiceCount) {
+    reasons.push("All legal enemy fours were retained for robust/regret scoring.");
+  }
+  if (options.uncoveredThreatCount > 0) {
+    reasons.push("Selected four leaves at least one must-answer threat partially uncovered.");
+  }
+  if (options.stoppedByBudget) {
+    reasons.push("Tactical refinement stopped on the time budget.");
+  }
+  if (options.diagnostics.mechanicsSupportReport.markers.length > 0) {
+    reasons.push("One or more mechanics were approximated or unsupported.");
+  }
+
+  const confidence: TeamPreviewConfidence =
+    options.uncoveredThreatCount > 0 || options.stoppedByBudget
+      ? "low"
+      : options.diagnostics.mechanicsSupportReport.markers.length > 0
+        ? "medium"
+        : "high";
+  return { confidence, confidenceReasons: reasons };
+}
+
 function preparePreviewContext(
   options: TeamPreviewOptions,
   referenceState: BattleState,
@@ -2140,6 +2269,13 @@ function preparePreviewContext(
     coarseStageMs: nowMs() - coarseStarted,
     allyFourChoiceCount: allyFourChoices.length,
     enemyFourChoiceCount: enemyFourChoices.length,
+    allAllyFours: allyFourChoices.map((choice) => choice.four),
+    allEnemyFours: enemyFourChoices.map((choice) => choice.four),
+    scenarioMatrix: buildScenarioMatrixSummary({
+      allyFours: allyFourChoices.map((choice) => choice.four),
+      enemyFours: enemyFourChoices.map((choice) => choice.four),
+      retainedEnemyFourCount: refinedPredictions.length,
+    }),
   } satisfies PreviewPreparation;
 }
 
@@ -2217,6 +2353,14 @@ function buildRecommendationFromRows(
     likelyScore: best.summary.likelyScore,
     hybridScore: best.summary.hybridScore,
   };
+  const unsupportedMechanics = diagnostics.mechanicsSupportReport.markers;
+  const lowProbabilityHighRegretNotes = buildLowProbabilityHighRegretNotes(best.entry.candidate.strategy.four, preparation);
+  const confidence = getRecommendationConfidence({
+    preparation,
+    diagnostics,
+    uncoveredThreatCount: bestCoverage.uncoveredThreats.length,
+    stoppedByBudget: diagnostics.stoppedByBudget,
+  });
 
   return {
     bestFour: best.entry.candidate.strategy.four,
@@ -2233,6 +2377,14 @@ function buildRecommendationFromRows(
     uncoveredThreats: bestCoverage.uncoveredThreats.slice(0, 5),
     coverageSummary: bestCoverage.coverageSummary,
     objectiveBreakdown: buildObjectiveBreakdown(objectiveSummary),
+    confidence: confidence.confidence,
+    confidenceReasons: confidence.confidenceReasons,
+    unsupportedMechanics,
+    scenarioMatrix: preparation.scenarioMatrix,
+    omittedSlotExplanations: buildOmittedSlotExplanations(best.entry.candidate.strategy.four, allyMetas, bestCoverage),
+    enemyBringDistribution: preparation.enemyPredictions,
+    leadRiskNotes: buildLeadRiskNotes(best, preparation.enemyPredictions),
+    lowProbabilityHighRegretNotes,
     candidateCounts,
     diagnostics,
   } satisfies TeamPreviewRecommendation;
@@ -2253,6 +2405,8 @@ function recommendTeamPreviewSparse(
 ) {
   const timeBudgetMs = options.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS;
   const diagnostics = createPreviewDiagnostics("robust", timeBudgetMs);
+  diagnostics.objective = preparation.objectiveMode;
+  diagnostics.searchDepth = PREVIEW_FAST_PROFILE.depth;
   const startedAt = nowMs();
   const deadline = startedAt + timeBudgetMs;
   const allyMetaByIndex = getMetaByTeamIndex(allyMetas);
@@ -2423,6 +2577,11 @@ function recommendTeamPreviewSparse(
 
   diagnostics.tacticalStageMs = nowMs() - tacticalStarted;
   diagnostics.threatLineCount = activeThreats.length;
+  diagnostics.searchedScenarioCount = diagnostics.verifiedCells;
+  diagnostics.topLineSummary = rankedRows[0]?.entry.candidate.strategy.key ?? null;
+  diagnostics.tacticalRiskNotes = activeThreats
+    .slice(0, 3)
+    .map((threat) => `Refined enemy ${threat.candidate.strategy.key} because probability=${threat.probability.toFixed(3)} threatScore=${Math.round(threat.threatScore)}.`);
   diagnostics.elapsedMs = nowMs() - startedAt;
 
   return buildRecommendationFromRows(rankedRows, preparation.objectiveMode, allyMetas, enemyProfile, preparation, {

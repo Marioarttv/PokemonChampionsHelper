@@ -22,6 +22,10 @@ export function getSpeedModifierMultiplier(state: BattleState, combatant: Battle
     multiplier *= 1.5;
   }
 
+  if (combatant.itemId === "ironball") {
+    multiplier *= 0.5;
+  }
+
   if (abilityKey === "unburden" && combatant.itemConsumed) {
     multiplier *= 2;
   }

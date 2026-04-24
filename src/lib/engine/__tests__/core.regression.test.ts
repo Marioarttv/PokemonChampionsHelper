@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateJointActionPlans, getDamagePreview, getEffectiveSpeed, recommendBestPlan, resolveTurn } from "..";
+import { generateJointActionPlans, getDamagePreview, getEffectiveSpeed, getGroundedState, getSetHypotheses, recommendBestPlan, resolveTurn } from "..";
 import {
   buildMovePlan,
   buildPassPlan,
@@ -471,6 +471,30 @@ describe("engine regression coverage", () => {
     expect(result.state.combatants["enemy-0"].statusCondition).toBe("none");
   });
 
+  it("does not generate Spore into represented powder-immune targets", () => {
+    const sporer = makePokemon("Sporer", { types: ["Grass"] });
+    const grassTarget = makePokemon("Grass Target", { types: ["Grass"] });
+    const gogglesTarget = makePokemon("Goggles Target", { types: ["Normal"] });
+    const overcoatTarget = makePokemon("Overcoat Target", { types: ["Normal"] });
+    const spore = makeMove("Spore", { type: "Grass", category: "Status", basePower: 0, target: "normal" });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: sporer, moveNames: ["Spore"] })],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: grassTarget, moveNames: [] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: gogglesTarget, moveNames: [], itemName: "Safety Goggles" }),
+        makeMember({ side: "enemy", slot: 2, pokemon: overcoatTarget, moveNames: [], abilityName: "Overcoat", isActive: false }),
+      ],
+      moves: [spore],
+    });
+
+    const activePlans = generateJointActionPlans(state, "ally", {
+      maxIndividualActionsPerActor: 8,
+      maxJointPlans: 12,
+    });
+
+    expect(activePlans.some((plan) => plan.summary.includes(": Spore"))).toBe(false);
+  });
+
   it("fires lead Intimidate so White Herb activates and Unburden doubles speed", () => {
     const unburdenUser = makePokemon("Combo User", { baseStats: { atk: 120, spe: 80 } });
     const partner = makePokemon("Partner", { baseStats: { spe: 70 } });
@@ -723,6 +747,25 @@ describe("engine regression coverage", () => {
 
     expect(result.state.combatants["enemy-0"].stages.specialAttack).toBe(1);
     expect(result.state.combatants["enemy-1"].currentHp).toBe(originalTargetHp);
+  });
+
+  it("does not generate redirection with no active partner to protect", () => {
+    const redirector = makePokemon("Solo Redirector", { baseStats: { hp: 120, def: 100 } });
+    const target = makePokemon("Target", { baseStats: { hp: 120 } });
+    const followMe = makeMove("Follow Me", { type: "Normal", category: "Status", basePower: 0, target: "self", priority: 2 });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 60, target: "normal" });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: redirector, moveNames: ["Follow Me", "Tackle"] })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: target, moveNames: [] })],
+      moves: [followMe, tackle],
+    });
+
+    const plans = generateJointActionPlans(state, "ally", {
+      maxIndividualActionsPerActor: 8,
+      maxJointPlans: 8,
+    });
+
+    expect(plans.some((plan) => plan.summary.includes("Follow Me"))).toBe(false);
   });
 
   it("restores HP with Regenerator on switch out", () => {
@@ -1490,5 +1533,204 @@ describe("engine regression coverage", () => {
     });
 
     expect(recommendation.bestPlan?.summary).toContain("switch to Clodsire");
+  });
+
+  it("annotates equal-speed ties instead of silently awarding one order", () => {
+    const ally = makePokemon("Tie Ally", { baseStats: { atk: 120, spe: 100 } });
+    const enemy = makePokemon("Tie Enemy", { baseStats: { atk: 120, spe: 100 } });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 60, target: "normal" });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: ally, moveNames: ["Tackle"] })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: enemy, moveNames: ["Tackle"] })],
+      moves: [tackle],
+    });
+
+    const result = resolveTurn(
+      state,
+      buildMovePlan(state, "ally", [{ actorId: "ally-0", moveName: "Tackle", targetId: "enemy-0" }]),
+      buildMovePlan(state, "enemy", [{ actorId: "enemy-0", moveName: "Tackle", targetId: "ally-0" }]),
+    );
+
+    expect(result.events.some((event) => /depends on speed tie/i.test(event.text))).toBe(true);
+    expect(result.events.some((event) => event.unsupportedMechanic?.mechanic === "speed tie")).toBe(true);
+  });
+
+  it("reports speed-tie uncertainty through search diagnostics", () => {
+    const ally = makePokemon("Tie Ally", { baseStats: { atk: 120, spe: 100 } });
+    const enemy = makePokemon("Tie Enemy", { baseStats: { atk: 120, spe: 100 } });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 60, target: "normal" });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: ally, moveNames: ["Tackle"] })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: enemy, moveNames: ["Tackle"] })],
+      moves: [tackle],
+    });
+
+    const recommendation = recommendBestPlan(state, {
+      searchMode: "fast",
+      objectiveMode: "robust",
+      maxJointPlansPerSide: 2,
+      maxIndividualActionsPerActor: 1,
+    });
+
+    expect(recommendation.diagnostics.unsupportedMechanics.some((marker) => marker.mechanic === "speed tie")).toBe(true);
+    expect(recommendation.diagnostics.mechanicsSupportReport?.approximate).toContain("speed tie");
+  });
+
+  it("computes represented groundedness from Gravity, Iron Ball, and Air Balloon", () => {
+    const flying = makePokemon("Flying Target", { types: ["Flying"] });
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: flying, moveNames: [], itemName: "Air Balloon" }),
+        makeMember({ side: "ally", slot: 1, pokemon: flying, moveNames: [], itemName: "Iron Ball" }),
+      ],
+      enemy: [],
+      moves: [],
+    });
+
+    expect(getGroundedState(state.combatants["ally-0"], state.field).grounded).toBe(false);
+    expect(getGroundedState(state.combatants["ally-1"], state.field).grounded).toBe(true);
+    expect(getGroundedState(state.combatants["ally-0"], { ...state.field, gravityTurns: 3 }).grounded).toBe(true);
+  });
+
+  it("blocks priority with Psychic Terrain only against grounded targets", () => {
+    const fakeOutUser = makePokemon("Fake Out User", { baseStats: { atk: 110, spe: 120 } });
+    const grounded = makePokemon("Grounded Target", { types: ["Normal"], baseStats: { hp: 120, def: 110 } });
+    const flying = makePokemon("Flying Target", { types: ["Flying"], baseStats: { hp: 120, def: 110 } });
+    const fakeOut = makeMove("Fake Out", { type: "Normal", category: "Physical", basePower: 40, priority: 3, target: "normal" });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: fakeOutUser, moveNames: ["Fake Out"] })],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: grounded, moveNames: [] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: flying, moveNames: [] }),
+      ],
+      moves: [fakeOut],
+      terrain: "psychic",
+    });
+
+    const groundedResult = resolveTurn(
+      state,
+      buildMovePlan(state, "ally", [{ actorId: "ally-0", moveName: "Fake Out", targetId: "enemy-0" }]),
+      buildPassPlan(state, "enemy", ["enemy-0", "enemy-1"]),
+    );
+    const flyingResult = resolveTurn(
+      state,
+      buildMovePlan(state, "ally", [{ actorId: "ally-0", moveName: "Fake Out", targetId: "enemy-1" }]),
+      buildPassPlan(state, "enemy", ["enemy-0", "enemy-1"]),
+    );
+
+    expect(groundedResult.events.some((event) => /blocks/i.test(event.text))).toBe(true);
+    expect(flyingResult.state.combatants["enemy-1"].currentHp).toBeLessThan(state.combatants["enemy-1"].maxHp);
+  });
+
+  it("blocks priority through Armor Tail-style abilities when represented", () => {
+    const fakeOutUser = makePokemon("Fake Out User", { baseStats: { atk: 110, spe: 120 } });
+    const target = makePokemon("Target", { baseStats: { hp: 120, def: 110 } });
+    const armorTail = makePokemon("Armor Tail Ally", { abilities: { "0": "Armor Tail" } });
+    const fakeOut = makeMove("Fake Out", { type: "Normal", category: "Physical", basePower: 40, priority: 3, target: "normal" });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: fakeOutUser, moveNames: ["Fake Out"] })],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: target, moveNames: [] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: armorTail, moveNames: [], abilityName: "Armor Tail" }),
+      ],
+      moves: [fakeOut],
+    });
+
+    const result = resolveTurn(
+      state,
+      buildMovePlan(state, "ally", [{ actorId: "ally-0", moveName: "Fake Out", targetId: "enemy-0" }]),
+      buildPassPlan(state, "enemy", ["enemy-0", "enemy-1"]),
+    );
+
+    expect(result.events.some((event) => /blocks/i.test(event.text))).toBe(true);
+    expect(result.state.combatants["enemy-0"].currentHp).toBe(state.combatants["enemy-0"].maxHp);
+  });
+
+  it("lets Grass, Overcoat, and Safety Goggles ignore Rage Powder redirection", () => {
+    const attacker = makePokemon("Attacker", { baseStats: { spa: 120, spe: 100 } });
+    const redirector = makePokemon("Redirector", { baseStats: { hp: 120, spd: 90 } });
+    const ragePowder = makeMove("Rage Powder", { type: "Bug", category: "Status", basePower: 0, target: "self", priority: 2 });
+    const psychic = makeMove("Psychic", { type: "Psychic", category: "Special", basePower: 90, target: "normal" });
+    const cases = [
+      { pokemon: makePokemon("Grass Target", { types: ["Grass"], baseStats: { hp: 120, spd: 90 } }) },
+      { pokemon: makePokemon("Overcoat Target", { baseStats: { hp: 120, spd: 90 } }), abilityName: "Overcoat" },
+      { pokemon: makePokemon("Goggles Target", { baseStats: { hp: 120, spd: 90 } }), itemName: "Safety Goggles" },
+    ];
+
+    for (const targetCase of cases) {
+      const state = createTestBattleState({
+        ally: [makeMember({ side: "ally", slot: 0, pokemon: attacker, moveNames: ["Psychic"] })],
+        enemy: [
+          makeMember({
+            side: "enemy",
+            slot: 0,
+            pokemon: targetCase.pokemon,
+            moveNames: [],
+            abilityName: targetCase.abilityName,
+            itemName: targetCase.itemName,
+          }),
+          makeMember({ side: "enemy", slot: 1, pokemon: redirector, moveNames: ["Rage Powder"] }),
+        ],
+        moves: [ragePowder, psychic],
+      });
+
+      const result = resolveTurn(
+        state,
+        buildMovePlan(state, "ally", [{ actorId: "ally-0", moveName: "Psychic", targetId: "enemy-0" }]),
+        buildMovePlan(state, "enemy", [{ actorId: "enemy-1", moveName: "Rage Powder" }]),
+      );
+
+      expect(result.state.combatants["enemy-0"].currentHp).toBeLessThan(state.combatants["enemy-0"].maxHp);
+      expect(result.state.combatants["enemy-1"].currentHp).toBe(state.combatants["enemy-1"].maxHp);
+    }
+  });
+
+  it("respects known Fake Out prevention from item or ability", () => {
+    const fakeOutUser = makePokemon("Fake Out User", { baseStats: { atk: 110, spe: 120 } });
+    const target = makePokemon("Target", { baseStats: { hp: 120, def: 110, spe: 90 } });
+    const fakeOut = makeMove("Fake Out", { type: "Normal", category: "Physical", basePower: 40, priority: 3, target: "normal" });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 50, target: "normal" });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: fakeOutUser, moveNames: ["Fake Out"] })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: target, moveNames: ["Tackle"], itemName: "Covert Cloak" })],
+      moves: [fakeOut, tackle],
+    });
+
+    const result = resolveTurn(
+      state,
+      buildMovePlan(state, "ally", [{ actorId: "ally-0", moveName: "Fake Out", targetId: "enemy-0" }]),
+      buildMovePlan(state, "enemy", [{ actorId: "enemy-0", moveName: "Tackle", targetId: "ally-0" }]),
+    );
+
+    expect(result.events.some((event) => /protected from Fake Out/i.test(event.text))).toBe(true);
+    expect(result.events.some((event) => /Target uses Tackle/i.test(event.text))).toBe(true);
+  });
+
+  it("uses open-team-sheet data as fixed and keeps closed-sheet set hypotheses", () => {
+    const otsMon = makePokemon("OTS Mon");
+    const closedMon = makePokemon("Closed Mon");
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 50, target: "normal" });
+    const trickRoom = makeMove("Trick Room", { type: "Psychic", category: "Status", basePower: 0, target: "all" });
+    const protect = makeMove("Protect", { type: "Normal", category: "Status", basePower: 0, target: "self" });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: otsMon, moveNames: ["Tackle"], candidateMoves: [makeCandidateMove("Trick Room", 1)], infoMode: "openTeamSheet" })],
+      enemy: [
+        makeMember({
+          side: "enemy",
+          slot: 0,
+          pokemon: closedMon,
+          moveNames: [],
+          infoMode: "closedSheet",
+          setHypotheses: [
+            { moves: ["Trick Room", "Protect"], item: "Covert Cloak", ability: "Inner Focus", probability: 0.6, source: "preset" },
+            { moves: ["Tackle", "Protect"], item: "Safety Goggles", ability: "Overcoat", probability: 0.4, source: "inferred" },
+          ],
+        }),
+      ],
+      moves: [tackle, trickRoom, protect],
+    });
+
+    expect(state.combatants["ally-0"].candidateMoves.map((move) => move.name)).not.toContain("Trick Room");
+    expect(getSetHypotheses(state.combatants["enemy-0"])).toHaveLength(2);
   });
 });

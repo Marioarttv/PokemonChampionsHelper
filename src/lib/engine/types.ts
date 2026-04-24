@@ -6,6 +6,7 @@ import type { DamageItemId } from "../damageItems";
 import type { PokemonRecord } from "../pokemonDb";
 import type { PersistedKnownMove, PersistedSavedAttack } from "../savedTeams";
 import type { ChampionsStatSpread } from "../championsStats";
+import type { MechanicSupportReport, UnsupportedMechanicMarker } from "./mechanicsSupport";
 
 export type BattleSide = "ally" | "enemy";
 export type DamageRollMode = "min" | "average" | "max";
@@ -50,6 +51,21 @@ export type CandidateMove = {
   source: CandidateMoveSource;
   weight: number;
   confidence: "known" | "candidate";
+};
+
+export type PreviewInfoMode = "openTeamSheet" | "closedSheet" | "custom";
+
+export type SetHypothesis = {
+  moves: string[];
+  item?: string | null;
+  ability?: string | null;
+  teraType?: PokemonType | null;
+  nature?: string | null;
+  evBucket?: string | null;
+  speedTier?: string | null;
+  roleTags?: string[];
+  probability: number;
+  source: "known" | "preset" | "inferred" | "user";
 };
 
 export type BattleMoveEffectData = {
@@ -137,6 +153,12 @@ export type BattleCombatantState = {
   isProtected: boolean;
   isFlinched: boolean;
   wasSwitchedInThisTurn: boolean;
+  infoMode: PreviewInfoMode;
+  setHypotheses: SetHypothesis[];
+  volatileState?: {
+    magnetRiseTurns?: number;
+    groundedTurns?: number;
+  };
 };
 
 export type BattleSideState = {
@@ -150,6 +172,7 @@ export type BattleSideState = {
   quickGuardActive: boolean;
   wideGuardActive: boolean;
   redirectionTargetId: string | null;
+  redirectionIsPowder: boolean;
   allySwitchPair: [string, string] | null;
 };
 
@@ -157,6 +180,7 @@ export type BattleFieldState = {
   weather: DamageWeather;
   terrain: DamageTerrain;
   trickRoomTurns: number;
+  gravityTurns?: number;
   turn: number;
 };
 
@@ -205,6 +229,7 @@ export type TurnEvent = {
   actorId?: string;
   targetId?: string;
   text: string;
+  unsupportedMechanic?: UnsupportedMechanicMarker;
 };
 
 export type TurnResult = {
@@ -328,6 +353,9 @@ export type BattleStateMemberInput = {
   isProtected?: boolean;
   isFlinched?: boolean;
   wasSwitchedInThisTurn?: boolean;
+  infoMode?: PreviewInfoMode;
+  setHypotheses?: SetHypothesis[];
+  volatileState?: BattleCombatantState["volatileState"];
   isActive: boolean;
 };
 
@@ -372,6 +400,8 @@ export type SearchDiagnostics = {
   enemyAssumptions: string[];
   enemyBeliefs: EnemyAssumptionSummary[];
   pv: SearchPvStep[];
+  unsupportedMechanics: UnsupportedMechanicMarker[];
+  mechanicsSupportReport?: MechanicSupportReport;
 };
 
 export type SearchOptions = {
