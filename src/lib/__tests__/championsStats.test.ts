@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  calculateChampionsHpStat,
   calculateChampionsOtherStat,
   getChampionsComputedStats,
   getChampionsTemplateIdForPokemon,
@@ -46,25 +47,31 @@ describe("Champions stat math", () => {
       baseStats: incineroar.baseStats,
     });
 
-    expect(stats.hp).toBe(186);
+    expect(stats.hp).toBe(202);
     expect(stats.atk).toBe(121);
-    expect(stats.def).toBe(132);
+    expect(stats.def).toBe(143);
     expect(stats.spa).toBe(100);
-    expect(stats.spd).toBe(117);
+    expect(stats.spd).toBe(124);
     expect(stats.spe).toBe(80);
   });
 
-  it("preserves the neutral zero-point baseline implied by public Incineroar stats", () => {
+  it("preserves the neutral zero-point baseline implied by public Champions stats", () => {
+    expect(calculateChampionsHpStat(95, 0)).toBe(170);
     expect(calculateChampionsOtherStat(115, 0, 1)).toBe(135);
     expect(calculateChampionsOtherStat(90, 0, 1)).toBe(110);
     expect(calculateChampionsOtherStat(80, 0, 1)).toBe(100);
     expect(calculateChampionsOtherStat(60, 0, 1)).toBe(80);
   });
 
-  it("shows the breakpoint behavior players see on nature-boosted stats", () => {
+  it("adds Champions stat points directly before nature", () => {
+    expect(calculateChampionsHpStat(95, 23)).toBe(193);
+    expect(calculateChampionsOtherStat(60, 23, 1)).toBe(103);
+  });
+
+  it("applies nature after direct stat-point investment", () => {
     expect(calculateChampionsOtherStat(115, 0, 1.1)).toBe(148);
     expect(calculateChampionsOtherStat(115, 1, 1.1)).toBe(149);
-    expect(calculateChampionsOtherStat(115, 2, 1.1)).toBe(149);
+    expect(calculateChampionsOtherStat(115, 2, 1.1)).toBe(150);
   });
 });
 

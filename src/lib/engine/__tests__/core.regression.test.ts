@@ -528,7 +528,7 @@ describe("engine regression coverage", () => {
   it("applies lead weather abilities so weather abusers use the correct speed", () => {
     const pelipper = makePokemon("Pelipper", { baseStats: { spa: 95, spe: 65 } });
     const ludicolo = makePokemon("Ludicolo", { baseStats: { spa: 90, spe: 70 } });
-    const fastEnemy = makePokemon("Fast Enemy", { baseStats: { spe: 120 } });
+    const fastEnemy = makePokemon("Fast Enemy", { baseStats: { spe: 110 } });
     const partner = makePokemon("Partner", { baseStats: { spe: 70 } });
     const state = createTestBattleState({
       ally: [

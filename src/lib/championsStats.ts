@@ -62,8 +62,8 @@ type NatureMeta = {
   decreased: ChampionsNonHpStatId;
 };
 
-const CHAMPIONS_LEVEL = 50;
-const FIXED_IV = 31;
+const CHAMPIONS_HP_BASELINE_BONUS = 75;
+const CHAMPIONS_OTHER_STAT_BASELINE_BONUS = 20;
 export const CHAMPIONS_MAX_STAT_POINTS_PER_STAT = 32;
 export const CHAMPIONS_TOTAL_STAT_POINTS = 66;
 export const CHAMPIONS_STAT_ORDER: ChampionsStatId[] = ["hp", "atk", "def", "spa", "spd", "spe"];
@@ -316,7 +316,7 @@ export function getChampionsNatureMultiplier(
 }
 
 export function calculateChampionsHpStat(baseHp: number, statPoints = 0) {
-  return Math.floor(((2 * baseHp + FIXED_IV + statPoints) * CHAMPIONS_LEVEL) / 100) + CHAMPIONS_LEVEL + 10;
+  return baseHp + CHAMPIONS_HP_BASELINE_BONUS + statPoints;
 }
 
 export function calculateChampionsOtherStat(
@@ -324,7 +324,7 @@ export function calculateChampionsOtherStat(
   statPoints = 0,
   natureMultiplier = 1,
 ) {
-  const preNature = Math.floor(((2 * baseStat + FIXED_IV + statPoints) * CHAMPIONS_LEVEL) / 100) + 5;
+  const preNature = baseStat + CHAMPIONS_OTHER_STAT_BASELINE_BONUS + statPoints;
   return Math.floor(preNature * natureMultiplier);
 }
 
