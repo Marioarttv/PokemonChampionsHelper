@@ -25,6 +25,7 @@ export type DamageAbilityId =
   | "sharpness"
   | "reckless"
   | "punkrock"
+  | "parentalbond"
   | "thickfat"
   | "filter"
   | "solidrock"
@@ -172,6 +173,12 @@ const DAMAGE_ABILITY_OPTIONS: DamageAbilityOption[] = [
     label: "Punk Rock",
     roles: ["attacker", "defender"],
     description: "Boosts the user's sound moves by 1.3x and cuts incoming sound damage in half.",
+  },
+  {
+    id: "parentalbond",
+    label: "Parental Bond",
+    roles: ["attacker"],
+    description: "Approximates the second hit as 1.25x total damage.",
   },
   {
     id: "thickfat",
@@ -618,6 +625,10 @@ export function getAttackerAbilityModifier(options: {
 
   if (attackerAbility === "punkrock") {
     return isSupportedMoveKey(SOUND_MOVE_KEYS, moveName) ? 1.3 : 1;
+  }
+
+  if (attackerAbility === "parentalbond") {
+    return 1.25;
   }
 
   return 1;

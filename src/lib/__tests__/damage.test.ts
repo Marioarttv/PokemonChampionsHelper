@@ -42,4 +42,42 @@ describe("damage ability handling", () => {
     expect(normalStabEstimate.stabMultiplier).toBe(1.5);
     expect(adaptabilityEstimate.maxDamage).toBeGreaterThan(normalStabEstimate.maxDamage);
   });
+
+  it("applies Parental Bond for Mega Kangaskhan damage", () => {
+    const megaKangaskhan = makePokemon("Kangaskhan-Mega", {
+      types: ["Normal"],
+      baseStats: { atk: 125 },
+      abilities: { "0": "Parental Bond" },
+    });
+    const defender = makePokemon("Neutral Target", {
+      types: ["Normal"],
+      baseStats: { hp: 100, def: 100 },
+    });
+
+    const defaultAbility = getDefaultDamageAbilityId(megaKangaskhan);
+    const parentalBondEstimate = calculateRoughDamage({
+      attacker: megaKangaskhan,
+      defender,
+      attackType: "normal",
+      moveName: "Double-Edge",
+      basePower: 120,
+      category: "physical",
+      isSpreadMove: false,
+      attackerAbility: defaultAbility,
+    });
+    const noAbilityEstimate = calculateRoughDamage({
+      attacker: megaKangaskhan,
+      defender,
+      attackType: "normal",
+      moveName: "Double-Edge",
+      basePower: 120,
+      category: "physical",
+      isSpreadMove: false,
+      attackerAbility: "none",
+    });
+
+    expect(defaultAbility).toBe("parentalbond");
+    expect(parentalBondEstimate.attackerAbilityMultiplier).toBe(1.25);
+    expect(parentalBondEstimate.maxDamage).toBeGreaterThan(noAbilityEstimate.maxDamage);
+  });
 });
