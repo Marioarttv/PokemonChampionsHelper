@@ -9161,6 +9161,63 @@ textarea::placeholder {
   gap: 0.7rem;
 }
 
+.match-history-team-list {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.match-history-team-group {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.7rem;
+  border-radius: 16px;
+  background: rgba(20, 26, 52, 0.58);
+  border: 1px solid rgba(226, 232, 255, 0.1);
+}
+
+.match-history-team-group__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding-bottom: 0.55rem;
+  border-bottom: 1px dashed rgba(226, 232, 255, 0.12);
+}
+
+.match-history-team-group__header h3,
+.match-history-team-group__header time {
+  margin: 0;
+}
+
+.match-history-team-group__header h3 {
+  color: var(--ink-strong);
+  font-size: 1.05rem;
+}
+
+.match-history-team-group__header time {
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.match-history-team-group__stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+.match-history-team-group__stats span {
+  padding: 0.22rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(226, 232, 255, 0.06);
+  border: 1px solid rgba(226, 232, 255, 0.09);
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
 .match-history-card {
   display: grid;
   gap: 0.7rem;
@@ -9184,6 +9241,13 @@ textarea::placeholder {
   justify-content: space-between;
   align-items: flex-start;
   gap: 0.75rem;
+}
+
+.match-history-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.45rem;
 }
 
 .match-history-card__header h3,

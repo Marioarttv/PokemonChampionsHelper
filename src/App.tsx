@@ -4503,6 +4503,21 @@ function getMatchHistorySlotName(slot: PersistedTeamSlot, slotIndex: number) {
   return slot.query.trim() || slot.pokemonId || `Slot ${slotIndex + 1}`;
 }
 
+function buildPersistedMatchPokemonSnapshot(slots: PersistedTeamSlot[], slotIndices: number[]) {
+  return slotIndices.flatMap((slotIndex) => {
+    const slot = slots[slotIndex];
+    return slot?.pokemonId
+      ? [
+          {
+            slotIndex,
+            pokemonId: slot.pokemonId,
+            name: getMatchHistorySlotName(slot, slotIndex),
+          },
+        ]
+      : [];
+  });
+}
+
 function TypePool({ selectedTypes, onToggle, onClear, mode }: TypePoolProps) {
   const slotCount = mode === "defense" ? 2 : 1;
 
@@ -15474,6 +15489,12 @@ function OhkoFinderView() {
 function MatchHistoryView() {
   const [entries, setEntries] = useState<PersistedMatchHistoryEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [editingEntry, setEditingEntry] = useState<PersistedMatchHistoryEntry | null>(null);
+  const [editResult, setEditResult] = useState<MatchResult>("won");
+  const [editAllyBroughtSlotIndices, setEditAllyBroughtSlotIndices] = useState<number[]>([]);
+  const [editEnemyBroughtSlotIndices, setEditEnemyBroughtSlotIndices] = useState<number[]>([]);
+  const [editAllyLeadSlotIndices, setEditAllyLeadSlotIndices] = useState<number[]>([]);
+  const [editEnemyLeadSlotIndices, setEditEnemyLeadSlotIndices] = useState<number[]>([]);
 
   const refresh = async () => {
     const nextEntries = await listMatchHistoryEntries();
@@ -15496,9 +15517,75 @@ function MatchHistoryView() {
     }
   };
 
+  const beginEditEntry = (entry: PersistedMatchHistoryEntry) => {
+    setEditingEntry(entry);
+    setEditResult(entry.result);
+    setEditAllyBroughtSlotIndices(entry.allyBroughtSlotIndices);
+    setEditEnemyBroughtSlotIndices(entry.enemyBroughtSlotIndices);
+    setEditAllyLeadSlotIndices(entry.allyLeadSlotIndices);
+    setEditEnemyLeadSlotIndices(entry.enemyLeadSlotIndices);
+    setError(null);
+  };
+
+  const saveEditedEntry = async () => {
+    if (!editingEntry) {
+      return;
+    }
+
+    try {
+      setError(null);
+      await saveMatchHistoryEntry({
+        id: editingEntry.id,
+        playedAt: editingEntry.playedAt,
+        result: editResult,
+        allyTeamName: editingEntry.allyTeamName,
+        allySlots: editingEntry.allySlots,
+        enemySlots: editingEntry.enemySlots,
+        allyBroughtSlotIndices: editAllyBroughtSlotIndices,
+        enemyBroughtSlotIndices: editEnemyBroughtSlotIndices,
+        allyLeadSlotIndices: editAllyLeadSlotIndices,
+        enemyLeadSlotIndices: editEnemyLeadSlotIndices,
+        allyBrought: buildPersistedMatchPokemonSnapshot(editingEntry.allySlots, editAllyBroughtSlotIndices),
+        enemyBrought: buildPersistedMatchPokemonSnapshot(editingEntry.enemySlots, editEnemyBroughtSlotIndices),
+        allyLeads: buildPersistedMatchPokemonSnapshot(editingEntry.allySlots, editAllyLeadSlotIndices),
+        enemyLeads: buildPersistedMatchPokemonSnapshot(editingEntry.enemySlots, editEnemyLeadSlotIndices),
+      });
+      await refresh();
+      setEditingEntry(null);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Failed to update match history entry.");
+    }
+  };
+
   const wins = entries.filter((entry) => entry.result === "won").length;
   const losses = entries.length - wins;
   const winRate = entries.length > 0 ? Math.round((wins / entries.length) * 100) : 0;
+  const groupedEntries = useMemo(() => {
+    const groups = new Map<string, PersistedMatchHistoryEntry[]>();
+
+    for (const entry of entries) {
+      const teamName = entry.allyTeamName.trim() || "Unnamed Team";
+      groups.set(teamName, [...(groups.get(teamName) ?? []), entry]);
+    }
+
+    return Array.from(groups.entries()).map(([teamName, teamEntries]) => {
+      const teamWins = teamEntries.filter((entry) => entry.result === "won").length;
+      const teamLosses = teamEntries.length - teamWins;
+      const latestPlayedAt = teamEntries.reduce(
+        (latest, entry) => (entry.playedAt > latest ? entry.playedAt : latest),
+        teamEntries[0]?.playedAt ?? "",
+      );
+
+      return {
+        teamName,
+        entries: teamEntries,
+        wins: teamWins,
+        losses: teamLosses,
+        winRate: teamEntries.length > 0 ? Math.round((teamWins / teamEntries.length) * 100) : 0,
+        latestPlayedAt,
+      };
+    });
+  }, [entries]);
 
   return (
     <section className="match-history-page">
@@ -15533,43 +15620,166 @@ function MatchHistoryView() {
       {error ? <p className="storage-message error">{error}</p> : null}
 
       {entries.length > 0 ? (
-        <div className="match-history-list">
-          {entries.map((entry) => {
-            const playedAt = new Date(entry.playedAt);
-            return (
-              <article key={entry.id} className={`match-history-card ${entry.result}`}>
-                <header className="match-history-card__header">
-                  <div>
-                    <p className="eyebrow">{entry.result === "won" ? "Win" : "Loss"}</p>
-                    <h3>{entry.allyTeamName}</h3>
-                    <time dateTime={entry.playedAt}>{playedAt.toLocaleString()}</time>
-                  </div>
-                  <button type="button" className="secondary-button" onClick={() => removeEntry(entry)}>
-                    Delete
-                  </button>
-                </header>
-
-                <div className="match-history-grid">
-                  <MatchHistoryRoster
-                    title="My team"
-                    slots={entry.allySlots}
-                    broughtSlotIndices={entry.allyBroughtSlotIndices}
-                    leadSlotIndices={entry.allyLeadSlotIndices}
-                  />
-                  <MatchHistoryRoster
-                    title="Enemy team"
-                    slots={entry.enemySlots}
-                    broughtSlotIndices={entry.enemyBroughtSlotIndices}
-                    leadSlotIndices={entry.enemyLeadSlotIndices}
-                  />
+        <div className="match-history-team-list">
+          {groupedEntries.map((group) => (
+            <section key={group.teamName} className="match-history-team-group">
+              <header className="match-history-team-group__header">
+                <div>
+                  <p className="eyebrow">Played Team</p>
+                  <h3>{group.teamName}</h3>
+                  <time dateTime={group.latestPlayedAt}>
+                    Latest {new Date(group.latestPlayedAt).toLocaleString()}
+                  </time>
                 </div>
-              </article>
-            );
-          })}
+                <div className="match-history-team-group__stats">
+                  <span>{group.entries.length} matches</span>
+                  <span>{group.wins}W</span>
+                  <span>{group.losses}L</span>
+                  <span>{group.winRate}%</span>
+                </div>
+              </header>
+
+              <div className="match-history-list">
+                {group.entries.map((entry) => {
+                  const playedAt = new Date(entry.playedAt);
+                  return (
+                    <article key={entry.id} className={`match-history-card ${entry.result}`}>
+                      <header className="match-history-card__header">
+                        <div>
+                          <p className="eyebrow">{entry.result === "won" ? "Win" : "Loss"}</p>
+                          <h3>{entry.result === "won" ? "Victory" : "Defeat"}</h3>
+                          <time dateTime={entry.playedAt}>{playedAt.toLocaleString()}</time>
+                        </div>
+                        <div className="match-history-card__actions">
+                          <button type="button" className="secondary-button" onClick={() => beginEditEntry(entry)}>
+                            Edit
+                          </button>
+                          <button type="button" className="secondary-button" onClick={() => removeEntry(entry)}>
+                            Delete
+                          </button>
+                        </div>
+                      </header>
+
+                      <div className="match-history-grid">
+                        <MatchHistoryRoster
+                          title="My team"
+                          slots={entry.allySlots}
+                          broughtSlotIndices={entry.allyBroughtSlotIndices}
+                          leadSlotIndices={entry.allyLeadSlotIndices}
+                        />
+                        <MatchHistoryRoster
+                          title="Enemy team"
+                          slots={entry.enemySlots}
+                          broughtSlotIndices={entry.enemyBroughtSlotIndices}
+                          leadSlotIndices={entry.enemyLeadSlotIndices}
+                        />
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
         </div>
       ) : (
         <div className="match-history-empty">No match history yet. Save an enemy team from Team Builder after a game.</div>
       )}
+
+      {editingEntry && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="showdown-import-modal match-save-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="match-history-edit-title"
+              onClick={(event) => {
+                if (event.target === event.currentTarget) {
+                  setEditingEntry(null);
+                }
+              }}
+            >
+              <div className="showdown-import-modal__dialog match-save-modal__dialog" role="document">
+                <header className="showdown-import-modal__header">
+                  <div className="showdown-import-modal__title">
+                    <span className="eyebrow">Match History</span>
+                    <h3 id="match-history-edit-title">Edit saved match</h3>
+                  </div>
+                  <button
+                    type="button"
+                    className="showdown-import-modal__close"
+                    onClick={() => setEditingEntry(null)}
+                    aria-label="Close edit match dialog"
+                    title="Close"
+                  >
+                    ×
+                  </button>
+                </header>
+                <div className="showdown-import-modal__body match-save-modal__body">
+                  <div className="match-save-result-toggle" aria-label="Match result">
+                    <button
+                      type="button"
+                      className={editResult === "won" ? "active" : ""}
+                      onClick={() => setEditResult("won")}
+                    >
+                      Won
+                    </button>
+                    <button
+                      type="button"
+                      className={editResult === "lost" ? "active" : ""}
+                      onClick={() => setEditResult("lost")}
+                    >
+                      Lost
+                    </button>
+                  </div>
+
+                  <MatchHistoryEditSelector
+                    title="Who I brought"
+                    slots={editingEntry.allySlots}
+                    selectedSlotIndices={editAllyBroughtSlotIndices}
+                    maxSelections={4}
+                    onChange={setEditAllyBroughtSlotIndices}
+                  />
+                  <MatchHistoryEditSelector
+                    title="My leads"
+                    slots={editingEntry.allySlots}
+                    selectedSlotIndices={editAllyLeadSlotIndices}
+                    maxSelections={2}
+                    onChange={setEditAllyLeadSlotIndices}
+                  />
+                  <MatchHistoryEditSelector
+                    title="Who enemy brought"
+                    slots={editingEntry.enemySlots}
+                    selectedSlotIndices={editEnemyBroughtSlotIndices}
+                    maxSelections={4}
+                    onChange={setEditEnemyBroughtSlotIndices}
+                  />
+                  <MatchHistoryEditSelector
+                    title="Enemy leads"
+                    slots={editingEntry.enemySlots}
+                    selectedSlotIndices={editEnemyLeadSlotIndices}
+                    maxSelections={2}
+                    onChange={setEditEnemyLeadSlotIndices}
+                  />
+                </div>
+                <footer className="showdown-import-modal__footer">
+                  <button type="button" className="secondary-button" onClick={() => setEditingEntry(null)}>
+                    Cancel
+                  </button>
+                  <div className="showdown-import-modal__footer-spacer" />
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={saveEditedEntry}
+                    disabled={editAllyBroughtSlotIndices.length === 0 || editEnemyBroughtSlotIndices.length === 0}
+                  >
+                    Save Changes
+                  </button>
+                </footer>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </section>
   );
 }
@@ -15624,6 +15834,74 @@ function MatchHistoryRoster({
       <div className="match-history-legend" aria-hidden="true">
         <span className="brought">Brought</span>
         <span className="lead">Lead</span>
+      </div>
+    </section>
+  );
+}
+
+function MatchHistoryEditSelector({
+  title,
+  slots,
+  selectedSlotIndices,
+  maxSelections,
+  onChange,
+}: {
+  title: string;
+  slots: PersistedTeamSlot[];
+  selectedSlotIndices: number[];
+  maxSelections: number;
+  onChange: Dispatch<SetStateAction<number[]>>;
+}) {
+  const visibleSlots = slots
+    .map((slot, slotIndex) => ({ slot, slotIndex }))
+    .filter(({ slot }) => Boolean(slot.pokemonId || slot.query.trim()));
+
+  return (
+    <section className="match-save-section">
+      <div className="match-save-section__header">
+        <strong>{title}</strong>
+        <span>
+          {selectedSlotIndices.length}/{maxSelections}
+        </span>
+      </div>
+      <div className="match-save-option-grid">
+        {visibleSlots.length > 0 ? (
+          visibleSlots.map(({ slot, slotIndex }) => {
+            const selected = selectedSlotIndices.includes(slotIndex);
+            return (
+              <button
+                key={`${title}-${slotIndex}-${slot.pokemonId ?? slot.query}`}
+                type="button"
+                className={`match-save-option${selected ? " selected" : ""}`}
+                onClick={() =>
+                  onChange((current) => {
+                    if (current.includes(slotIndex)) {
+                      return current.filter((selectedSlotIndex) => selectedSlotIndex !== slotIndex);
+                    }
+
+                    return [...current, slotIndex].slice(0, maxSelections);
+                  })
+                }
+                aria-pressed={selected}
+              >
+                {slot.pokemonId ? (
+                  <img
+                    className="match-save-option__sprite"
+                    src={getPokemonSpriteUrl(slot.pokemonId)}
+                    alt=""
+                    loading="lazy"
+                  />
+                ) : null}
+                <span>
+                  <strong>{getMatchHistorySlotName(slot, slotIndex)}</strong>
+                  <small>Slot {slotIndex + 1}</small>
+                </span>
+              </button>
+            );
+          })
+        ) : (
+          <p className="selector-note">No Pokemon recorded for this side.</p>
+        )}
       </div>
     </section>
   );
