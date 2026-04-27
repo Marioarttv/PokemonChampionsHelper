@@ -80,4 +80,42 @@ describe("damage ability handling", () => {
     expect(parentalBondEstimate.attackerAbilityMultiplier).toBe(1.25);
     expect(parentalBondEstimate.maxDamage).toBeGreaterThan(noAbilityEstimate.maxDamage);
   });
+
+  it("applies Tough Claws to Breaking Swipe for Mega Charizard X", () => {
+    const megaCharizardX = makePokemon("Charizard-Mega-X", {
+      types: ["Fire", "Dragon"],
+      baseStats: { atk: 130 },
+      abilities: { "0": "Tough Claws" },
+    });
+    const defender = makePokemon("Neutral Target", {
+      types: ["Normal"],
+      baseStats: { hp: 100, def: 100 },
+    });
+
+    const defaultAbility = getDefaultDamageAbilityId(megaCharizardX);
+    const toughClawsEstimate = calculateRoughDamage({
+      attacker: megaCharizardX,
+      defender,
+      attackType: "dragon",
+      moveName: "Breaking Swipe",
+      basePower: 60,
+      category: "physical",
+      isSpreadMove: true,
+      attackerAbility: defaultAbility,
+    });
+    const noAbilityEstimate = calculateRoughDamage({
+      attacker: megaCharizardX,
+      defender,
+      attackType: "dragon",
+      moveName: "Breaking Swipe",
+      basePower: 60,
+      category: "physical",
+      isSpreadMove: true,
+      attackerAbility: "none",
+    });
+
+    expect(defaultAbility).toBe("toughclaws");
+    expect(toughClawsEstimate.attackerAbilityMultiplier).toBe(1.3);
+    expect(toughClawsEstimate.maxDamage).toBeGreaterThan(noAbilityEstimate.maxDamage);
+  });
 });

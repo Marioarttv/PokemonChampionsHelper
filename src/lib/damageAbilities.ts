@@ -308,6 +308,7 @@ const CONTACT_MOVE_KEYS = new Set([
   "aquajet",
   "aquastep",
   "bravebird",
+  "breakingswipe",
   "bitterblade",
   "bulletpunch",
   "bugbite",
