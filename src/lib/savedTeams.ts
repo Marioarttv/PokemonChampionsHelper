@@ -50,7 +50,7 @@ export type PersistedTeam = {
 
 const DB_NAME = "pokemon-champions-helper";
 const STORE_NAME = "saved-teams";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 function getIndexedDb() {
   if (typeof window === "undefined" || !("indexedDB" in window)) {
@@ -70,6 +70,11 @@ function openDatabase() {
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         const store = db.createObjectStore(STORE_NAME, { keyPath: "id" });
         store.createIndex("updatedAt", "updatedAt");
+      }
+
+      if (!db.objectStoreNames.contains("match-history")) {
+        const store = db.createObjectStore("match-history", { keyPath: "id" });
+        store.createIndex("playedAt", "playedAt");
       }
     };
 

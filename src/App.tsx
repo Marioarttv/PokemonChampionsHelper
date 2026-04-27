@@ -149,6 +149,13 @@ import {
   type PersistedTeam,
   type PersistedTeamSlot,
 } from "./lib/savedTeams";
+import {
+  deleteMatchHistoryEntry,
+  listMatchHistoryEntries,
+  saveMatchHistoryEntry,
+  type MatchResult,
+  type PersistedMatchHistoryEntry,
+} from "./lib/matchHistory";
 import { getLoadedOpponentEntries } from "./lib/opponentRoster";
 import {
   deleteSpeciesMoveset,
@@ -158,7 +165,7 @@ import {
 } from "./lib/speciesMovesets";
 import { importShowdownTeamText } from "./lib/showdownTeamImport";
 
-type SiteMode = "calculator" | "team" | "movesets" | "ohko";
+type SiteMode = "calculator" | "team" | "movesets" | "ohko" | "history";
 type CalculatorMode = "defense" | "attack";
 
 type TypePoolProps = {
@@ -4453,6 +4460,49 @@ function createEmptyOpponentSlots() {
   return Array.from({ length: MAX_OPPONENT_SCOUT_SLOTS }, () => "");
 }
 
+function sanitizeSlotIndices(values: number[], availableSlotIndices: Set<number>, limit: number) {
+  const next: number[] = [];
+
+  for (const value of values) {
+    if (!availableSlotIndices.has(value) || next.includes(value)) {
+      continue;
+    }
+
+    next.push(value);
+    if (next.length >= limit) {
+      break;
+    }
+  }
+
+  return next;
+}
+
+function buildMatchPokemonSnapshot(
+  slots: Array<{ slotIndex: number; pokemon: PokemonRecord | null }>,
+  slotIndices: number[],
+) {
+  return slotIndices.flatMap((slotIndex) => {
+    const slot = slots.find((entry) => entry.slotIndex === slotIndex);
+    return slot?.pokemon
+      ? [
+          {
+            slotIndex,
+            pokemonId: slot.pokemon.id,
+            name: slot.pokemon.name,
+          },
+        ]
+      : [];
+  });
+}
+
+function formatMatchPokemonNames(entries: Array<{ name: string }>) {
+  return entries.length > 0 ? entries.map((entry) => entry.name).join(", ") : "Not recorded";
+}
+
+function getMatchHistorySlotName(slot: PersistedTeamSlot, slotIndex: number) {
+  return slot.query.trim() || slot.pokemonId || `Slot ${slotIndex + 1}`;
+}
+
 function TypePool({ selectedTypes, onToggle, onClear, mode }: TypePoolProps) {
   const slotCount = mode === "defense" ? 2 : 1;
 
@@ -7007,6 +7057,72 @@ type TeamBuilderViewProps = {
   onStartNewTeam: () => void;
 };
 
+type MatchSaveSelectorProps = {
+  title: string;
+  options: Array<{ slotIndex: number; pokemon: PokemonRecord | null }>;
+  selectedSlotIndices: number[];
+  maxSelections: number;
+  onChange: Dispatch<SetStateAction<number[]>>;
+};
+
+function MatchSaveSelector({
+  title,
+  options,
+  selectedSlotIndices,
+  maxSelections,
+  onChange,
+}: MatchSaveSelectorProps) {
+  const filledOptions = options.filter((option) => option.pokemon);
+
+  return (
+    <section className="match-save-section">
+      <div className="match-save-section__header">
+        <strong>{title}</strong>
+        <span>
+          {selectedSlotIndices.length}/{maxSelections}
+        </span>
+      </div>
+      <div className="match-save-option-grid">
+        {filledOptions.length > 0 ? (
+          filledOptions.map((option) => {
+            const pokemon = option.pokemon;
+            if (!pokemon) {
+              return null;
+            }
+
+            const selected = selectedSlotIndices.includes(option.slotIndex);
+            return (
+              <button
+                key={`${title}-${option.slotIndex}-${pokemon.id}`}
+                type="button"
+                className={`match-save-option${selected ? " selected" : ""}`}
+                onClick={() =>
+                  onChange((current) => {
+                    if (current.includes(option.slotIndex)) {
+                      return current.filter((slotIndex) => slotIndex !== option.slotIndex);
+                    }
+
+                    return [...current, option.slotIndex].slice(0, maxSelections);
+                  })
+                }
+                aria-pressed={selected}
+              >
+                <PokemonSprite pokemon={pokemon} className="match-save-option__sprite" />
+                <span>
+                  <strong>{pokemon.name}</strong>
+                  <small>Slot {option.slotIndex + 1}</small>
+                </span>
+              </button>
+            );
+          })
+        ) : (
+          <p className="selector-note">No Pokemon loaded for this side.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const [teamMatrixMode, setTeamMatrixMode] = useState<TeamMatrixMode>("defense");
   const [openerSelections, setOpenerSelections] = useState<[OpenerSelection, OpenerSelection]>([
@@ -7034,6 +7150,14 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const [speciesMovesets, setSpeciesMovesets] = useState<PersistedSpeciesMoveset[]>([]);
   const [storageMessage, setStorageMessage] = useState<string | null>(null);
   const [storageError, setStorageError] = useState<string | null>(null);
+  const [matchHistory, setMatchHistory] = useState<PersistedMatchHistoryEntry[]>([]);
+  const [matchHistoryError, setMatchHistoryError] = useState<string | null>(null);
+  const [saveMatchOpen, setSaveMatchOpen] = useState(false);
+  const [matchResult, setMatchResult] = useState<MatchResult>("won");
+  const [matchAllyBroughtSlotIndices, setMatchAllyBroughtSlotIndices] = useState<number[]>([]);
+  const [matchEnemyBroughtSlotIndices, setMatchEnemyBroughtSlotIndices] = useState<number[]>([]);
+  const [matchAllyLeadSlotIndices, setMatchAllyLeadSlotIndices] = useState<number[]>([]);
+  const [matchEnemyLeadSlotIndices, setMatchEnemyLeadSlotIndices] = useState<number[]>([]);
   const [showdownImportText, setShowdownImportText] = useState("");
   const [showdownImportOpen, setShowdownImportOpen] = useState(false);
   const [activeSavedTeamId, setActiveSavedTeamId] = useState<string | null>(null);
@@ -7271,6 +7395,18 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       .catch((error) => {
         if (active) {
           setStorageError(error instanceof Error ? error.message : "Failed to load species movesets.");
+        }
+      });
+
+    listMatchHistoryEntries()
+      .then((entries) => {
+        if (active) {
+          setMatchHistory(entries);
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setMatchHistoryError(error instanceof Error ? error.message : "Failed to load match history.");
         }
       });
 
@@ -8763,6 +8899,84 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       new Map(bringSelection.lockedBringSlotIndices.map((slotIndex, index) => [slotIndex, index + 1] as const)),
     [bringSelection.lockedBringSlotIndices],
   );
+  const matchAllySlotOptions = useMemo(
+    () => team.map((slot, slotIndex) => ({ slotIndex, pokemon: slot.pokemon })),
+    [team],
+  );
+  const matchEnemySlotOptions = useMemo(
+    () => opponentRoster.map((slot) => ({ slotIndex: slot.slotIndex, pokemon: slot.pokemon })),
+    [opponentRoster],
+  );
+  const filledMatchAllySlotSet = useMemo(
+    () => new Set(matchAllySlotOptions.filter((entry) => entry.pokemon).map((entry) => entry.slotIndex)),
+    [matchAllySlotOptions],
+  );
+  const filledMatchEnemySlotSet = useMemo(
+    () => new Set(matchEnemySlotOptions.filter((entry) => entry.pokemon).map((entry) => entry.slotIndex)),
+    [matchEnemySlotOptions],
+  );
+
+  const buildOpponentHistorySlots = (): PersistedTeamSlot[] =>
+    Array.from({ length: MAX_OPPONENT_SCOUT_SLOTS }, (_, slotIndex) => {
+      const entry = opponentRoster[slotIndex];
+      return {
+        query: entry?.query ?? "",
+        pokemonId: entry?.pokemon?.id ?? null,
+        itemName: entry?.itemName ?? null,
+        statSpread: entry?.statSpread ?? null,
+        knownMoves: entry?.knownMoves ?? [],
+        savedAttacks: entry?.savedAttacks ?? [],
+      };
+    });
+
+  const openSaveMatchDialog = () => {
+    const allyBringDefaults =
+      bringSelection.bringSlotIndices.length > 0
+        ? bringSelection.bringSlotIndices
+        : filledTeamSlotIndices.slice(0, Math.min(4, filledTeamSlotIndices.length));
+    const enemyBringDefaults =
+      enemyBring.candidateSlotIndices.length > 0
+        ? enemyBring.candidateSlotIndices.slice(0, Math.min(4, enemyBring.candidateSlotIndices.length))
+        : loadedOpponentSlotIndices.slice(0, Math.min(4, loadedOpponentSlotIndices.length));
+
+    setMatchResult("won");
+    setMatchAllyBroughtSlotIndices(sanitizeSlotIndices(allyBringDefaults, filledMatchAllySlotSet, 4));
+    setMatchEnemyBroughtSlotIndices(sanitizeSlotIndices(enemyBringDefaults, filledMatchEnemySlotSet, 4));
+    setMatchAllyLeadSlotIndices(sanitizeSlotIndices(doublesAllySelection.filter((value): value is number => value !== null), filledMatchAllySlotSet, 2));
+    setMatchEnemyLeadSlotIndices(sanitizeSlotIndices(doublesEnemySelection.filter((value): value is number => value !== null), filledMatchEnemySlotSet, 2));
+    setSaveMatchOpen(true);
+  };
+
+  const refreshMatchHistory = async () => {
+    const entries = await listMatchHistoryEntries();
+    setMatchHistory(entries);
+  };
+
+  const saveCurrentMatchHistory = async () => {
+    try {
+      setMatchHistoryError(null);
+      const saved = await saveMatchHistoryEntry({
+        result: matchResult,
+        allyTeamName: teamName.trim() || "My Team",
+        allySlots: teamSlots,
+        enemySlots: buildOpponentHistorySlots(),
+        allyBroughtSlotIndices: matchAllyBroughtSlotIndices,
+        enemyBroughtSlotIndices: matchEnemyBroughtSlotIndices,
+        allyLeadSlotIndices: matchAllyLeadSlotIndices,
+        enemyLeadSlotIndices: matchEnemyLeadSlotIndices,
+        allyBrought: buildMatchPokemonSnapshot(matchAllySlotOptions, matchAllyBroughtSlotIndices),
+        enemyBrought: buildMatchPokemonSnapshot(matchEnemySlotOptions, matchEnemyBroughtSlotIndices),
+        allyLeads: buildMatchPokemonSnapshot(matchAllySlotOptions, matchAllyLeadSlotIndices),
+        enemyLeads: buildMatchPokemonSnapshot(matchEnemySlotOptions, matchEnemyLeadSlotIndices),
+      });
+
+      await refreshMatchHistory();
+      setSaveMatchOpen(false);
+      setStorageMessage(`Saved ${saved.result === "won" ? "win" : "loss"} vs enemy team to match history.`);
+    } catch (error) {
+      setMatchHistoryError(error instanceof Error ? error.message : "Failed to save match history.");
+    }
+  };
   const bringSelectedTeam = useMemo(
     () =>
       bringSelection.bringSlotIndices
@@ -10777,6 +10991,15 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             <button
               type="button"
               className="secondary-button"
+              onClick={openSaveMatchDialog}
+              disabled={opponentEntries.length === 0 || selectedPokemon.length === 0}
+              aria-haspopup="dialog"
+            >
+              Save Enemy Team
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
               onClick={clearOpponentTeam}
               disabled={opponentEntries.length === 0}
             >
@@ -10784,6 +11007,104 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             </button>
           </div>
         </div>
+
+        {saveMatchOpen && typeof document !== "undefined"
+          ? createPortal(
+              <div
+                className="showdown-import-modal match-save-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="match-save-modal-title"
+                onClick={(event) => {
+                  if (event.target === event.currentTarget) {
+                    setSaveMatchOpen(false);
+                  }
+                }}
+              >
+                <div className="showdown-import-modal__dialog match-save-modal__dialog" role="document">
+                  <header className="showdown-import-modal__header">
+                    <div className="showdown-import-modal__title">
+                      <span className="eyebrow">Match Log</span>
+                      <h3 id="match-save-modal-title">Save enemy team</h3>
+                    </div>
+                    <button
+                      type="button"
+                      className="showdown-import-modal__close"
+                      onClick={() => setSaveMatchOpen(false)}
+                      aria-label="Close save match dialog"
+                      title="Close"
+                    >
+                      ×
+                    </button>
+                  </header>
+                  <div className="showdown-import-modal__body match-save-modal__body">
+                    <div className="match-save-result-toggle" aria-label="Match result">
+                      <button
+                        type="button"
+                        className={matchResult === "won" ? "active" : ""}
+                        onClick={() => setMatchResult("won")}
+                      >
+                        Won
+                      </button>
+                      <button
+                        type="button"
+                        className={matchResult === "lost" ? "active" : ""}
+                        onClick={() => setMatchResult("lost")}
+                      >
+                        Lost
+                      </button>
+                    </div>
+
+                    <MatchSaveSelector
+                      title="Who I brought"
+                      options={matchAllySlotOptions}
+                      selectedSlotIndices={matchAllyBroughtSlotIndices}
+                      maxSelections={4}
+                      onChange={setMatchAllyBroughtSlotIndices}
+                    />
+                    <MatchSaveSelector
+                      title="My leads"
+                      options={matchAllySlotOptions}
+                      selectedSlotIndices={matchAllyLeadSlotIndices}
+                      maxSelections={2}
+                      onChange={setMatchAllyLeadSlotIndices}
+                    />
+                    <MatchSaveSelector
+                      title="Who enemy brought"
+                      options={matchEnemySlotOptions}
+                      selectedSlotIndices={matchEnemyBroughtSlotIndices}
+                      maxSelections={4}
+                      onChange={setMatchEnemyBroughtSlotIndices}
+                    />
+                    <MatchSaveSelector
+                      title="Enemy leads"
+                      options={matchEnemySlotOptions}
+                      selectedSlotIndices={matchEnemyLeadSlotIndices}
+                      maxSelections={2}
+                      onChange={setMatchEnemyLeadSlotIndices}
+                    />
+
+                    {matchHistoryError ? <p className="storage-message error">{matchHistoryError}</p> : null}
+                  </div>
+                  <footer className="showdown-import-modal__footer">
+                    <button type="button" className="secondary-button" onClick={() => setSaveMatchOpen(false)}>
+                      Cancel
+                    </button>
+                    <div className="showdown-import-modal__footer-spacer" />
+                    <button
+                      type="button"
+                      className="primary-button"
+                      onClick={saveCurrentMatchHistory}
+                      disabled={matchAllyBroughtSlotIndices.length === 0 || matchEnemyBroughtSlotIndices.length === 0}
+                    >
+                      Save Match
+                    </button>
+                  </footer>
+                </div>
+              </div>,
+              document.body,
+            )
+          : null}
 
         <div className="opponent-search-grid">
           {opponentQueries.map((query, slotIndex) => (
@@ -15150,11 +15471,170 @@ function OhkoFinderView() {
   );
 }
 
+function MatchHistoryView() {
+  const [entries, setEntries] = useState<PersistedMatchHistoryEntry[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = async () => {
+    const nextEntries = await listMatchHistoryEntries();
+    setEntries(nextEntries);
+  };
+
+  useEffect(() => {
+    refresh().catch((refreshError) => {
+      setError(refreshError instanceof Error ? refreshError.message : "Failed to load match history.");
+    });
+  }, []);
+
+  const removeEntry = async (entry: PersistedMatchHistoryEntry) => {
+    try {
+      setError(null);
+      await deleteMatchHistoryEntry(entry.id);
+      await refresh();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Failed to delete match history entry.");
+    }
+  };
+
+  const wins = entries.filter((entry) => entry.result === "won").length;
+  const losses = entries.length - wins;
+  const winRate = entries.length > 0 ? Math.round((wins / entries.length) * 100) : 0;
+
+  return (
+    <section className="match-history-page">
+      <section className="team-builder-hero">
+        <div>
+          <p className="eyebrow">Match History</p>
+          <h2>Review saved games</h2>
+          <p className="selector-note">
+            Track results, bring fours, and leads against saved enemy teams so patterns are easier to spot later.
+          </p>
+        </div>
+        <div className="match-history-stats">
+          <span>
+            <strong>{entries.length}</strong>
+            Matches
+          </span>
+          <span>
+            <strong>{wins}</strong>
+            Wins
+          </span>
+          <span>
+            <strong>{losses}</strong>
+            Losses
+          </span>
+          <span>
+            <strong>{winRate}%</strong>
+            Win Rate
+          </span>
+        </div>
+      </section>
+
+      {error ? <p className="storage-message error">{error}</p> : null}
+
+      {entries.length > 0 ? (
+        <div className="match-history-list">
+          {entries.map((entry) => {
+            const playedAt = new Date(entry.playedAt);
+            return (
+              <article key={entry.id} className={`match-history-card ${entry.result}`}>
+                <header className="match-history-card__header">
+                  <div>
+                    <p className="eyebrow">{entry.result === "won" ? "Win" : "Loss"}</p>
+                    <h3>{entry.allyTeamName}</h3>
+                    <time dateTime={entry.playedAt}>{playedAt.toLocaleString()}</time>
+                  </div>
+                  <button type="button" className="secondary-button" onClick={() => removeEntry(entry)}>
+                    Delete
+                  </button>
+                </header>
+
+                <div className="match-history-grid">
+                  <MatchHistoryRoster
+                    title="My team"
+                    slots={entry.allySlots}
+                    broughtSlotIndices={entry.allyBroughtSlotIndices}
+                    leadSlotIndices={entry.allyLeadSlotIndices}
+                  />
+                  <MatchHistoryRoster
+                    title="Enemy team"
+                    slots={entry.enemySlots}
+                    broughtSlotIndices={entry.enemyBroughtSlotIndices}
+                    leadSlotIndices={entry.enemyLeadSlotIndices}
+                  />
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="match-history-empty">No match history yet. Save an enemy team from Team Builder after a game.</div>
+      )}
+    </section>
+  );
+}
+
+function MatchHistoryRoster({
+  title,
+  slots,
+  broughtSlotIndices,
+  leadSlotIndices,
+}: {
+  title: string;
+  slots: PersistedTeamSlot[];
+  broughtSlotIndices: number[];
+  leadSlotIndices: number[];
+}) {
+  const visibleSlots = slots
+    .map((slot, slotIndex) => ({ slot, slotIndex }))
+    .filter(({ slot }) => Boolean(slot.pokemonId || slot.query.trim()));
+  const broughtSlotSet = new Set(broughtSlotIndices);
+  const leadSlotSet = new Set(leadSlotIndices);
+
+  return (
+    <section className="match-history-group">
+      <strong>{title}</strong>
+      <div
+        className="match-history-roster"
+        title={formatMatchPokemonNames(
+          visibleSlots.map(({ slot, slotIndex }) => ({
+            name: getMatchHistorySlotName(slot, slotIndex),
+          })),
+        )}
+      >
+        {visibleSlots.length > 0 ? (
+          visibleSlots.map(({ slot, slotIndex }) => {
+            const isBrought = broughtSlotSet.has(slotIndex);
+            const isLead = leadSlotSet.has(slotIndex);
+            return (
+              <span
+                key={`${title}-${slotIndex}-${slot.pokemonId ?? slot.query}`}
+                className={`match-history-pokemon${isBrought ? " brought" : ""}${isLead ? " lead" : ""}`}
+              >
+                {slot.pokemonId ? <img src={getPokemonSpriteUrl(slot.pokemonId)} alt="" loading="lazy" /> : null}
+                <span className="match-history-pokemon__name">{getMatchHistorySlotName(slot, slotIndex)}</span>
+                {isLead ? <em>Lead</em> : isBrought ? <em>Brought</em> : <em>Bench</em>}
+              </span>
+            );
+          })
+        ) : (
+          <span className="subtle-empty">Not recorded</span>
+        )}
+      </div>
+      <div className="match-history-legend" aria-hidden="true">
+        <span className="brought">Brought</span>
+        <span className="lead">Lead</span>
+      </div>
+    </section>
+  );
+}
+
 const SITE_SECTIONS: Array<{ id: SiteMode; index: string; label: string }> = [
   { id: "calculator", index: "01", label: "Type Calculator" },
   { id: "team", index: "02", label: "Team Builder" },
   { id: "movesets", index: "03", label: "Movesets DB" },
   { id: "ohko", index: "04", label: "OHKO Finder" },
+  { id: "history", index: "05", label: "Match History" },
 ];
 
 function App() {
@@ -15221,8 +15701,10 @@ function App() {
           />
         ) : siteMode === "movesets" ? (
           <MovesetDatabaseView />
-        ) : (
+        ) : siteMode === "ohko" ? (
           <OhkoFinderView />
+        ) : (
+          <MatchHistoryView />
         )}
       </main>
     </div>

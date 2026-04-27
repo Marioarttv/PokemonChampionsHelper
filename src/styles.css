@@ -9018,6 +9018,312 @@ textarea::placeholder {
   flex: 1 1 auto;
 }
 
+.match-save-modal__dialog {
+  width: min(780px, 100%);
+}
+
+.match-save-modal__body {
+  gap: 0.75rem;
+}
+
+.match-save-result-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.match-save-result-toggle button,
+.match-save-option {
+  border: 1px solid rgba(226, 232, 255, 0.12);
+  background: rgba(226, 232, 255, 0.04);
+  color: var(--ink-body);
+  cursor: pointer;
+}
+
+.match-save-result-toggle button {
+  min-height: 2.4rem;
+  border-radius: 10px;
+  font-weight: 900;
+}
+
+.match-save-result-toggle button.active {
+  border-color: rgba(255, 207, 92, 0.45);
+  background: rgba(255, 207, 92, 0.14);
+  color: var(--accent-gold-soft);
+}
+
+.match-save-section {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.match-save-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.match-save-section__header strong {
+  color: var(--ink-strong);
+  font-size: 0.82rem;
+}
+
+.match-save-section__header span {
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  font-weight: 900;
+}
+
+.match-save-option-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.match-save-option {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  padding: 0.42rem 0.48rem;
+  border-radius: 10px;
+  text-align: left;
+}
+
+.match-save-option.selected {
+  border-color: rgba(61, 216, 184, 0.44);
+  background: rgba(61, 216, 184, 0.12);
+}
+
+.match-save-option__sprite {
+  width: 2.2rem;
+  height: 2.2rem;
+  object-fit: contain;
+  flex: 0 0 auto;
+}
+
+.match-save-option span {
+  display: grid;
+  min-width: 0;
+}
+
+.match-save-option strong,
+.match-save-option small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.match-save-option strong {
+  color: var(--ink-strong);
+  font-size: 0.8rem;
+}
+
+.match-save-option small {
+  color: var(--ink-soft);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.match-history-page {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.match-history-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.45rem;
+  min-width: min(100%, 34rem);
+}
+
+.match-history-stats span {
+  display: grid;
+  gap: 0.12rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 12px;
+  border: 1px solid rgba(226, 232, 255, 0.1);
+  background: rgba(226, 232, 255, 0.04);
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.match-history-stats strong {
+  color: var(--ink-strong);
+  font-size: 1.15rem;
+}
+
+.match-history-list {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.match-history-card {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.75rem;
+  border-radius: 16px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  box-shadow: var(--panel-shadow);
+}
+
+.match-history-card.won {
+  border-left: 3px solid var(--status-good);
+}
+
+.match-history-card.lost {
+  border-left: 3px solid var(--status-bad);
+}
+
+.match-history-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.match-history-card__header h3,
+.match-history-card__header time {
+  margin: 0;
+}
+
+.match-history-card__header h3 {
+  color: var(--ink-strong);
+  font-size: 1rem;
+}
+
+.match-history-card__header time {
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.match-history-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.match-history-group {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.55rem;
+  border-radius: 12px;
+  background: rgba(226, 232, 255, 0.04);
+  border: 1px solid rgba(226, 232, 255, 0.08);
+}
+
+.match-history-group > strong {
+  color: var(--ink-strong);
+  font-size: 0.78rem;
+}
+
+.match-history-pokemon-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.match-history-roster {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.match-history-pokemon {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0.25rem 0.4rem 0.25rem 0.28rem;
+  border-radius: 10px;
+  background: rgba(20, 26, 52, 0.78);
+  border: 1px solid rgba(226, 232, 255, 0.07);
+  color: var(--ink-body);
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.match-history-pokemon.brought {
+  border-color: rgba(61, 216, 184, 0.34);
+  background: rgba(61, 216, 184, 0.1);
+}
+
+.match-history-pokemon.lead {
+  border-color: rgba(255, 207, 92, 0.45);
+  background: rgba(255, 207, 92, 0.13);
+}
+
+.match-history-pokemon img {
+  width: 1.45rem;
+  height: 1.45rem;
+  object-fit: contain;
+  flex: 0 0 auto;
+}
+
+.match-history-pokemon__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.match-history-pokemon em {
+  margin-left: auto;
+  flex: 0 0 auto;
+  color: var(--ink-soft);
+  font-size: 0.62rem;
+  font-style: normal;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.match-history-pokemon.brought em {
+  color: var(--accent-teal);
+}
+
+.match-history-pokemon.lead em {
+  color: var(--accent-gold-soft);
+}
+
+.match-history-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.match-history-legend span {
+  padding: 0.16rem 0.36rem;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.match-history-legend .brought {
+  background: rgba(61, 216, 184, 0.12);
+  color: var(--accent-teal);
+}
+
+.match-history-legend .lead {
+  background: rgba(255, 207, 92, 0.14);
+  color: var(--accent-gold-soft);
+}
+
+.match-history-empty {
+  padding: 1rem;
+  border-radius: 16px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  color: var(--ink-soft);
+  font-weight: 800;
+}
+
 @media (max-width: 560px) {
   .showdown-import-modal {
     padding: 0.6rem;
@@ -9037,6 +9343,11 @@ textarea::placeholder {
   }
   .showdown-import-modal__footer-spacer {
     flex-basis: 100%;
+  }
+  .match-save-option-grid,
+  .match-history-grid,
+  .match-history-stats {
+    grid-template-columns: 1fr;
   }
 }
 
