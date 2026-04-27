@@ -9166,6 +9166,37 @@ textarea::placeholder {
   gap: 0.9rem;
 }
 
+.match-history-sort-bar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.match-history-sort-bar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 12px;
+  background: rgba(20, 26, 52, 0.7);
+  border: 1px solid rgba(226, 232, 255, 0.1);
+}
+
+.match-history-sort-bar span {
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.match-history-sort-bar select {
+  min-height: 2rem;
+  border-radius: 9px;
+  border: 1px solid rgba(226, 232, 255, 0.14);
+  background: rgba(8, 12, 28, 0.82);
+  color: var(--ink-strong);
+  font-weight: 800;
+}
+
 .match-history-team-group {
   display: grid;
   gap: 0.65rem;

@@ -167,6 +167,7 @@ import { importShowdownTeamText } from "./lib/showdownTeamImport";
 
 type SiteMode = "calculator" | "team" | "movesets" | "ohko" | "history";
 type CalculatorMode = "defense" | "attack";
+type MatchHistoryTeamSort = "latest" | "name" | "matches" | "winRate";
 
 type TypePoolProps = {
   selectedTypes: PokemonType[];
@@ -15489,6 +15490,7 @@ function OhkoFinderView() {
 function MatchHistoryView() {
   const [entries, setEntries] = useState<PersistedMatchHistoryEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [teamSort, setTeamSort] = useState<MatchHistoryTeamSort>("latest");
   const [editingEntry, setEditingEntry] = useState<PersistedMatchHistoryEntry | null>(null);
   const [editResult, setEditResult] = useState<MatchResult>("won");
   const [editAllyBroughtSlotIndices, setEditAllyBroughtSlotIndices] = useState<number[]>([]);
@@ -15584,8 +15586,22 @@ function MatchHistoryView() {
         winRate: teamEntries.length > 0 ? Math.round((teamWins / teamEntries.length) * 100) : 0,
         latestPlayedAt,
       };
+    }).sort((left, right) => {
+      if (teamSort === "name") {
+        return left.teamName.localeCompare(right.teamName);
+      }
+
+      if (teamSort === "matches") {
+        return right.entries.length - left.entries.length || right.latestPlayedAt.localeCompare(left.latestPlayedAt);
+      }
+
+      if (teamSort === "winRate") {
+        return right.winRate - left.winRate || right.entries.length - left.entries.length;
+      }
+
+      return right.latestPlayedAt.localeCompare(left.latestPlayedAt);
     });
-  }, [entries]);
+  }, [entries, teamSort]);
 
   return (
     <section className="match-history-page">
@@ -15621,6 +15637,21 @@ function MatchHistoryView() {
 
       {entries.length > 0 ? (
         <div className="match-history-team-list">
+          <div className="match-history-sort-bar">
+            <label htmlFor="match-history-team-sort">
+              <span>Sort Teams</span>
+              <select
+                id="match-history-team-sort"
+                value={teamSort}
+                onChange={(event) => setTeamSort(event.target.value as MatchHistoryTeamSort)}
+              >
+                <option value="latest">Latest Match</option>
+                <option value="name">Team Name</option>
+                <option value="matches">Most Matches</option>
+                <option value="winRate">Best Win Rate</option>
+              </select>
+            </label>
+          </div>
           {groupedEntries.map((group) => (
             <section key={group.teamName} className="match-history-team-group">
               <header className="match-history-team-group__header">
