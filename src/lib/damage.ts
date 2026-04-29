@@ -44,10 +44,14 @@ export type DamageEstimateInput = {
   attackerStatStage?: number;
   defenderStatStage?: number;
   attackerAbility?: DamageAbilityId;
+  attackerAbilityName?: string | null;
   defenderAbility?: DamageAbilityId;
   attackerItem?: DamageItemId;
   defenderItem?: DamageItemId;
   helpingHand?: boolean;
+  reflect?: boolean;
+  lightScreen?: boolean;
+  auroraVeil?: boolean;
   attackerStatSpread?: ChampionsStatSpread | null;
   defenderStatSpread?: ChampionsStatSpread | null;
 };
@@ -79,6 +83,7 @@ export type DamageEstimate = {
   defenderItemMultiplier: number;
   itemMultiplier: number;
   helpingHandMultiplier: number;
+  screenMultiplier: number;
   finalModifier: number;
   attackerStageMultiplier: number;
   defenderStageMultiplier: number;
@@ -94,6 +99,7 @@ const AVG_RANDOM_MULTIPLIER = 0.925;
 const MAX_RANDOM_MULTIPLIER = 1;
 const STAB_MULTIPLIER = 1.5;
 export const SPREAD_MOVE_MULTIPLIER = 0.75;
+export const DOUBLES_SCREEN_MULTIPLIER = 2 / 3;
 const AEGISLASH_SHIELD_STATS = {
   atk: 50,
   def: 140,
@@ -141,8 +147,48 @@ function normalizeMoveNameKey(moveName: string) {
   return moveName.toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
+function hasMegaSolAbility(abilityName: string | null | undefined) {
+  return abilityName ? normalizeMoveNameKey(abilityName) === "megasol" : false;
+}
+
 function isWeatherBallMove(moveName: string | null | undefined) {
   return moveName ? normalizeMoveNameKey(moveName) === "weatherball" : false;
+}
+
+export function getAttackerEffectiveWeather({
+  weather = "none",
+  attackerAbilityName,
+}: {
+  weather?: DamageWeather;
+  attackerAbilityName?: string | null;
+}) {
+  return hasMegaSolAbility(attackerAbilityName) ? "sun" : weather;
+}
+
+export function getDamageScreenMultiplier({
+  category,
+  reflect = false,
+  lightScreen = false,
+  auroraVeil = false,
+}: {
+  category: DamageCategory;
+  reflect?: boolean;
+  lightScreen?: boolean;
+  auroraVeil?: boolean;
+}) {
+  if (auroraVeil) {
+    return DOUBLES_SCREEN_MULTIPLIER;
+  }
+
+  if (category === "physical" && reflect) {
+    return DOUBLES_SCREEN_MULTIPLIER;
+  }
+
+  if (category === "special" && lightScreen) {
+    return DOUBLES_SCREEN_MULTIPLIER;
+  }
+
+  return 1;
 }
 
 export function resolveWeatherBallDamageInput({
@@ -199,18 +245,26 @@ export function calculateRoughDamage({
   attackerStatStage = 0,
   defenderStatStage = 0,
   attackerAbility = "none",
+  attackerAbilityName = null,
   defenderAbility = "none",
   attackerItem = "none",
   defenderItem = "none",
   helpingHand = false,
+  reflect = false,
+  lightScreen = false,
+  auroraVeil = false,
   attackerStatSpread = null,
   defenderStatSpread = null,
 }: DamageEstimateInput): DamageEstimate {
+  const attackerEffectiveWeather = getAttackerEffectiveWeather({
+    weather,
+    attackerAbilityName,
+  });
   const resolvedMove = resolveWeatherBallDamageInput({
     attackType,
     basePower,
     moveName,
-    weather,
+    weather: attackerEffectiveWeather,
   });
   const weatherAdjustedAttackType = resolvedMove.attackType;
   const effectiveBasePower = resolvedMove.basePower;
@@ -254,13 +308,13 @@ export function calculateRoughDamage({
     : 1;
   const spreadMultiplier = isSpreadMove ? SPREAD_MOVE_MULTIPLIER : 1;
   const weatherMultiplier =
-    weather === "sun"
+    attackerEffectiveWeather === "sun"
       ? effectiveAttackType === "fire"
         ? 1.5
         : effectiveAttackType === "water"
           ? 0.5
           : 1
-      : weather === "rain"
+      : attackerEffectiveWeather === "rain"
         ? effectiveAttackType === "water"
           ? 1.5
           : effectiveAttackType === "fire"
@@ -282,7 +336,7 @@ export function calculateRoughDamage({
     effectiveAttackType,
     basePower: effectiveBasePower,
     category,
-    weather,
+    weather: attackerEffectiveWeather,
     attackerAbility,
     moveName,
   });
@@ -308,6 +362,7 @@ export function calculateRoughDamage({
   });
   const itemMultiplier = attackerItemMultiplier * defenderItemMultiplier;
   const helpingHandMultiplier = helpingHand ? 1.5 : 1;
+  const screenMultiplier = getDamageScreenMultiplier({ category, reflect, lightScreen, auroraVeil });
   const baseDamage =
     Math.floor(Math.floor((LEVEL_FACTOR * Math.max(effectiveBasePower, 0) * attackStat) / defenseStat) / 50) + 2;
   const modifier =
@@ -318,7 +373,8 @@ export function calculateRoughDamage({
     terrainMultiplier *
     abilityMultiplier *
     itemMultiplier *
-    helpingHandMultiplier;
+    helpingHandMultiplier *
+    screenMultiplier;
   const minDamage = Math.floor(baseDamage * modifier * MIN_RANDOM_MULTIPLIER);
   const maxDamage = Math.floor(baseDamage * modifier * MAX_RANDOM_MULTIPLIER);
   const averageDamage = Math.floor(baseDamage * modifier * AVG_RANDOM_MULTIPLIER);
@@ -350,6 +406,7 @@ export function calculateRoughDamage({
     defenderItemMultiplier,
     itemMultiplier,
     helpingHandMultiplier,
+    screenMultiplier,
     finalModifier: modifier,
     attackerStageMultiplier,
     defenderStageMultiplier,

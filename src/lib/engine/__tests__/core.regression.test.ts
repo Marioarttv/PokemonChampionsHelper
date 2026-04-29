@@ -67,6 +67,46 @@ describe("engine regression coverage", () => {
     expect(result.state.combatants["enemy-0"].currentHp).toBeLessThan(result.state.combatants["enemy-0"].maxHp);
   });
 
+  it("resolves Mega Sol Weather Ball as user-only sun even while rain stays active", () => {
+    const meganium = makePokemon("Meganium-Mega", {
+      types: ["Grass", "Fairy"],
+      baseStats: { spa: 122 },
+    });
+    const steelTarget = makePokemon("Steel Target", {
+      types: ["Steel"],
+      baseStats: { hp: 100, spd: 100 },
+    });
+    const weatherBall = makeMove("Weather Ball", {
+      type: "Normal",
+      category: "Special",
+      basePower: 50,
+      target: "normal",
+    });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 50, target: "normal" });
+    const state = createTestBattleState({
+      ally: [
+        makeMember({
+          side: "ally",
+          slot: 0,
+          pokemon: meganium,
+          moveNames: ["Weather Ball"],
+          abilityName: "Mega Sol",
+        }),
+      ],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: steelTarget, moveNames: ["Tackle"] })],
+      moves: [weatherBall, tackle],
+      weather: "rain",
+    });
+
+    const preview = getDamagePreview(state, "ally-0", "enemy-0", state.combatants["ally-0"].knownMoves[0]!);
+
+    expect(state.field.weather).toBe("rain");
+    expect(preview?.estimate.effectiveAttackType).toBe("fire");
+    expect(preview?.estimate.effectiveBasePower).toBe(100);
+    expect(preview?.estimate.weatherMultiplier).toBe(1.5);
+    expect(preview?.estimate.typeMultiplier).toBe(2);
+  });
+
   it("classifies Fake Out so turn-one flinch logic is reachable", () => {
     const ally = makePokemon("Ally Lead", { baseStats: { atk: 110, spe: 120 } });
     const enemy = makePokemon("Enemy Lead", { baseStats: { hp: 120, def: 110, spe: 90 } });

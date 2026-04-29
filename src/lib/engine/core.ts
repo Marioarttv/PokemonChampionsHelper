@@ -1,7 +1,7 @@
 import { getTypeFromLabel } from "../../data/typeChart";
 import { getMultiplier } from "../effectiveness";
 import type { MoveRecord } from "../battleData";
-import { calculateRoughDamage, resolveWeatherBallDamageInput } from "../damage";
+import { calculateRoughDamage, getAttackerEffectiveWeather, resolveWeatherBallDamageInput } from "../damage";
 import { getChampionsComputedStats } from "../championsStats";
 import {
   getDefaultDamageAbilityId,
@@ -786,6 +786,7 @@ export function getDamagePreview(
     attackerStatStage: move.category === "physical" ? attacker.stages.attack : attacker.stages.specialAttack,
     defenderStatStage: move.category === "physical" ? defender.stages.defense : defender.stages.specialDefense,
     attackerAbility: attacker.abilityId,
+    attackerAbilityName: attacker.abilityName,
     defenderAbility: defender.abilityId,
     attackerItem: attacker.itemId,
     defenderItem: getPreviewDefenderItemId(defender),
@@ -903,7 +904,10 @@ function isTargetImmuneByTyping(
     attackType: move.type,
     basePower: move.basePower,
     moveName: move.name,
-    weather: state.field.weather,
+    weather: getAttackerEffectiveWeather({
+      weather: state.field.weather,
+      attackerAbilityName: state.combatants[_actorId]?.abilityName,
+    }),
   });
 
   return getMultiplier(resolvedMove.attackType, primaryType, secondaryType) === 0;

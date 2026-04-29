@@ -176,4 +176,109 @@ describe("move-specific damage handling", () => {
     expect(estimate.effectiveBasePower).toBe(50);
     expect(estimate.effectiveAttackType).toBe("normal");
   });
+
+  it("treats Mega Sol as user-only sun for Weather Ball even in rain", () => {
+    const attacker = makePokemon("Meganium-Mega", {
+      types: ["Grass", "Fairy"],
+      baseStats: { spa: 120 },
+    });
+    const defender = makePokemon("Steel Target", {
+      types: ["Steel"],
+      baseStats: { hp: 100, spd: 100 },
+    });
+
+    const estimate = calculateRoughDamage({
+      attacker,
+      defender,
+      attackType: "normal",
+      moveName: "Weather Ball",
+      basePower: 50,
+      category: "special",
+      isSpreadMove: false,
+      weather: "rain",
+      attackerAbilityName: "Mega Sol",
+    });
+
+    expect(estimate.effectiveBasePower).toBe(100);
+    expect(estimate.effectiveAttackType).toBe("fire");
+    expect(estimate.weatherMultiplier).toBe(1.5);
+    expect(estimate.typeMultiplier).toBe(2);
+  });
+});
+
+describe("screen damage handling", () => {
+  const attacker = makePokemon("Screen Attacker", {
+    types: ["Normal"],
+    baseStats: { atk: 120, spa: 120 },
+  });
+  const defender = makePokemon("Screen Defender", {
+    types: ["Normal"],
+    baseStats: { hp: 100, def: 100, spd: 100 },
+  });
+
+  it("reduces physical damage through Reflect", () => {
+    const noScreen = calculateRoughDamage({
+      attacker,
+      defender,
+      attackType: "normal",
+      moveName: "Body Slam",
+      basePower: 85,
+      category: "physical",
+      isSpreadMove: false,
+    });
+    const reflect = calculateRoughDamage({
+      attacker,
+      defender,
+      attackType: "normal",
+      moveName: "Body Slam",
+      basePower: 85,
+      category: "physical",
+      isSpreadMove: false,
+      reflect: true,
+    });
+
+    expect(reflect.screenMultiplier).toBeCloseTo(2 / 3);
+    expect(reflect.averageDamage).toBeLessThan(noScreen.averageDamage);
+  });
+
+  it("reduces special damage through Light Screen", () => {
+    const noScreen = calculateRoughDamage({
+      attacker,
+      defender,
+      attackType: "normal",
+      moveName: "Hyper Voice",
+      basePower: 90,
+      category: "special",
+      isSpreadMove: true,
+    });
+    const lightScreen = calculateRoughDamage({
+      attacker,
+      defender,
+      attackType: "normal",
+      moveName: "Hyper Voice",
+      basePower: 90,
+      category: "special",
+      isSpreadMove: true,
+      lightScreen: true,
+    });
+
+    expect(lightScreen.screenMultiplier).toBeCloseTo(2 / 3);
+    expect(lightScreen.averageDamage).toBeLessThan(noScreen.averageDamage);
+  });
+
+  it("uses Aurora Veil as the active screen for both categories", () => {
+    const estimate = calculateRoughDamage({
+      attacker,
+      defender,
+      attackType: "normal",
+      moveName: "Body Slam",
+      basePower: 85,
+      category: "physical",
+      isSpreadMove: false,
+      reflect: true,
+      auroraVeil: true,
+    });
+
+    expect(estimate.screenMultiplier).toBeCloseTo(2 / 3);
+  });
 });

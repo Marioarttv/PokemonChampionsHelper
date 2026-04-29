@@ -195,6 +195,7 @@ type TeamSlotState = {
 };
 type LoadedTeamSlot = TeamSlotState & {
   pokemon: PokemonRecord | null;
+  abilityName: string | null;
   defaultStatSpread: ChampionsStatSpread | null;
   resolvedStatSpread: ChampionsStatSpread | null;
 };
@@ -294,6 +295,12 @@ type SingleDamageCalculatorPanelProps = {
   setDamageDefenderItem: Dispatch<SetStateAction<DamageItemId>>;
   damageHelpingHand: boolean;
   setDamageHelpingHand: Dispatch<SetStateAction<boolean>>;
+  damageReflect: boolean;
+  setDamageReflect: Dispatch<SetStateAction<boolean>>;
+  damageLightScreen: boolean;
+  setDamageLightScreen: Dispatch<SetStateAction<boolean>>;
+  damageAuroraVeil: boolean;
+  setDamageAuroraVeil: Dispatch<SetStateAction<boolean>>;
   damageMoveConfigs: Record<string, Partial<Record<string, DamageMoveConfig>>>;
   setDamageMoveConfigs: Dispatch<SetStateAction<Record<string, Partial<Record<string, DamageMoveConfig>>>>>;
   defenseMoveConfigs: Record<string, ManualDamageMoveConfig>;
@@ -973,11 +980,15 @@ function getBestDamageEstimateAgainstPokemon(
     attackerStatStage: number;
     defenderStatStage: number;
     attackerAbility?: DamageAbilityId;
+    attackerAbilityName?: string | null;
     defenderAbility?: DamageAbilityId;
-    attackerItem?: DamageItemId;
-    defenderItem?: DamageItemId;
-    helpingHand?: boolean;
-    attackerStatSpread?: ChampionsStatSpread | null;
+  attackerItem?: DamageItemId;
+  defenderItem?: DamageItemId;
+  helpingHand?: boolean;
+  reflect?: boolean;
+  lightScreen?: boolean;
+  auroraVeil?: boolean;
+  attackerStatSpread?: ChampionsStatSpread | null;
     defenderStatSpread?: ChampionsStatSpread | null;
   },
 ) {
@@ -1010,10 +1021,14 @@ function getBestDamageEstimateAgainstPokemon(
       attackerStatStage: options.attackerStatStage,
       defenderStatStage: options.defenderStatStage,
       attackerAbility: options.attackerAbility ?? getDefaultDamageAbilityId(attackerPokemon),
+      attackerAbilityName: options.attackerAbilityName ?? null,
       defenderAbility: options.defenderAbility ?? getDefaultDamageAbilityId(defenderPokemon),
       attackerItem: options.attackerItem ?? "none",
       defenderItem: options.defenderItem ?? "none",
       helpingHand: options.helpingHand ?? false,
+      reflect: options.reflect ?? false,
+      lightScreen: options.lightScreen ?? false,
+      auroraVeil: options.auroraVeil ?? false,
       attackerStatSpread: options.attackerStatSpread ?? null,
       defenderStatSpread: options.defenderStatSpread ?? null,
     });
@@ -1143,6 +1158,7 @@ type DoublesSelectedMember = {
   pokemon: PokemonRecord;
   savedAttacks: PersistedSavedAttack[];
   statSpread: ChampionsStatSpread | null;
+  abilityName: string | null;
   movesetSourceLabel: string;
   speedStat: number;
   hpPercent: number;
@@ -1305,7 +1321,11 @@ function getAutomaticDamageRows(options: {
   attackerStatStage: number;
   defenderStatStage: number;
   attackerAbility?: DamageAbilityId;
+  attackerAbilityName?: string | null;
   defenderAbility?: DamageAbilityId;
+  reflect?: boolean;
+  lightScreen?: boolean;
+  auroraVeil?: boolean;
 }) {
   const {
     attackerPokemon,
@@ -1320,7 +1340,11 @@ function getAutomaticDamageRows(options: {
     attackerStatStage,
     defenderStatStage,
     attackerAbility,
+    attackerAbilityName,
     defenderAbility,
+    reflect,
+    lightScreen,
+    auroraVeil,
   } = options;
 
   return savedAttacks.flatMap((attack) => {
@@ -1347,7 +1371,11 @@ function getAutomaticDamageRows(options: {
       attackerStatStage,
       defenderStatStage,
       attackerAbility: attackerAbility ?? getDefaultDamageAbilityId(attackerPokemon),
+      attackerAbilityName: attackerAbilityName ?? null,
       defenderAbility: defenderAbility ?? getDefaultDamageAbilityId(defenderPokemon),
+      reflect: reflect ?? false,
+      lightScreen: lightScreen ?? false,
+      auroraVeil: auroraVeil ?? false,
       attackerStatSpread: attackerStatSpread ?? null,
       defenderStatSpread: defenderStatSpread ?? null,
     });
@@ -2526,18 +2554,19 @@ function resolveEffectiveTeamSlotForMegaSelection(
     return slot;
   }
 
-  const defaultStatSpread =
-    getStoredOrPresetSavedAttacks(
-      effectivePokemon,
-      speciesMovesetByKey,
-      moveByKey,
-      MAX_SPECIES_MOVESET_SIZE,
-    ).statSpread ?? getDefaultChampionsStatSpreadForPokemon(effectivePokemon);
+  const resolvedMoveset = getStoredOrPresetSavedAttacks(
+    effectivePokemon,
+    speciesMovesetByKey,
+    moveByKey,
+    MAX_SPECIES_MOVESET_SIZE,
+  );
+  const defaultStatSpread = resolvedMoveset.statSpread ?? getDefaultChampionsStatSpreadForPokemon(effectivePokemon);
   const resolvedStatSpread = normalizeChampionsStatSpread(slot.statSpread ?? undefined, defaultStatSpread);
 
   return {
     ...slot,
     pokemon: effectivePokemon,
+    abilityName: resolvedMoveset.abilityName ?? null,
     defaultStatSpread,
     resolvedStatSpread,
   };
@@ -3275,6 +3304,13 @@ function buildDamageModChips(
       tone: "boost",
     });
   }
+  if (estimate.screenMultiplier !== 1) {
+    chips.push({
+      key: "screen",
+      label: `Screen ${formatFlatMultiplier(estimate.screenMultiplier)}`,
+      tone: "cut",
+    });
+  }
   if (estimate.attackerStageMultiplier !== 1) {
     chips.push({
       key: "atkStage",
@@ -3361,6 +3397,12 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
   setDamageDefenderItem,
   damageHelpingHand,
   setDamageHelpingHand,
+  damageReflect,
+  setDamageReflect,
+  damageLightScreen,
+  setDamageLightScreen,
+  damageAuroraVeil,
+  setDamageAuroraVeil,
   damageMoveConfigs,
   setDamageMoveConfigs,
   defenseMoveConfigs,
@@ -3376,6 +3418,8 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
     damageCalcMode === "attack" ? selectedDamageAttackerPokemon : selectedDamageDefenderPokemon;
   const currentDamageDefenderPokemon =
     damageCalcMode === "attack" ? selectedDamageDefenderPokemon : selectedDamageAttackerPokemon;
+  const currentDamageAttackerAbilityName =
+    damageCalcMode === "attack" ? attackerSlot?.abilityName ?? null : defenderEntry?.abilityName ?? null;
   const currentDamageAttackerSpread =
     damageCalcMode === "attack" ? selectedDamageAttackerSpread : selectedDamageDefenderSpread;
   const currentDamageDefenderSpread =
@@ -3499,10 +3543,14 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
                 attackerStatStage: damageAttackStage,
                 defenderStatStage: damageDefenseStage,
                 attackerAbility: damageAttackerAbility,
+                attackerAbilityName: attackerSlot?.abilityName ?? null,
                 defenderAbility: damageDefenderAbility,
                 attackerItem: damageAttackerItem,
                 defenderItem: damageDefenderItem,
                 helpingHand: damageHelpingHand,
+                reflect: damageReflect,
+                lightScreen: damageLightScreen,
+                auroraVeil: damageAuroraVeil,
                 attackerStatSpread: selectedDamageAttackerSpread,
                 defenderStatSpread: selectedDamageDefenderSpread,
               })
@@ -3510,6 +3558,7 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
       };
     });
   }, [
+    attackerSlot?.abilityName,
     attackerSlotIndex,
     damageAttackStage,
     damageAttackerAbility,
@@ -3520,6 +3569,9 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
     damageDefenderGrounded,
     damageDefenderItem,
     damageHelpingHand,
+    damageReflect,
+    damageLightScreen,
+    damageAuroraVeil,
     damageMoveConfigs,
     damageTerrain,
     damageWeather,
@@ -3547,21 +3599,29 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
         attackerStatStage: 0,
         defenderStatStage: 0,
         attackerAbility: damageDefenderAbility,
+        attackerAbilityName: defenderEntry?.abilityName ?? null,
         defenderAbility: damageAttackerAbility,
         attackerItem: damageDefenderItem,
         defenderItem: damageAttackerItem,
         helpingHand: false,
+        reflect: damageReflect,
+        lightScreen: damageLightScreen,
+        auroraVeil: damageAuroraVeil,
         attackerStatSpread: selectedDamageDefenderSpread,
         defenderStatSpread: selectedDamageAttackerSpread,
       },
     );
   }, [
+    defenderEntry?.abilityName,
     damageAttackerAbility,
     damageAttackerGrounded,
     damageAttackerItem,
     damageDefenderAbility,
     damageDefenderGrounded,
     damageDefenderItem,
+    damageReflect,
+    damageLightScreen,
+    damageAuroraVeil,
     damageTerrain,
     damageWeather,
     selectedDamageAttackerPokemon,
@@ -3597,10 +3657,14 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
               attackerStatStage: damageAttackStage,
               defenderStatStage: damageDefenseStage,
               attackerAbility: damageDefenderAbility,
+              attackerAbilityName: defenderEntry?.abilityName ?? null,
               defenderAbility: damageAttackerAbility,
               attackerItem: damageAttackerItem,
               defenderItem: damageDefenderItem,
               helpingHand: damageHelpingHand,
+              reflect: damageReflect,
+              lightScreen: damageLightScreen,
+              auroraVeil: damageAuroraVeil,
               attackerStatSpread: selectedDamageDefenderSpread,
               defenderStatSpread: selectedDamageAttackerSpread,
             })
@@ -3615,6 +3679,7 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
       };
     });
   }, [
+    defenderEntry?.abilityName,
     damageAttackStage,
     damageAttackerAbility,
     damageAttackerGrounded,
@@ -3624,6 +3689,9 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
     damageDefenderGrounded,
     damageDefenderItem,
     damageHelpingHand,
+    damageReflect,
+    damageLightScreen,
+    damageAuroraVeil,
     damageTerrain,
     damageWeather,
     selectedDamageAttackerPokemon,
@@ -3655,14 +3723,19 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
       attackerStatStage: damageAttackStage,
       defenderStatStage: damageDefenseStage,
       attackerAbility: damageDefenderAbility,
+      attackerAbilityName: defenderEntry?.abilityName ?? null,
       defenderAbility: damageAttackerAbility,
       attackerItem: damageAttackerItem,
       defenderItem: damageDefenderItem,
       helpingHand: damageHelpingHand,
+      reflect: damageReflect,
+      lightScreen: damageLightScreen,
+      auroraVeil: damageAuroraVeil,
       attackerStatSpread: selectedDamageDefenderSpread,
       defenderStatSpread: selectedDamageAttackerSpread,
     });
   }, [
+    defenderEntry?.abilityName,
     damageAttackStage,
     damageAttackerAbility,
     damageAttackerGrounded,
@@ -3672,6 +3745,9 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
     damageDefenderGrounded,
     damageDefenderItem,
     damageHelpingHand,
+    damageReflect,
+    damageLightScreen,
+    damageAuroraVeil,
     damageTerrain,
     damageWeather,
     defenseMoveConfig,
@@ -3966,6 +4042,33 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
           <span>Helping Hand</span>
         </label>
 
+        <label className={`damage-inline-toggle ${damageReflect ? "active" : ""}`}>
+          <input
+            type="checkbox"
+            checked={damageReflect}
+            onChange={(event) => setDamageReflect(event.target.checked)}
+          />
+          <span>Reflect</span>
+        </label>
+
+        <label className={`damage-inline-toggle ${damageLightScreen ? "active" : ""}`}>
+          <input
+            type="checkbox"
+            checked={damageLightScreen}
+            onChange={(event) => setDamageLightScreen(event.target.checked)}
+          />
+          <span>Light Screen</span>
+        </label>
+
+        <label className={`damage-inline-toggle ${damageAuroraVeil ? "active" : ""}`}>
+          <input
+            type="checkbox"
+            checked={damageAuroraVeil}
+            onChange={(event) => setDamageAuroraVeil(event.target.checked)}
+          />
+          <span>Aurora Veil</span>
+        </label>
+
         <details className="damage-assumptions">
           <summary>Assumptions</summary>
           <div className="damage-assumption-row">
@@ -3974,6 +4077,7 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
             <span className="damage-assumption-pill">Neutral nature</span>
             <span className="damage-assumption-pill">Supported items and berries</span>
             <span className="damage-assumption-pill">Helping Hand toggle</span>
+            <span className="damage-assumption-pill">Screens use doubles reduction</span>
             <span className="damage-assumption-pill">Supported ability effects only</span>
             <span className="damage-assumption-pill">Aegislash auto-swaps stances</span>
             <span className="damage-assumption-pill">Spread toggle = {SPREAD_MOVE_MULTIPLIER}x</span>
@@ -7209,6 +7313,9 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const [damageAttackerItem, setDamageAttackerItem] = useState<DamageItemId>("none");
   const [damageDefenderItem, setDamageDefenderItem] = useState<DamageItemId>("none");
   const [damageHelpingHand, setDamageHelpingHand] = useState(false);
+  const [damageReflect, setDamageReflect] = useState(false);
+  const [damageLightScreen, setDamageLightScreen] = useState(false);
+  const [damageAuroraVeil, setDamageAuroraVeil] = useState(false);
   const [damageMoveConfigs, setDamageMoveConfigs] = useState<
     Record<string, Partial<Record<string, DamageMoveConfig>>>
   >({});
@@ -7531,9 +7638,11 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     () =>
       teamSlots.map((slot) => {
         const pokemon = slot.pokemonId ? pokemonByKey.get(slot.pokemonId) ?? null : null;
+        const resolvedMoveset = pokemon
+          ? getStoredOrPresetSavedAttacks(pokemon, speciesMovesetByKey, moveByKey, MAX_SPECIES_MOVESET_SIZE)
+          : null;
         const defaultStatSpread = pokemon
-          ? getStoredOrPresetSavedAttacks(pokemon, speciesMovesetByKey, moveByKey, MAX_SPECIES_MOVESET_SIZE).statSpread ??
-            getDefaultChampionsStatSpreadForPokemon(pokemon)
+          ? resolvedMoveset?.statSpread ?? getDefaultChampionsStatSpreadForPokemon(pokemon)
           : null;
         const resolvedStatSpread = defaultStatSpread
           ? normalizeChampionsStatSpread(slot.statSpread ?? undefined, defaultStatSpread)
@@ -7542,6 +7651,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         return {
           ...slot,
           pokemon,
+          abilityName: resolvedMoveset?.abilityName ?? null,
           defaultStatSpread,
           resolvedStatSpread,
         };
@@ -8181,6 +8291,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     damageCalcMode === "attack" ? selectedDamageAttackerPokemon : selectedDamageDefenderPokemon;
   const currentDamageDefenderPokemon =
     damageCalcMode === "attack" ? selectedDamageDefenderPokemon : selectedDamageAttackerPokemon;
+  const currentDamageAttackerAbilityName =
+    damageCalcMode === "attack" ? selectedDamageAttacker?.abilityName ?? null : selectedDamageDefender?.abilityName ?? null;
   const doublesAllyMembers = useMemo<DoublesSelectedMember[]>(
     () =>
       doublesAllySelection
@@ -8201,6 +8313,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             pokemon: slot.pokemon,
             savedAttacks: slot.savedAttacks,
             statSpread: slot.resolvedStatSpread,
+            abilityName: slot.abilityName,
             movesetSourceLabel: "Saved",
             speedStat: getChampionsComputedStats(slot.pokemon, { spread: slot.resolvedStatSpread }).spe,
             hpPercent: runtime.hpPercent,
@@ -8235,6 +8348,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             pokemon: entry.pokemon,
             savedAttacks,
             statSpread: entry.statSpread,
+            abilityName: entry.abilityName,
             movesetSourceLabel:
               entry.savedAttacks.length > 0
                 ? entry.movesetSource === "custom"
@@ -8361,18 +8475,25 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             savedAttacks: member.savedAttacks,
             attackerStatSpread: member.statSpread,
             defenderStatSpread: defender.statSpread,
+            attackerAbilityName: member.abilityName,
             weather: damageWeather,
             terrain: damageTerrain,
             attackerGrounded: isLikelyGrounded(member.pokemon),
             defenderGrounded: isLikelyGrounded(defender.pokemon),
             attackerStatStage: damageAttackStage,
             defenderStatStage: damageDefenseStage,
+            reflect: damageReflect,
+            lightScreen: damageLightScreen,
+            auroraVeil: damageAuroraVeil,
           }),
       ),
     );
   }, [
     damageAttackStage,
     damageDefenseStage,
+    damageReflect,
+    damageLightScreen,
+    damageAuroraVeil,
     damageTerrain,
     damageWeather,
     doublesAllyMembers,
@@ -8396,18 +8517,25 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             savedAttacks: member.savedAttacks,
             attackerStatSpread: member.statSpread,
             defenderStatSpread: defender.statSpread,
+            attackerAbilityName: member.abilityName,
             weather: damageWeather,
             terrain: damageTerrain,
             attackerGrounded: isLikelyGrounded(member.pokemon),
             defenderGrounded: isLikelyGrounded(defender.pokemon),
             attackerStatStage: damageAttackStage,
             defenderStatStage: damageDefenseStage,
+            reflect: damageReflect,
+            lightScreen: damageLightScreen,
+            auroraVeil: damageAuroraVeil,
           }),
       ),
     );
   }, [
     damageAttackStage,
     damageDefenseStage,
+    damageReflect,
+    damageLightScreen,
+    damageAuroraVeil,
     damageTerrain,
     damageWeather,
     doublesAllyMembers,
@@ -9782,12 +9910,16 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           savedAttacks: member.savedAttacks,
           attackerStatSpread: member.statSpread,
           defenderStatSpread: defender.statSpread,
+          attackerAbilityName: member.abilityName,
           weather: damageWeather,
           terrain: damageTerrain,
           attackerGrounded: isLikelyGrounded(member.pokemon),
           defenderGrounded: isLikelyGrounded(defender.pokemon),
           attackerStatStage: damageAttackStage,
           defenderStatStage: damageDefenseStage,
+          reflect: damageReflect,
+          lightScreen: damageLightScreen,
+          auroraVeil: damageAuroraVeil,
         }),
       turnSettings: threatTurnSettings,
     });
@@ -9816,18 +9948,25 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           savedAttacks: member.savedAttacks,
           attackerStatSpread: member.statSpread,
           defenderStatSpread: defender.statSpread,
+          attackerAbilityName: member.abilityName,
           weather: damageWeather,
           terrain: damageTerrain,
           attackerGrounded: isLikelyGrounded(member.pokemon),
           defenderGrounded: isLikelyGrounded(defender.pokemon),
           attackerStatStage: damageAttackStage,
           defenderStatStage: damageDefenseStage,
+          reflect: damageReflect,
+          lightScreen: damageLightScreen,
+          auroraVeil: damageAuroraVeil,
         }),
       turnSettings: threatTurnSettings,
     });
   }, [
     damageAttackStage,
     damageDefenseStage,
+    damageReflect,
+    damageLightScreen,
+    damageAuroraVeil,
     damageTerrain,
     damageWeather,
     doublesAllyMembers,
@@ -9882,7 +10021,11 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                     attackerStatStage: damageAttackStage,
                     defenderStatStage: damageDefenseStage,
                     attackerAbility: getDefaultDamageAbilityId(attackerPokemon),
+                    attackerAbilityName: slot.abilityName,
                     defenderAbility: getDefaultDamageAbilityId(entry.pokemon),
+                    reflect: damageReflect,
+                    lightScreen: damageLightScreen,
+                    auroraVeil: damageAuroraVeil,
                     attackerStatSpread: slot.resolvedStatSpread,
                     defenderStatSpread: entry.statSpread ?? null,
                   });
@@ -9924,7 +10067,17 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             }),
         ]),
       ),
-    [bringSelectedTeam, damageAttackStage, damageDefenseStage, damageTerrain, damageWeather, scoutingOpponentEntries],
+    [
+      bringSelectedTeam,
+      damageAttackStage,
+      damageDefenseStage,
+      damageReflect,
+      damageLightScreen,
+      damageAuroraVeil,
+      damageTerrain,
+      damageWeather,
+      scoutingOpponentEntries,
+    ],
   );
 
   const teamMatchupEloRows = useMemo(
@@ -10054,13 +10207,18 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       attackerStatStage: damageAttackStage,
       defenderStatStage: damageDefenseStage,
       attackerAbility: damageCalcMode === "attack" ? damageAttackerAbility : damageDefenderAbility,
+      attackerAbilityName: currentDamageAttackerAbilityName,
       defenderAbility: damageCalcMode === "attack" ? damageDefenderAbility : damageAttackerAbility,
+      reflect: damageReflect,
+      lightScreen: damageLightScreen,
+      auroraVeil: damageAuroraVeil,
       attackerStatSpread: damageCalcMode === "attack" ? null : selectedDamageDefender?.statSpread ?? null,
       defenderStatSpread: damageCalcMode === "attack" ? selectedDamageDefender?.statSpread ?? null : null,
     });
   }, [
     damageAttackStage,
     damageAttackerAbility,
+    currentDamageAttackerAbilityName,
     currentDamageAttackerPokemon,
     currentDamageDefenderPokemon,
     damageAttackerGrounded,
@@ -10068,6 +10226,9 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     damageCalcMode,
     damageDefenseStage,
     damageDefenderGrounded,
+    damageReflect,
+    damageLightScreen,
+    damageAuroraVeil,
     damageTerrain,
     damageWeather,
     quickMove,
@@ -12386,6 +12547,12 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           setDamageDefenderItem={setDamageDefenderItem}
           damageHelpingHand={damageHelpingHand}
           setDamageHelpingHand={setDamageHelpingHand}
+          damageReflect={damageReflect}
+          setDamageReflect={setDamageReflect}
+          damageLightScreen={damageLightScreen}
+          setDamageLightScreen={setDamageLightScreen}
+          damageAuroraVeil={damageAuroraVeil}
+          setDamageAuroraVeil={setDamageAuroraVeil}
           damageMoveConfigs={damageMoveConfigs}
           setDamageMoveConfigs={setDamageMoveConfigs}
           defenseMoveConfigs={defenseMoveConfigs}
