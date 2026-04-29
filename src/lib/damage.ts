@@ -53,6 +53,8 @@ export type DamageEstimateInput = {
 };
 
 export type DamageEstimate = {
+  inputBasePower: number;
+  effectiveBasePower: number;
   baseDamage: number;
   minDamage: number;
   maxDamage: number;
@@ -104,6 +106,12 @@ const AEGISLASH_BLADE_STATS = {
   spa: 140,
   spd: 50,
 } as const;
+const WEATHER_BALL_TYPES: Partial<Record<DamageWeather, PokemonType>> = {
+  sun: "fire",
+  rain: "water",
+  sand: "rock",
+  snow: "ice",
+};
 
 export function getLevel50HpValue(baseHp: number) {
   return calculateChampionsHpStat(baseHp, 0);
@@ -127,6 +135,40 @@ function hasNamedAbility(pokemon: PokemonRecord, abilityName: string) {
 
 function isAegislashWithStanceChange(pokemon: PokemonRecord) {
   return pokemon.baseSpecies === "Aegislash" && hasNamedAbility(pokemon, "Stance Change");
+}
+
+function normalizeMoveNameKey(moveName: string) {
+  return moveName.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function isWeatherBallMove(moveName: string | null | undefined) {
+  return moveName ? normalizeMoveNameKey(moveName) === "weatherball" : false;
+}
+
+export function resolveWeatherBallDamageInput({
+  attackType,
+  basePower,
+  moveName,
+  weather = "none",
+}: {
+  attackType: PokemonType;
+  basePower: number;
+  moveName?: string | null;
+  weather?: DamageWeather;
+}) {
+  const weatherBallType = isWeatherBallMove(moveName) ? WEATHER_BALL_TYPES[weather] : undefined;
+
+  if (!weatherBallType) {
+    return {
+      attackType,
+      basePower,
+    };
+  }
+
+  return {
+    attackType: weatherBallType,
+    basePower: 100,
+  };
 }
 
 export function getEffectiveDamageBaseStats(
@@ -164,6 +206,14 @@ export function calculateRoughDamage({
   attackerStatSpread = null,
   defenderStatSpread = null,
 }: DamageEstimateInput): DamageEstimate {
+  const resolvedMove = resolveWeatherBallDamageInput({
+    attackType,
+    basePower,
+    moveName,
+    weather,
+  });
+  const weatherAdjustedAttackType = resolvedMove.attackType;
+  const effectiveBasePower = resolvedMove.basePower;
   const effectiveAttackerStats = getEffectiveDamageBaseStats(attacker, "attacker");
   const effectiveDefenderStats = getEffectiveDamageBaseStats(defender, "defender");
   const attackerStats = getChampionsComputedStats(attacker, {
@@ -189,7 +239,7 @@ export function calculateRoughDamage({
   const defenderHp = defenderStats.hp;
   const primaryType = getTypeFromLabel(defender.types[0]);
   const secondaryType = defender.types[1] ? getTypeFromLabel(defender.types[1]) : null;
-  const effectiveAttackType = getAbilityAdjustedAttackType(attackType, attackerAbility);
+  const effectiveAttackType = getAbilityAdjustedAttackType(weatherAdjustedAttackType, attackerAbility);
   const baseTypeMultiplier = primaryType ? getMultiplier(effectiveAttackType, primaryType, secondaryType) : 1;
   const typeMultiplier = getDefenderAbilityTypeMultiplier({
     typeMultiplier: baseTypeMultiplier,
@@ -228,9 +278,9 @@ export function calculateRoughDamage({
             ? 0.5
             : 1;
   const attackerAbilityMultiplier = getAttackerAbilityModifier({
-    originalAttackType: attackType,
+    originalAttackType: weatherAdjustedAttackType,
     effectiveAttackType,
-    basePower,
+    basePower: effectiveBasePower,
     category,
     weather,
     attackerAbility,
@@ -259,7 +309,7 @@ export function calculateRoughDamage({
   const itemMultiplier = attackerItemMultiplier * defenderItemMultiplier;
   const helpingHandMultiplier = helpingHand ? 1.5 : 1;
   const baseDamage =
-    Math.floor(Math.floor((LEVEL_FACTOR * Math.max(basePower, 0) * attackStat) / defenseStat) / 50) + 2;
+    Math.floor(Math.floor((LEVEL_FACTOR * Math.max(effectiveBasePower, 0) * attackStat) / defenseStat) / 50) + 2;
   const modifier =
     stabMultiplier *
     typeMultiplier *
@@ -274,6 +324,8 @@ export function calculateRoughDamage({
   const averageDamage = Math.floor(baseDamage * modifier * AVG_RANDOM_MULTIPLIER);
 
   return {
+    inputBasePower: basePower,
+    effectiveBasePower,
     baseDamage,
     minDamage,
     maxDamage,

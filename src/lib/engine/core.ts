@@ -1,7 +1,7 @@
 import { getTypeFromLabel } from "../../data/typeChart";
 import { getMultiplier } from "../effectiveness";
 import type { MoveRecord } from "../battleData";
-import { calculateRoughDamage } from "../damage";
+import { calculateRoughDamage, resolveWeatherBallDamageInput } from "../damage";
 import { getChampionsComputedStats } from "../championsStats";
 import {
   getDefaultDamageAbilityId,
@@ -899,7 +899,14 @@ function isTargetImmuneByTyping(
   }
 
   const secondaryType = secondaryTypeLabel ? getTypeFromLabel(secondaryTypeLabel) : null;
-  return getMultiplier(move.type, primaryType, secondaryType) === 0;
+  const resolvedMove = resolveWeatherBallDamageInput({
+    attackType: move.type,
+    basePower: move.basePower,
+    moveName: move.name,
+    weather: state.field.weather,
+  });
+
+  return getMultiplier(resolvedMove.attackType, primaryType, secondaryType) === 0;
 }
 
 function getIncomingThreatsAgainst(state: BattleState, targetIds: string[]) {

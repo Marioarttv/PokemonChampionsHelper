@@ -31,6 +31,42 @@ describe("engine regression coverage", () => {
     expect(result.state.combatants["enemy-0"].currentHp).toBeLessThan(result.state.combatants["enemy-0"].maxHp);
   });
 
+  it("uses Weather Ball's weather type for typing immunity checks", () => {
+    const attacker = makePokemon("Weather Attacker", {
+      types: ["Normal"],
+      baseStats: { spa: 120 },
+    });
+    const ghost = makePokemon("Ghost Target", {
+      types: ["Ghost"],
+      baseStats: { hp: 100, spd: 90 },
+    });
+    const weatherBall = makeMove("Weather Ball", {
+      type: "Normal",
+      category: "Special",
+      basePower: 50,
+      target: "normal",
+    });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 50, target: "normal" });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: attacker, moveNames: ["Weather Ball"] })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: ghost, moveNames: ["Tackle"] })],
+      moves: [weatherBall, tackle],
+      weather: "rain",
+    });
+    const preview = getDamagePreview(state, "ally-0", "enemy-0", state.combatants["ally-0"].knownMoves[0]!);
+
+    expect(preview?.estimate.effectiveAttackType).toBe("water");
+    expect(preview?.estimate.effectiveBasePower).toBe(100);
+
+    const result = resolveTurn(
+      state,
+      buildMovePlan(state, "ally", [{ actorId: "ally-0", moveName: "Weather Ball", targetId: "enemy-0" }]),
+      buildPassPlan(state, "enemy", ["enemy-0"]),
+    );
+
+    expect(result.state.combatants["enemy-0"].currentHp).toBeLessThan(result.state.combatants["enemy-0"].maxHp);
+  });
+
   it("classifies Fake Out so turn-one flinch logic is reachable", () => {
     const ally = makePokemon("Ally Lead", { baseStats: { atk: 110, spe: 120 } });
     const enemy = makePokemon("Enemy Lead", { baseStats: { hp: 120, def: 110, spe: 90 } });

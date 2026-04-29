@@ -119,3 +119,61 @@ describe("damage ability handling", () => {
     expect(toughClawsEstimate.maxDamage).toBeGreaterThan(noAbilityEstimate.maxDamage);
   });
 });
+
+describe("move-specific damage handling", () => {
+  it.each([
+    ["sun", "fire"],
+    ["rain", "water"],
+    ["sand", "rock"],
+    ["snow", "ice"],
+  ] as const)("resolves Weather Ball as 100 BP %s weather damage", (weather, expectedType) => {
+    const attacker = makePokemon("Weather Attacker", {
+      types: ["Normal"],
+      baseStats: { spa: 120 },
+    });
+    const defender = makePokemon("Neutral Target", {
+      types: ["Normal"],
+      baseStats: { hp: 100, spd: 100 },
+    });
+
+    const estimate = calculateRoughDamage({
+      attacker,
+      defender,
+      attackType: "normal",
+      moveName: "Weather Ball",
+      basePower: 50,
+      category: "special",
+      isSpreadMove: false,
+      weather,
+    });
+
+    expect(estimate.inputBasePower).toBe(50);
+    expect(estimate.effectiveBasePower).toBe(100);
+    expect(estimate.effectiveAttackType).toBe(expectedType);
+  });
+
+  it("keeps Weather Ball at its supplied power and type without weather", () => {
+    const attacker = makePokemon("Weather Attacker", {
+      types: ["Normal"],
+      baseStats: { spa: 120 },
+    });
+    const defender = makePokemon("Neutral Target", {
+      types: ["Normal"],
+      baseStats: { hp: 100, spd: 100 },
+    });
+
+    const estimate = calculateRoughDamage({
+      attacker,
+      defender,
+      attackType: "normal",
+      moveName: "Weather Ball",
+      basePower: 50,
+      category: "special",
+      isSpreadMove: false,
+      weather: "none",
+    });
+
+    expect(estimate.effectiveBasePower).toBe(50);
+    expect(estimate.effectiveAttackType).toBe("normal");
+  });
+});

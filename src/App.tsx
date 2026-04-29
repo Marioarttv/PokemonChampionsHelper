@@ -1332,32 +1332,33 @@ function getAutomaticDamageRows(options: {
 
     const category = getResolvedAttackCategory(attack, attackerPokemon);
     const isSpreadMove = getResolvedAttackSpread(attack);
+    const estimate = calculateRoughDamage({
+      attacker: attackerPokemon,
+      defender: defenderPokemon,
+      attackType: attack.type,
+      moveName: attack.label?.trim() || undefined,
+      basePower,
+      category,
+      isSpreadMove,
+      weather,
+      terrain,
+      attackerGrounded,
+      defenderGrounded,
+      attackerStatStage,
+      defenderStatStage,
+      attackerAbility: attackerAbility ?? getDefaultDamageAbilityId(attackerPokemon),
+      defenderAbility: defenderAbility ?? getDefaultDamageAbilityId(defenderPokemon),
+      attackerStatSpread: attackerStatSpread ?? null,
+      defenderStatSpread: defenderStatSpread ?? null,
+    });
 
     return [
       {
         attack,
-        basePower,
+        basePower: estimate.effectiveBasePower,
         category,
         isSpreadMove,
-        estimate: calculateRoughDamage({
-          attacker: attackerPokemon,
-          defender: defenderPokemon,
-          attackType: attack.type,
-          moveName: attack.label?.trim() || undefined,
-          basePower,
-          category,
-          isSpreadMove,
-          weather,
-          terrain,
-          attackerGrounded,
-          defenderGrounded,
-          attackerStatStage,
-          defenderStatStage,
-          attackerAbility: attackerAbility ?? getDefaultDamageAbilityId(attackerPokemon),
-          defenderAbility: defenderAbility ?? getDefaultDamageAbilityId(defenderPokemon),
-          attackerStatSpread: attackerStatSpread ?? null,
-          defenderStatSpread: defenderStatSpread ?? null,
-        }),
+        estimate,
       },
     ];
   });
@@ -3225,6 +3226,13 @@ function buildDamageModChips(
       tone: estimate.typeMultiplier > 1 ? "se" : estimate.typeMultiplier === 0 ? "ne" : "cut",
     });
   }
+  if (estimate.effectiveBasePower !== estimate.inputBasePower) {
+    chips.push({
+      key: "basePower",
+      label: `BP ${estimate.effectiveBasePower}`,
+      tone: "boost",
+    });
+  }
   if (estimate.spreadMultiplier !== 1) {
     chips.push({
       key: "spread",
@@ -3572,37 +3580,38 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
       const basePower = getResolvedAttackBasePower(attack);
       const category = getResolvedAttackCategory(attack, selectedDamageDefenderPokemon);
       const isSpreadMove = getResolvedAttackSpread(attack);
+      const estimate =
+        basePower !== null
+          ? calculateRoughDamage({
+              attacker: selectedDamageDefenderPokemon,
+              defender: selectedDamageAttackerPokemon,
+              attackType: attack.type,
+              moveName: attack.label?.trim() || undefined,
+              basePower,
+              category,
+              isSpreadMove,
+              weather: damageWeather,
+              terrain: damageTerrain,
+              attackerGrounded: damageDefenderGrounded,
+              defenderGrounded: damageAttackerGrounded,
+              attackerStatStage: damageAttackStage,
+              defenderStatStage: damageDefenseStage,
+              attackerAbility: damageDefenderAbility,
+              defenderAbility: damageAttackerAbility,
+              attackerItem: damageAttackerItem,
+              defenderItem: damageDefenderItem,
+              helpingHand: damageHelpingHand,
+              attackerStatSpread: selectedDamageDefenderSpread,
+              defenderStatSpread: selectedDamageAttackerSpread,
+            })
+          : null;
 
       return {
         attack,
-        basePower,
+        basePower: estimate?.effectiveBasePower ?? basePower,
         category,
         isSpreadMove,
-        estimate:
-          basePower !== null
-            ? calculateRoughDamage({
-                attacker: selectedDamageDefenderPokemon,
-                defender: selectedDamageAttackerPokemon,
-                attackType: attack.type,
-                moveName: attack.label?.trim() || undefined,
-                basePower,
-                category,
-                isSpreadMove,
-                weather: damageWeather,
-                terrain: damageTerrain,
-                attackerGrounded: damageDefenderGrounded,
-                defenderGrounded: damageAttackerGrounded,
-                attackerStatStage: damageAttackStage,
-                defenderStatStage: damageDefenseStage,
-                attackerAbility: damageDefenderAbility,
-                defenderAbility: damageAttackerAbility,
-                attackerItem: damageAttackerItem,
-                defenderItem: damageDefenderItem,
-                helpingHand: damageHelpingHand,
-                attackerStatSpread: selectedDamageDefenderSpread,
-                defenderStatSpread: selectedDamageAttackerSpread,
-              })
-            : null,
+        estimate,
       };
     });
   }, [
