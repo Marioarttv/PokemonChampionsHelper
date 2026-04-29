@@ -98,6 +98,7 @@ import {
 import {
   createBattleState,
   getEffectiveSpeed,
+  recommendBestPlan,
   resolveTurn,
   type BattleAction,
   type BattleCombatantState,
@@ -10363,11 +10364,49 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       balanced: { maxJointPlansPerSide: 8, maxIndividualActionsPerActor: 5 },
       deep: { maxJointPlansPerSide: 10, maxIndividualActionsPerActor: 6 },
     };
+    const searchOptions = {
+      searchMode: battleEngineSearchMode,
+      objectiveMode: battleEngineObjectiveMode,
+      ...limitsByMode[battleEngineSearchMode],
+    };
     const nextRequestId = battleEngineSearchRequestIdRef.current + 1;
     battleEngineSearchRequestIdRef.current = nextRequestId;
     battleEngineWorkerRef.current?.terminate();
 
-    const worker = new Worker(new URL("./lib/engine/search.worker.ts", import.meta.url), { type: "module" });
+    const finishWithRecommendation = (recommendation: SearchRecommendation) => {
+      setBattleEngineRecommendation(recommendation);
+      setSelectedBattleScenarioId(recommendation.preview ? "recommended-outcome" : "current-board");
+      setBattleEngineAnalysisSignature(battleEngineInputSignature);
+    };
+    const runMainThreadFallback = (workerMessage: string) => {
+      if (nextRequestId !== battleEngineSearchRequestIdRef.current || !battleEngineCurrentState) {
+        return;
+      }
+
+      battleEngineWorkerRef.current?.terminate();
+      battleEngineWorkerRef.current = null;
+
+      try {
+        const recommendation = recommendBestPlan(battleEngineCurrentState, searchOptions);
+        setBattleEngineSearching(false);
+        setBattleEngineError(null);
+        finishWithRecommendation(recommendation);
+      } catch (error) {
+        setBattleEngineSearching(false);
+        const fallbackMessage = error instanceof Error ? error.message : "Battle engine search failed.";
+        setBattleEngineError(`${workerMessage} Fallback failed: ${fallbackMessage}`);
+      }
+    };
+
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL("./lib/engine/search.worker.ts", import.meta.url), { type: "module" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Battle engine worker could not start.";
+      runMainThreadFallback(message);
+      return;
+    }
+
     battleEngineWorkerRef.current = worker;
     setBattleEngineSearching(true);
     setBattleEngineError(null);
@@ -10386,31 +10425,28 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         return;
       }
 
-      setBattleEngineRecommendation(event.data.recommendation);
-      setSelectedBattleScenarioId(event.data.recommendation.preview ? "recommended-outcome" : "current-board");
-      setBattleEngineAnalysisSignature(battleEngineInputSignature);
+      finishWithRecommendation(event.data.recommendation);
     };
 
-    worker.onerror = () => {
+    worker.onerror = (event) => {
       if (nextRequestId !== battleEngineSearchRequestIdRef.current) {
         return;
       }
 
-      battleEngineWorkerRef.current?.terminate();
-      battleEngineWorkerRef.current = null;
-      setBattleEngineSearching(false);
-      setBattleEngineError("Battle engine worker failed.");
+      event.preventDefault();
+      runMainThreadFallback(event.message ? `Battle engine worker failed: ${event.message}` : "Battle engine worker failed.");
     };
 
-    worker.postMessage({
-      id: nextRequestId,
-      state: battleEngineCurrentState,
-      options: {
-        searchMode: battleEngineSearchMode,
-        objectiveMode: battleEngineObjectiveMode,
-        ...limitsByMode[battleEngineSearchMode],
-      },
-    });
+    try {
+      worker.postMessage({
+        id: nextRequestId,
+        state: battleEngineCurrentState,
+        options: searchOptions,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Battle engine worker request failed.";
+      runMainThreadFallback(message);
+    }
   };
 
   const updateDamageMoveConfig = (
