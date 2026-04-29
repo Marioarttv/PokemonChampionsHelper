@@ -164,8 +164,9 @@ import {
   type PersistedSpeciesMoveset,
 } from "./lib/speciesMovesets";
 import { importShowdownTeamText } from "./lib/showdownTeamImport";
+import BattleArenaPage from "./BattleArenaPage";
 
-type SiteMode = "calculator" | "team" | "movesets" | "ohko" | "history";
+type SiteMode = "calculator" | "team" | "battle" | "movesets" | "ohko" | "history";
 type CalculatorMode = "defense" | "attack";
 type MatchHistoryTeamSort = "latest" | "name" | "matches" | "winRate";
 
@@ -15941,9 +15942,10 @@ function MatchHistoryEditSelector({
 const SITE_SECTIONS: Array<{ id: SiteMode; index: string; label: string }> = [
   { id: "calculator", index: "01", label: "Type Calculator" },
   { id: "team", index: "02", label: "Team Builder" },
-  { id: "movesets", index: "03", label: "Movesets DB" },
-  { id: "ohko", index: "04", label: "OHKO Finder" },
-  { id: "history", index: "05", label: "Match History" },
+  { id: "battle", index: "03", label: "Battle Arena" },
+  { id: "movesets", index: "04", label: "Movesets DB" },
+  { id: "ohko", index: "05", label: "OHKO Finder" },
+  { id: "history", index: "06", label: "Match History" },
 ];
 
 function App() {
@@ -16008,6 +16010,8 @@ function App() {
             key={teamBuilderResetKey}
             onStartNewTeam={() => setTeamBuilderResetKey((value) => value + 1)}
           />
+        ) : siteMode === "battle" ? (
+          <BattleArenaPage />
         ) : siteMode === "movesets" ? (
           <MovesetDatabaseView />
         ) : siteMode === "ohko" ? (
