@@ -167,9 +167,10 @@ import {
 import { importShowdownTeamText } from "./lib/showdownTeamImport";
 import BattleArenaPage from "./BattleArenaPage";
 
-type SiteMode = "calculator" | "team" | "battle" | "movesets" | "ohko" | "history";
+type SiteMode = "calculator" | "team" | "battle" | "movesets" | "speed" | "ohko" | "history";
 type CalculatorMode = "defense" | "attack";
 type MatchHistoryTeamSort = "latest" | "name" | "matches" | "winRate";
+type SpeedTierSort = "boosted" | "neutral" | "base" | "name";
 
 type TypePoolProps = {
   selectedTypes: PokemonType[];
@@ -246,6 +247,12 @@ type ResolvedSpeciesMoveset = {
   itemName: string | null;
   statSpread: ChampionsStatSpread | null;
   movesetSource: StoredMovesetSource;
+};
+type SpeedTierRow = {
+  pokemon: PokemonRecord;
+  baseSpeed: number;
+  maxSpeed: number;
+  boostedSpeed: number;
 };
 type PotentialMegaSlot = {
   slotIndex: number;
@@ -2658,6 +2665,35 @@ function getTeamBuilderFormatEntries(
 
     return isLegalBaseSpecies || isChampionsMegaEntry(pokemon) || isSupportedLegalForm;
   });
+}
+
+function getChampionsSpeedTierEntries(database: PokemonRecord[] | null) {
+  return (database ?? []).filter((pokemon) => {
+    const baseSpeciesKey = getPokemonBaseSpeciesKey(pokemon);
+
+    return (
+      (pokemon.forme === null && POKEMON_CHAMPIONS_LEGAL_SPECIES_KEY_SET.has(baseSpeciesKey)) ||
+      isChampionsMegaEntry(pokemon)
+    );
+  });
+}
+
+function buildSpeedTierRow(pokemon: PokemonRecord): SpeedTierRow {
+  const maxSpeedSpread: ChampionsStatSpread = {
+    nature: "adamant",
+    statPoints: { hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: CHAMPIONS_MAX_STAT_POINTS_PER_STAT },
+  };
+  const boostedSpeedSpread: ChampionsStatSpread = {
+    ...maxSpeedSpread,
+    nature: "jolly",
+  };
+
+  return {
+    pokemon,
+    baseSpeed: pokemon.baseStats.spe,
+    maxSpeed: getChampionsComputedStats(pokemon, { spread: maxSpeedSpread }).spe,
+    boostedSpeed: getChampionsComputedStats(pokemon, { spread: boostedSpeedSpread }).spe,
+  };
 }
 
 function formatMatrixCell(multiplier: number | null, mode: TeamMatrixMode) {
@@ -14962,6 +14998,155 @@ function MovesetDatabaseView() {
   );
 }
 
+function SpeedTiersView() {
+  const [database, setDatabase] = useState<PokemonRecord[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [sortMode, setSortMode] = useState<SpeedTierSort>("boosted");
+
+  useEffect(() => {
+    let active = true;
+
+    loadPokemonDatabase()
+      .then((db) => {
+        if (active) {
+          setDatabase(db.pokemon);
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setLoadError(error instanceof Error ? error.message : "Failed to load Pokemon database.");
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const speedRows = useMemo(() => {
+    const normalizedQuery = normalizeTextKey(query);
+    const rows = getChampionsSpeedTierEntries(database)
+      .map(buildSpeedTierRow)
+      .filter((row) => {
+        if (!normalizedQuery) {
+          return true;
+        }
+
+        return (
+          normalizeTextKey(row.pokemon.name).includes(normalizedQuery) ||
+          row.pokemon.types.some((typeLabel) => normalizeTextKey(typeLabel).includes(normalizedQuery))
+        );
+      });
+
+    return rows.sort((left, right) => {
+      if (sortMode === "name") {
+        return left.pokemon.name.localeCompare(right.pokemon.name);
+      }
+
+      const leftValue =
+        sortMode === "base" ? left.baseSpeed : sortMode === "neutral" ? left.maxSpeed : left.boostedSpeed;
+      const rightValue =
+        sortMode === "base" ? right.baseSpeed : sortMode === "neutral" ? right.maxSpeed : right.boostedSpeed;
+
+      return rightValue - leftValue || right.baseSpeed - left.baseSpeed || left.pokemon.name.localeCompare(right.pokemon.name);
+    });
+  }, [database, query, sortMode]);
+
+  return (
+    <>
+      <section className="team-builder-hero">
+        <div>
+          <p className="eyebrow">Speed Tiers</p>
+          <h2>Champions speed benchmarks for max Speed spreads</h2>
+          <p className="selector-note">
+            Compare legal Regulation M-A Pokémon at base Speed, 32 Speed, and 32 Speed with a Speed-boosting nature.
+          </p>
+        </div>
+        <div className="team-builder-meta">
+          <span>{speedRows.length} shown</span>
+          <span>32 Spe</span>
+          <span>Jolly / Timid</span>
+        </div>
+      </section>
+
+      <section className="board-panel speed-tiers-panel">
+        <div className="speed-tiers-toolbar">
+          <label className="team-input-label" htmlFor="speed-tier-search">
+            Search
+          </label>
+          <input
+            id="speed-tier-search"
+            className="team-pokemon-input"
+            placeholder={database ? "Search Pokémon or type" : "Loading local database..."}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            disabled={!database}
+          />
+          <label className="team-input-label" htmlFor="speed-tier-sort">
+            Sort
+          </label>
+          <select
+            id="speed-tier-sort"
+            className="team-select speed-tier-sort"
+            value={sortMode}
+            onChange={(event) => setSortMode(event.target.value as SpeedTierSort)}
+          >
+            <option value="boosted">32 Spe + Speed Nature</option>
+            <option value="neutral">32 Spe</option>
+            <option value="base">Base Speed</option>
+            <option value="name">Name</option>
+          </select>
+        </div>
+
+        {loadError ? (
+          <p className="storage-message error">{loadError}</p>
+        ) : speedRows.length > 0 ? (
+          <div className="speed-tier-table" role="table" aria-label="Pokemon Champions speed tiers">
+            <div className="speed-tier-table-row speed-tier-table-head" role="row">
+              <span role="columnheader">Pokémon</span>
+              <span role="columnheader">Base</span>
+              <span role="columnheader">32 Spe</span>
+              <span role="columnheader">32 Spe + Nature</span>
+            </div>
+            {speedRows.map((row) => (
+              <div key={row.pokemon.id} className="speed-tier-table-row" role="row">
+                <div className="speed-tier-pokemon" role="cell">
+                  <PokemonSprite pokemon={row.pokemon} className="speed-tier-sprite" />
+                  <div>
+                    <strong>{row.pokemon.name}</strong>
+                    <div className="speed-tier-types">
+                      {row.pokemon.types.map((typeLabel) => {
+                        const type = getTypeFromLabel(typeLabel);
+
+                        return type ? (
+                          <span
+                            key={`${row.pokemon.id}-${type}`}
+                            className="speed-tier-type-dot"
+                            style={{ "--type-color": TYPE_META[type].color } as CSSProperties}
+                            title={TYPE_META[type].label}
+                          />
+                        ) : null;
+                      })}
+                    </div>
+                  </div>
+                </div>
+                <strong className="speed-tier-number" role="cell">{row.baseSpeed}</strong>
+                <strong className="speed-tier-number" role="cell">{row.maxSpeed}</strong>
+                <strong className="speed-tier-number boosted" role="cell">{row.boostedSpeed}</strong>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="matchup-empty-board">
+            {database ? "No Pokémon match that search." : "Loading local database..."}
+          </div>
+        )}
+      </section>
+    </>
+  );
+}
+
 function OhkoFinderView() {
   const [database, setDatabase] = useState<PokemonRecord[] | null>(null);
   const [battleData, setBattleData] = useState<{ moves: MoveRecord[] } | null>(null);
@@ -16156,8 +16341,9 @@ const SITE_SECTIONS: Array<{ id: SiteMode; index: string; label: string }> = [
   { id: "team", index: "02", label: "Team Builder" },
   { id: "battle", index: "03", label: "Battle Arena" },
   { id: "movesets", index: "04", label: "Movesets DB" },
-  { id: "ohko", index: "05", label: "OHKO Finder" },
-  { id: "history", index: "06", label: "Match History" },
+  { id: "speed", index: "05", label: "Speed Tiers" },
+  { id: "ohko", index: "06", label: "OHKO Finder" },
+  { id: "history", index: "07", label: "Match History" },
 ];
 
 function App() {
@@ -16226,6 +16412,8 @@ function App() {
           <BattleArenaPage />
         ) : siteMode === "movesets" ? (
           <MovesetDatabaseView />
+        ) : siteMode === "speed" ? (
+          <SpeedTiersView />
         ) : siteMode === "ohko" ? (
           <OhkoFinderView />
         ) : (
