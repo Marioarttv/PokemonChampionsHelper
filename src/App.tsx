@@ -484,6 +484,18 @@ function formatFlatMultiplier(value: number) {
   return `${value.toFixed(value % 1 === 0 ? 0 : 2)}x`;
 }
 
+function getDamageOverviewSpeedStat(baseSpeed: number, item: DamageItemId) {
+  if (item === "choicescarf") {
+    return Math.floor(baseSpeed * 1.5);
+  }
+
+  if (item === "ironball") {
+    return Math.floor(baseSpeed * 0.5);
+  }
+
+  return baseSpeed;
+}
+
 function clampStatStage(value: number) {
   return Math.max(-6, Math.min(6, value));
 }
@@ -3836,18 +3848,19 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
     const setStageValue = isAttacker ? setDamageAttackStage : setDamageDefenseStage;
     const stageLabel = isAttacker ? "Atk Boost" : "Def Boost";
     const roleLabel = isAttacker ? "Attacker" : "Defender";
+    const overviewSpeed = getDamageOverviewSpeedStat(stats?.spe ?? 0, itemValue);
 
     const statEntries = isAttacker
       ? [
           ["Atk", stats?.atk ?? 0],
           ["SpA", stats?.spa ?? 0],
-          ["Spe", stats?.spe ?? 0],
+          ["Spe", overviewSpeed],
         ]
       : [
           ["HP", stats?.hp ?? 0],
           ["Def", stats?.def ?? 0],
           ["SpD", stats?.spd ?? 0],
-          ["Spe", stats?.spe ?? 0],
+          ["Spe", overviewSpeed],
         ];
 
     return (
