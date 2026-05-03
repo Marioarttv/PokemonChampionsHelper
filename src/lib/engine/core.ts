@@ -1,7 +1,7 @@
 import { getTypeFromLabel } from "../../data/typeChart";
 import { getMultiplier } from "../effectiveness";
 import type { MoveRecord } from "../battleData";
-import { calculateRoughDamage, getAttackerEffectiveWeather, resolveWeatherBallDamageInput } from "../damage";
+import { calculateRoughDamage, getAttackerEffectiveWeather, isLowKickMove, resolveWeatherBallDamageInput } from "../damage";
 import { getChampionsComputedStats } from "../championsStats";
 import {
   getDefaultDamageAbilityId,
@@ -82,6 +82,14 @@ function hasAnyItemKey(combatant: BattleCombatantState, keys: readonly string[])
 
 function getMoveFromLookup(moveName: string, moveByKey: ReadonlyMap<string, MoveRecord>) {
   return moveByKey.get(moveName.toLowerCase()) ?? moveByKey.get(normalizeMoveKey(moveName)) ?? moveByKey.get(moveName) ?? null;
+}
+
+function getBattleMoveBasePower(move: MoveRecord) {
+  if (move.basePower > 0) {
+    return move.basePower;
+  }
+
+  return isLowKickMove(move.name) ? 0 : null;
 }
 
 function isSnowActive(state: BattleState) {
@@ -187,7 +195,7 @@ function buildMoveOptionFromMoveName(
     moveRecord.name,
     moveRecord,
     resolvedType ?? null,
-    moveRecord.basePower > 0 ? moveRecord.basePower : null,
+    getBattleMoveBasePower(moveRecord),
     moveRecord.category === "Status" ? null : (moveRecord.category.toLowerCase() as NonNullable<BattleMoveOption["category"]>),
     moveRecord.target === "allAdjacentFoes" || moveRecord.target === "allAdjacent",
     "presetMove",
@@ -196,7 +204,7 @@ function buildMoveOptionFromMoveName(
       name: moveRecord.name,
       label: moveRecord.name,
       type: resolvedType ?? undefined,
-      basePower: moveRecord.basePower > 0 ? moveRecord.basePower : undefined,
+      basePower: getBattleMoveBasePower(moveRecord) ?? undefined,
       category:
         moveRecord.category === "Status"
           ? "status"
@@ -763,7 +771,7 @@ export function getDamagePreview(
     !attacker ||
     !defender ||
     !move.type ||
-    !move.basePower ||
+    move.basePower === null ||
     !move.category ||
     attacker.currentHp <= 0 ||
     defender.currentHp <= 0
@@ -889,7 +897,7 @@ function isTargetImmuneByTyping(
   move: BattleMoveOption,
 ) {
   const target = state.combatants[targetId];
-  if (!target || !move.type || !move.category || !move.basePower) {
+  if (!target || !move.type || !move.category || move.basePower === null) {
     return false;
   }
 

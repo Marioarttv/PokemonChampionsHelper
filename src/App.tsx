@@ -61,6 +61,7 @@ import {
   calculateRoughDamage,
   getEffectiveDamageBaseStats,
   getStatStageMultiplier,
+  isLowKickMove,
   type DamageCategory,
   type DamageTerrain,
   type DamageWeather,
@@ -420,14 +421,13 @@ function createSavedAttack(
   pokemon?: PokemonRecord | null,
   overrides: Partial<PersistedSavedAttack> = {},
 ): PersistedSavedAttack {
+  const label = overrides.label ?? "";
+
   return {
     id: overrides.id ?? createSavedAttackId(),
-    label: overrides.label ?? "",
+    label,
     type: overrides.type ?? getPreferredAttackType(pokemon),
-    basePower:
-      typeof overrides.basePower === "number" && Number.isFinite(overrides.basePower) && overrides.basePower > 0
-        ? Math.floor(overrides.basePower)
-        : 80,
+    basePower: normalizeSavedMoveBasePower(overrides.basePower, label) ?? 80,
     category: overrides.category ?? getPreferredDamageCategory(pokemon),
     isSpreadMove: overrides.isSpreadMove ?? false,
   };
@@ -440,16 +440,15 @@ function createKnownMove(
     ? overrides.category
     : undefined;
   const type = typeof overrides.type === "string" ? coercePokemonType(overrides.type) : null;
+  const label = overrides.label ?? overrides.name ?? "";
+  const name = overrides.name ?? label;
 
   return {
     id: overrides.id ?? createSavedAttackId(),
-    name: overrides.name ?? overrides.label ?? "",
-    label: overrides.label ?? overrides.name ?? "",
+    name,
+    label,
     type: type ?? undefined,
-    basePower:
-      typeof overrides.basePower === "number" && Number.isFinite(overrides.basePower) && overrides.basePower > 0
-        ? Math.floor(overrides.basePower)
-        : undefined,
+    basePower: normalizeSavedMoveBasePower(overrides.basePower, name),
     category,
     isSpreadMove: Boolean(overrides.isSpreadMove),
   };
@@ -525,6 +524,54 @@ function getAttackBasePowerDisplay(basePower?: number) {
   return typeof basePower === "number" && Number.isFinite(basePower) && basePower > 0 ? String(basePower) : "";
 }
 
+function getMoveRecordDamageBasePower(move: Pick<MoveRecord, "name" | "basePower">) {
+  if (typeof move.basePower === "number" && Number.isFinite(move.basePower) && move.basePower > 0) {
+    return Math.floor(move.basePower);
+  }
+
+  return isLowKickMove(move.name) ? 0 : undefined;
+}
+
+function normalizeSavedMoveBasePower(
+  basePower: number | null | undefined,
+  moveName: string | null | undefined,
+) {
+  if (typeof basePower === "number" && Number.isFinite(basePower)) {
+    if (basePower > 0) {
+      return Math.floor(basePower);
+    }
+
+    if (basePower === 0 && isLowKickMove(moveName)) {
+      return 0;
+    }
+  }
+
+  return isLowKickMove(moveName) ? 0 : undefined;
+}
+
+function formatMoveBasePowerLabel(basePower: number | null | undefined, moveName: string | null | undefined) {
+  const normalizedBasePower = normalizeSavedMoveBasePower(basePower, moveName);
+
+  if (normalizedBasePower === 0 && isLowKickMove(moveName)) {
+    return "Weight BP";
+  }
+
+  return typeof normalizedBasePower === "number" ? `${normalizedBasePower} BP` : "Base power not set";
+}
+
+function getDamageInputBasePower(
+  configPower: string,
+  defaultPower: number | null,
+  moveName: string | null | undefined,
+) {
+  if (isLowKickMove(moveName)) {
+    return 0;
+  }
+
+  const parsedPower = configPower.trim() ? Number(configPower) : defaultPower;
+  return Number.isFinite(parsedPower) && (parsedPower ?? 0) > 0 ? parsedPower : null;
+}
+
 function getAttackLabel(attack: PersistedSavedAttack) {
   return attack.label?.trim() || TYPE_META[attack.type].label;
 }
@@ -538,9 +585,7 @@ function getKnownMoveType(move: PersistedKnownMove) {
 }
 
 function getKnownMoveBasePower(move: PersistedKnownMove) {
-  return typeof move.basePower === "number" && Number.isFinite(move.basePower) && move.basePower > 0
-    ? Math.floor(move.basePower)
-    : null;
+  return normalizeSavedMoveBasePower(move.basePower, getKnownMoveName(move)) ?? null;
 }
 
 function getKnownMoveCategory(move: PersistedKnownMove, pokemon?: PokemonRecord | null) {
@@ -570,8 +615,8 @@ function sanitizeKnownMoves(
     const resolvedCategory = matchedMove
       ? matchedMove.category.toLowerCase() as PersistedKnownMove["category"]
       : getKnownMoveCategory(move);
-    const resolvedBasePower = matchedMove && matchedMove.basePower > 0
-      ? matchedMove.basePower
+    const resolvedBasePower = matchedMove
+      ? getMoveRecordDamageBasePower(matchedMove)
       : getKnownMoveBasePower(move) ?? undefined;
     const resolvedLabel = matchedMove?.name ?? normalizedName;
     const normalizedKey = normalizeTextKey(resolvedLabel);
@@ -744,10 +789,7 @@ function sanitizeSavedAttacks(
         return null;
       }
 
-      const basePower =
-        typeof attack.basePower === "number" && Number.isFinite(attack.basePower) && attack.basePower > 0
-          ? Math.floor(attack.basePower)
-          : undefined;
+      const basePower = normalizeSavedMoveBasePower(attack.basePower, typeof attack.label === "string" ? attack.label : "");
       const category = attack.category === "physical" || attack.category === "special"
         ? attack.category
         : undefined;
@@ -831,10 +873,9 @@ function buildPersistedKnownMovesFromDraftAttacks(
       name: matchedMove?.name ?? attack.label,
       label: matchedMove?.name ?? attack.label,
       type: matchedType ?? attack.type,
-      basePower:
-        matchedMove && matchedMove.basePower > 0
-          ? matchedMove.basePower
-          : attack.basePower,
+      basePower: matchedMove
+        ? getMoveRecordDamageBasePower(matchedMove)
+        : normalizeSavedMoveBasePower(attack.basePower, attack.label),
       category:
         matchedMove
           ? (matchedMove.category.toLowerCase() as PersistedKnownMove["category"])
@@ -906,9 +947,7 @@ function getResolvedAttackSpread(attack: PersistedSavedAttack) {
 }
 
 function getResolvedAttackBasePower(attack: PersistedSavedAttack) {
-  return typeof attack.basePower === "number" && Number.isFinite(attack.basePower) && attack.basePower > 0
-    ? attack.basePower
-    : null;
+  return normalizeSavedMoveBasePower(attack.basePower, attack.label) ?? (isLowKickMove(attack.label) ? 0 : null);
 }
 
 function formatMoveAccuracy(accuracy: number | true) {
@@ -3568,8 +3607,7 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
         isSpreadMove: getResolvedAttackSpread(attack),
       };
       const defaultPower = getResolvedAttackBasePower(attack);
-      const parsedPower = config.power.trim() ? Number(config.power) : defaultPower;
-      const basePower = Number.isFinite(parsedPower) && (parsedPower ?? 0) > 0 ? parsedPower : null;
+      const basePower = getDamageInputBasePower(config.power, defaultPower, attack.label);
 
       return {
         attack,
@@ -4152,6 +4190,7 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
             <div className="damage-move-grid">
               {damageMoveRows.map((row) => {
                 const effectiveType = row.estimate?.effectiveAttackType ?? row.attack.type;
+                const isWeightBasedPowerMove = isLowKickMove(row.attack.label);
                 return (
                   <article key={`damage-row-${row.attack.id}`} className="damage-move-card">
                     <header className="damage-move-card-head">
@@ -4175,10 +4214,11 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
                         <span>BP</span>
                         <input
                           type="number"
-                          min="1"
+                          min={isWeightBasedPowerMove ? "0" : "1"}
                           step="1"
                           inputMode="numeric"
-                          value={row.config.power || (row.defaultPower ? String(row.defaultPower) : "")}
+                          value={isWeightBasedPowerMove ? "" : row.config.power || (row.defaultPower ? String(row.defaultPower) : "")}
+                          disabled={isWeightBasedPowerMove}
                           onChange={(event) =>
                             updateDamageMoveConfig(
                               selectedDamageAttackerPokemon!.id,
@@ -4187,7 +4227,7 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
                               { power: event.target.value },
                             )
                           }
-                          placeholder={row.defaultPower ? String(row.defaultPower) : "80"}
+                          placeholder={isWeightBasedPowerMove ? "Weight" : row.defaultPower ? String(row.defaultPower) : "80"}
                         />
                       </label>
 
@@ -4900,7 +4940,7 @@ function TeamSlotCard({
         name: matchedMove.name,
         label: matchedMove.name,
         type: getMovePokemonType(matchedMove) ?? undefined,
-        basePower: matchedMove.basePower > 0 ? matchedMove.basePower : undefined,
+        basePower: getMoveRecordDamageBasePower(matchedMove),
         category: matchedMove.category.toLowerCase() as PersistedKnownMove["category"],
         isSpreadMove: isSpreadTarget(matchedMove.target),
       });
@@ -5289,7 +5329,7 @@ function TeamSlotCard({
                       <p>
                         {category === "status"
                           ? "Status"
-                          : `${basePower ? `${basePower} BP` : "Base power not set"} • ${
+                          : `${formatMoveBasePowerLabel(basePower, getKnownMoveName(move))} • ${
                             category === "physical" ? "Physical" : "Special"
                           }`}
                         {category !== "status" && move.isSpreadMove ? " • Spread" : ""}
@@ -5349,6 +5389,7 @@ function TeamSlotCard({
                       const moveType = getKnownMoveType(move);
                       const category = getKnownMoveCategory(move, pokemon);
                       const basePower = getKnownMoveBasePower(move);
+                      const isWeightBasedPowerMove = isLowKickMove(getKnownMoveName(move));
 
                       return (
                       <article key={move.id} className="saved-attack-editor-card">
@@ -5426,9 +5467,9 @@ function TeamSlotCard({
                               min="0"
                               step="1"
                               inputMode="numeric"
-                              placeholder={category === "status" ? "Status" : "80"}
+                              placeholder={category === "status" ? "Status" : isWeightBasedPowerMove ? "Weight" : "80"}
                               value={getAttackBasePowerDisplay(basePower ?? undefined)}
-                              disabled={category === "status"}
+                              disabled={category === "status" || isWeightBasedPowerMove}
                               onChange={(event) => {
                                 const parsed = Number(event.target.value);
                                 updateDraftMove(move.id, {
@@ -5452,7 +5493,7 @@ function TeamSlotCard({
                                 onClick={() =>
                                   updateDraftMove(move.id, {
                                     category: nextCategory,
-                                    basePower: nextCategory === "status" ? undefined : basePower ?? 80,
+                                    basePower: nextCategory === "status" ? undefined : isWeightBasedPowerMove ? 0 : basePower ?? 80,
                                   })}
                               >
                                 {nextCategory === "physical"
@@ -6302,7 +6343,7 @@ function BattleLabMoveButton({
 }: BattleLabMoveButtonProps) {
   const typeColor = move.type ? TYPE_META[move.type].color : "#9aa3b8";
   const accent = move.type ? TYPE_META[move.type].accent : "#4b5472";
-  const labelBp = move.basePower ? `${move.basePower}` : move.effectKind === "damage" ? "—" : "STA";
+  const labelBp = isLowKickMove(move.name) ? "Weight" : move.basePower ? `${move.basePower}` : move.effectKind === "damage" ? "—" : "STA";
   const labelAcc = move.accuracy >= 100 ? "—" : `${move.accuracy}`;
   const tag =
     move.source === "candidate" ? "?" : move.source === "inferred" ? "i" : null;
@@ -10232,7 +10273,9 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       return null;
     }
 
-    if (quickMove.category === "Status" || quickMove.basePower <= 0) {
+    const quickMoveBasePower = getMoveRecordDamageBasePower(quickMove);
+
+    if (quickMove.category === "Status" || quickMoveBasePower === undefined) {
       return null;
     }
 
@@ -10247,7 +10290,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       defender: currentDamageDefenderPokemon,
       attackType: moveType,
       moveName: quickMove.name,
-      basePower: quickMove.basePower,
+      basePower: quickMoveBasePower,
       category: quickMove.category.toLowerCase() as DamageCategory,
       isSpreadMove: isSpreadTarget(quickMove.target),
       weather: damageWeather,
@@ -11154,7 +11197,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
 
                   <div className="quick-meta-row">
                     <span>{quickMove.category}</span>
-                    <span>Power {quickMove.basePower > 0 ? quickMove.basePower : "--"}</span>
+                    <span>Power {isLowKickMove(quickMove.name) ? "Weight" : quickMove.basePower > 0 ? quickMove.basePower : "--"}</span>
                     <span>Acc {formatMoveAccuracy(quickMove.accuracy)}</span>
                     <span>PP {quickMove.pp}</span>
                     <span>Priority {quickMove.priority >= 0 ? `+${quickMove.priority}` : quickMove.priority}</span>
@@ -11197,7 +11240,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                       <span className="lead-section-label speed">Damage</span>
                       <div className="quick-effect-copy">
                         <p>
-                          {quickMove.category === "Status" || quickMove.basePower <= 0
+                          {quickMove.category === "Status" || getMoveRecordDamageBasePower(quickMove) === undefined
                             ? "Status move, so there is no damage roll to show."
                             : currentDamageAttackerPokemon && currentDamageDefenderPokemon
                               ? "This move could not be converted into a calculator type."
@@ -12993,11 +13036,11 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                                         <span className="scout-move-category">
                                           {moveEntry.move.category}
                                         </span>
-                                        {moveEntry.move.basePower > 0 ? (
+                                        {moveEntry.move.basePower > 0 || isLowKickMove(moveEntry.move.name) ? (
                                           <span className="scout-move-power">
                                             <span className="scout-move-power-label">Power</span>
                                             <strong className="scout-move-power-value">
-                                              {moveEntry.move.basePower}
+                                              {isLowKickMove(moveEntry.move.name) ? "Weight" : moveEntry.move.basePower}
                                             </strong>
                                           </span>
                                         ) : null}
@@ -14343,7 +14386,7 @@ function MovesetDatabaseView() {
         name: matchedMove.name,
         label: matchedMove.name,
         type: getMovePokemonType(matchedMove) ?? undefined,
-        basePower: matchedMove.basePower > 0 ? matchedMove.basePower : undefined,
+        basePower: getMoveRecordDamageBasePower(matchedMove),
         category: matchedMove.category.toLowerCase() as PersistedKnownMove["category"],
         isSpreadMove: isSpreadTarget(matchedMove.target),
       });
@@ -14806,7 +14849,11 @@ function MovesetDatabaseView() {
                                   <strong>{entry.name}</strong>
                                   <p>
                                     {entry.move
-                                      ? `${entry.move.category}${entry.move.basePower > 0 ? ` • Power ${entry.move.basePower}` : ""}${entry.move.priority !== 0 ? ` • Priority ${entry.move.priority}` : ""}`
+                                      ? `${entry.move.category}${
+                                          entry.move.basePower > 0 || isLowKickMove(entry.move.name)
+                                            ? ` • Power ${isLowKickMove(entry.move.name) ? "Weight" : entry.move.basePower}`
+                                            : ""
+                                        }${entry.move.priority !== 0 ? ` • Priority ${entry.move.priority}` : ""}`
                                       : "Move data not found in the local battle database."}
                                   </p>
                                 </div>
@@ -14829,6 +14876,7 @@ function MovesetDatabaseView() {
                         const moveType = getKnownMoveType(move);
                         const category = getKnownMoveCategory(move, selectedPokemon);
                         const basePower = getKnownMoveBasePower(move);
+                        const isWeightBasedPowerMove = isLowKickMove(getKnownMoveName(move));
 
                         return (
                           <article key={move.id} className="saved-attack-editor-card">
@@ -14906,9 +14954,9 @@ function MovesetDatabaseView() {
                                   min="0"
                                   step="1"
                                   inputMode="numeric"
-                                  placeholder={category === "status" ? "Status" : "80"}
+                                  placeholder={category === "status" ? "Status" : isWeightBasedPowerMove ? "Weight" : "80"}
                                   value={getAttackBasePowerDisplay(basePower ?? undefined)}
-                                  disabled={category === "status"}
+                                  disabled={category === "status" || isWeightBasedPowerMove}
                                   onChange={(event) => {
                                     const parsed = Number(event.target.value);
                                     updateDraftKnownMove(move.id, {
@@ -14932,7 +14980,7 @@ function MovesetDatabaseView() {
                                     onClick={() =>
                                       updateDraftKnownMove(move.id, {
                                         category: nextCategory,
-                                        basePower: nextCategory === "status" ? undefined : basePower ?? 80,
+                                        basePower: nextCategory === "status" ? undefined : isWeightBasedPowerMove ? 0 : basePower ?? 80,
                                       })}
                                   >
                                     {nextCategory === "physical"

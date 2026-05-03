@@ -122,6 +122,44 @@ describe("damage ability handling", () => {
 
 describe("move-specific damage handling", () => {
   it.each([
+    [0, 20],
+    [9.9, 20],
+    [10, 40],
+    [24.9, 40],
+    [25, 60],
+    [49.9, 60],
+    [50, 80],
+    [99.9, 80],
+    [100, 100],
+    [199.9, 100],
+    [200, 120],
+    [999.9, 120],
+  ])("resolves Low Kick against a %s kg target as %i BP", (weightkg, expectedBasePower) => {
+    const attacker = makePokemon("Low Kick Attacker", {
+      types: ["Fighting"],
+      baseStats: { atk: 120 },
+    });
+    const defender = makePokemon("Weighted Target", {
+      types: ["Normal"],
+      baseStats: { hp: 100, def: 100 },
+      weightkg,
+    });
+
+    const estimate = calculateRoughDamage({
+      attacker,
+      defender,
+      attackType: "fighting",
+      moveName: "Low Kick",
+      basePower: 0,
+      category: "physical",
+      isSpreadMove: false,
+    });
+
+    expect(estimate.inputBasePower).toBe(0);
+    expect(estimate.effectiveBasePower).toBe(expectedBasePower);
+  });
+
+  it.each([
     ["sun", "fire"],
     ["rain", "water"],
     ["sand", "rock"],

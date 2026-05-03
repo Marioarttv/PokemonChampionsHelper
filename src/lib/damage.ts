@@ -155,6 +155,34 @@ function isWeatherBallMove(moveName: string | null | undefined) {
   return moveName ? normalizeMoveNameKey(moveName) === "weatherball" : false;
 }
 
+export function isLowKickMove(moveName: string | null | undefined) {
+  return moveName ? normalizeMoveNameKey(moveName) === "lowkick" : false;
+}
+
+export function getLowKickBasePowerFromWeightKg(weightkg: number | null | undefined) {
+  if (typeof weightkg !== "number" || !Number.isFinite(weightkg) || weightkg < 10) {
+    return 20;
+  }
+
+  if (weightkg < 25) {
+    return 40;
+  }
+
+  if (weightkg < 50) {
+    return 60;
+  }
+
+  if (weightkg < 100) {
+    return 80;
+  }
+
+  if (weightkg < 200) {
+    return 100;
+  }
+
+  return 120;
+}
+
 export function getAttackerEffectiveWeather({
   weather = "none",
   attackerAbilityName,
@@ -217,6 +245,57 @@ export function resolveWeatherBallDamageInput({
   };
 }
 
+export function resolveLowKickDamageInput({
+  basePower,
+  defender,
+  moveName,
+}: {
+  basePower: number;
+  defender: PokemonRecord;
+  moveName?: string | null;
+}) {
+  if (!isLowKickMove(moveName)) {
+    return {
+      basePower,
+    };
+  }
+
+  return {
+    basePower: getLowKickBasePowerFromWeightKg(defender.weightkg),
+  };
+}
+
+export function resolveDamageMoveInput({
+  attackType,
+  basePower,
+  defender,
+  moveName,
+  weather = "none",
+}: {
+  attackType: PokemonType;
+  basePower: number;
+  defender: PokemonRecord;
+  moveName?: string | null;
+  weather?: DamageWeather;
+}) {
+  const weatherResolvedMove = resolveWeatherBallDamageInput({
+    attackType,
+    basePower,
+    moveName,
+    weather,
+  });
+  const basePowerResolvedMove = resolveLowKickDamageInput({
+    basePower: weatherResolvedMove.basePower,
+    defender,
+    moveName,
+  });
+
+  return {
+    attackType: weatherResolvedMove.attackType,
+    basePower: basePowerResolvedMove.basePower,
+  };
+}
+
 export function getEffectiveDamageBaseStats(
   pokemon: PokemonRecord,
   role: DamageBattleRole,
@@ -260,9 +339,10 @@ export function calculateRoughDamage({
     weather,
     attackerAbilityName,
   });
-  const resolvedMove = resolveWeatherBallDamageInput({
+  const resolvedMove = resolveDamageMoveInput({
     attackType,
     basePower,
+    defender,
     moveName,
     weather: attackerEffectiveWeather,
   });

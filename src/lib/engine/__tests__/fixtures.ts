@@ -11,6 +11,7 @@ type FixturePokemonOptions = {
   types?: string[];
   baseStats?: Partial<PokemonRecord["baseStats"]>;
   abilities?: Record<string, string>;
+  weightkg?: number | null;
 };
 
 type FixtureMoveOptions = {
@@ -77,7 +78,7 @@ export function makePokemon(name: string, options: FixturePokemonOptions = {}): 
     bst: 600,
     abilities: options.abilities ?? { "0": "Pressure" },
     heightm: 1,
-    weightkg: 50,
+    weightkg: "weightkg" in options ? options.weightkg ?? null : 50,
     color: null,
     prevo: null,
     evos: [],

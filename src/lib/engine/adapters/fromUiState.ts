@@ -5,6 +5,7 @@ import {
   normalizeChampionsStatSpread,
   type ChampionsStatSpread,
 } from "../../championsStats";
+import { isLowKickMove } from "../../damage";
 import { getOpponentPreset, getOpponentPresetKnownMoves } from "../../opponentMovePresets";
 import type { PokemonRecord } from "../../pokemonDb";
 import type { PersistedKnownMove, PersistedSavedAttack } from "../../savedTeams";
@@ -269,7 +270,7 @@ function buildKnownMovesFromMoveNames(
           name: move.name,
           label: move.name,
           type: getTypeFromLabel(move.type) ?? undefined,
-          basePower: move.basePower > 0 ? move.basePower : undefined,
+          basePower: move.basePower > 0 ? move.basePower : isLowKickMove(move.name) ? 0 : undefined,
           category: move.category === "Status" ? "status" : (move.category.toLowerCase() as "physical" | "special"),
           isSpreadMove: move.target === "allAdjacentFoes" || move.target === "allAdjacent",
         } satisfies PersistedKnownMove,

@@ -1,6 +1,7 @@
 import { CHAMPIONS_META_MOVESETS_RAW } from "../data/championsMetaMovesetsRaw";
 import { getTypeFromLabel } from "../data/typeChart";
 import { isSpreadTarget, type MoveRecord } from "./battleData";
+import { isLowKickMove } from "./damage";
 import type { PokemonRecord } from "./pokemonDb";
 import type { PersistedKnownMove, PersistedSavedAttack } from "./savedTeams";
 
@@ -154,6 +155,14 @@ function getPresetMoveLookupKey(moveName: string) {
   return moveName.toLowerCase();
 }
 
+function getPresetMoveBasePower(move: MoveRecord) {
+  if (move.basePower > 0) {
+    return move.basePower;
+  }
+
+  return isLowKickMove(move.name) ? 0 : undefined;
+}
+
 function buildPresetKnownMove(
   _pokemon: PokemonRecord,
   move: MoveRecord,
@@ -166,7 +175,7 @@ function buildPresetKnownMove(
     name: move.name,
     label: move.name,
     type: type ?? undefined,
-    basePower: move.basePower > 0 ? move.basePower : undefined,
+    basePower: getPresetMoveBasePower(move),
     category: move.category.toLowerCase() as PersistedKnownMove["category"],
     isSpreadMove: isSpreadTarget(move.target),
   };

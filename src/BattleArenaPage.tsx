@@ -57,6 +57,7 @@ import {
   getOpponentPreset,
   getOpponentPresetKnownMoves,
 } from "./lib/opponentMovePresets";
+import { isLowKickMove } from "./lib/damage";
 import {
   recommendTeamPreview,
   type TeamPreviewRecommendation,
@@ -246,7 +247,7 @@ function toKnownMoveFromRecord(move: MoveRecord): PersistedKnownMove {
     name: move.name,
     label: move.name,
     type: getMovePokemonType(move) ?? undefined,
-    basePower: category === "status" || move.basePower <= 0 ? undefined : move.basePower,
+    basePower: category === "status" ? undefined : move.basePower > 0 ? move.basePower : isLowKickMove(move.name) ? 0 : undefined,
     category,
     isSpreadMove: isSpreadTarget(move.target),
   };
@@ -263,13 +264,13 @@ function normalizeKnownMove(
   }
 
   const type = coercePokemonType(move.type);
-  const category = move.category ?? (move.basePower && move.basePower > 0 ? "physical" : "status");
+  const category = move.category ?? (isLowKickMove(name) ? "physical" : move.basePower && move.basePower > 0 ? "physical" : "status");
   return {
     id: move.id || `move-${normalizeKey(name)}`,
     name,
     label: name,
     type: type ?? undefined,
-    basePower: category === "status" ? undefined : move.basePower,
+    basePower: category === "status" ? undefined : move.basePower ?? (isLowKickMove(name) ? 0 : undefined),
     category,
     isSpreadMove: Boolean(move.isSpreadMove),
   };

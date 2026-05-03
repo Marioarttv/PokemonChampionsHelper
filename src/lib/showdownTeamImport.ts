@@ -1,6 +1,7 @@
 import { normalizePokemonNameKey } from "../data/championsLegalPokemon";
 import { getTypeFromLabel } from "../data/typeChart";
 import { isSpreadTarget, type MoveRecord } from "./battleData";
+import { isLowKickMove } from "./damage";
 import type { PokemonRecord } from "./pokemonDb";
 import type {
   PersistedAttackCategory,
@@ -184,7 +185,9 @@ function resolveImportedPokemon(
 }
 
 function buildImportedSavedAttack(move: MoveRecord): PersistedSavedAttack | null {
-  if (move.category === "Status" || move.basePower <= 0) {
+  const basePower = getImportedMoveBasePower(move);
+
+  if (move.category === "Status" || basePower === undefined) {
     return null;
   }
 
@@ -198,10 +201,18 @@ function buildImportedSavedAttack(move: MoveRecord): PersistedSavedAttack | null
     id: createSavedAttackId(),
     label: move.name,
     type,
-    basePower: move.basePower,
+    basePower,
     category: move.category.toLowerCase() as PersistedAttackCategory,
     isSpreadMove: isSpreadTarget(move.target),
   };
+}
+
+function getImportedMoveBasePower(move: MoveRecord) {
+  if (move.basePower > 0) {
+    return move.basePower;
+  }
+
+  return isLowKickMove(move.name) ? 0 : undefined;
 }
 
 function buildImportedKnownMove(move: MoveRecord): PersistedKnownMove | null {
@@ -212,7 +223,7 @@ function buildImportedKnownMove(move: MoveRecord): PersistedKnownMove | null {
     name: move.name,
     label: move.name,
     type: type ?? undefined,
-    basePower: move.basePower > 0 ? move.basePower : undefined,
+    basePower: getImportedMoveBasePower(move),
     category: move.category.toLowerCase() as PersistedKnownMove["category"],
     isSpreadMove: isSpreadTarget(move.target),
   };
