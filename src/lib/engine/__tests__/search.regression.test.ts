@@ -260,6 +260,63 @@ describe("search regression coverage", () => {
     expect(filtered.diagnostics.branchModelUsed).toContain("expectedOnly->");
   });
 
+  it("caps tactical mode to balanced depth on quiet boards", () => {
+    const allyOne = makePokemon("Ally One", { baseStats: { atk: 110, spe: 95 } });
+    const allyTwo = makePokemon("Ally Two", { baseStats: { atk: 105, spe: 85 } });
+    const enemyOne = makePokemon("Enemy One", { baseStats: { atk: 110, spe: 90 } });
+    const enemyTwo = makePokemon("Enemy Two", { baseStats: { atk: 105, spe: 80 } });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 60, target: "normal" });
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: allyOne, moveNames: ["Tackle"] }),
+        makeMember({ side: "ally", slot: 1, pokemon: allyTwo, moveNames: ["Tackle"] }),
+      ],
+      enemy: [
+        makeMember({ side: "enemy", slot: 0, pokemon: enemyOne, moveNames: ["Tackle"] }),
+        makeMember({ side: "enemy", slot: 1, pokemon: enemyTwo, moveNames: ["Tackle"] }),
+      ],
+      moves: [tackle],
+    });
+
+    const recommendation = recommendBestPlan(state, {
+      searchMode: "tactical",
+      objectiveMode: "robust",
+      maxJointPlansPerSide: 4,
+      maxIndividualActionsPerActor: 2,
+    });
+
+    expect(recommendation.budget.maxDepth).toBe(2);
+    expect(recommendation.depthReached).toBe(2);
+    expect(recommendation.diagnostics.tacticalTriggers).toEqual([]);
+    expect(recommendation.diagnostics.branchModelUsed).toBe("expectedPlusRisk");
+  });
+
+  it("opens fourth-turn tactical lookahead when future-turn triggers exist", () => {
+    const support = makePokemon("Support", { baseStats: { spe: 115 } });
+    const enemyOne = makePokemon("Enemy One", { baseStats: { atk: 110, spe: 100 } });
+    const tailwind = makeMove("Tailwind", { type: "Flying", category: "Status", basePower: 0, target: "self" });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 60, target: "normal" });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: support, moveNames: ["Tailwind", "Tackle"] })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: enemyOne, moveNames: ["Tackle"] })],
+      moves: [tailwind, tackle],
+    });
+
+    const recommendation = recommendBestPlan(state, {
+      searchMode: "tactical",
+      objectiveMode: "robust",
+      maxJointPlansPerSide: 4,
+      maxIndividualActionsPerActor: 2,
+      maxNodes: 10_000,
+      maxMs: 500,
+    });
+
+    expect(recommendation.budget.maxDepth).toBe(4);
+    expect(recommendation.depthReached).toBe(4);
+    expect(recommendation.diagnostics.tacticalTriggers).toContain("available-speed-control");
+    expect(recommendation.diagnostics.branchModelUsed).toContain("expectedOnly->");
+  });
+
   it("keeps transposition keys and deep-search results stable for equivalent states", () => {
     const attacker = makePokemon("Closer", { baseStats: { atk: 120, spe: 105 } });
     const defender = makePokemon("Wall", { baseStats: { hp: 110, def: 110, spe: 70 } });

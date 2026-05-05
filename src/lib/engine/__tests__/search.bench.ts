@@ -47,7 +47,7 @@ const benchmarkState = createTestBattleState({
 });
 
 describe("engine search benchmark", () => {
-  bench("compare fast, balanced, and deep modes", () => {
+  bench("compare fast, balanced, tactical, and deep modes", () => {
     runEngineBenchmark([{ name: "speed-control-opening", state: benchmarkState }]);
   });
 });

@@ -2655,6 +2655,140 @@ img {
   font-weight: 900;
 }
 
+.move-finder-panel {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.move-finder-toolbar {
+  display: grid;
+  grid-template-columns: auto minmax(220px, 1fr) auto minmax(180px, 0.7fr);
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.move-finder-selected-move,
+.move-finder-suggestions,
+.move-finder-result-card {
+  border: 1px solid rgba(226, 232, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(28, 36, 62, 0.86), rgba(16, 22, 44, 0.72));
+}
+
+.move-finder-selected-move {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.72rem;
+  border-radius: 14px;
+}
+
+.move-finder-selected-move p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.move-finder-selected-move__main,
+.move-finder-result-main,
+.move-finder-result-meta,
+.move-finder-suggestion-chip {
+  display: flex;
+  align-items: center;
+}
+
+.move-finder-selected-move__main {
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.move-finder-selected-move__main strong,
+.move-finder-result-main strong {
+  display: block;
+  color: var(--ink-strong);
+  font-size: 0.94rem;
+  line-height: 1.15;
+}
+
+.move-finder-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+  gap: 0.5rem;
+}
+
+.move-finder-result-card {
+  justify-content: space-between;
+  gap: 0.65rem;
+  min-width: 0;
+  min-height: 4rem;
+  padding: 0.55rem 0.62rem;
+  border-radius: 12px;
+}
+
+.move-finder-result-main {
+  gap: 0.58rem;
+  min-width: 0;
+}
+
+.move-finder-result-main > div {
+  min-width: 0;
+}
+
+.move-finder-result-sprite {
+  width: 2.65rem;
+  height: 2.65rem;
+  object-fit: contain;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 7px 10px rgba(0, 0, 0, 0.18));
+}
+
+.move-finder-result-meta {
+  justify-content: flex-end;
+  gap: 0.38rem;
+  flex-wrap: wrap;
+  color: var(--ink-soft);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-align: right;
+}
+
+.move-finder-result-meta span {
+  padding: 0.18rem 0.42rem;
+  border-radius: 999px;
+  border: 1px solid rgba(226, 232, 255, 0.1);
+  background: rgba(22, 30, 56, 0.58);
+}
+
+.move-finder-result-meta .move-finder-preset-pill {
+  border-color: rgba(102, 211, 145, 0.24);
+  background: rgba(102, 211, 145, 0.12);
+  color: var(--accent-teal);
+}
+
+.move-finder-suggestions {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.68rem;
+  border-radius: 14px;
+}
+
+.move-finder-suggestion-chip {
+  gap: 0.36rem;
+  min-height: 2rem;
+  padding: 0.26rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid rgba(226, 232, 255, 0.1);
+  background: rgba(22, 30, 56, 0.72);
+  color: var(--ink-strong);
+  cursor: pointer;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.move-finder-suggestion-chip:hover {
+  border-color: rgba(226, 232, 255, 0.2);
+}
+
 .speed-tiers-panel {
   display: grid;
   gap: 0.85rem;
@@ -2757,6 +2891,25 @@ img {
 }
 
 @media (max-width: 720px) {
+  .move-finder-toolbar {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .move-finder-result-card,
+  .move-finder-result-meta {
+    align-items: flex-start;
+  }
+
+  .move-finder-result-card {
+    flex-direction: column;
+  }
+
+  .move-finder-result-meta {
+    justify-content: flex-start;
+    text-align: left;
+  }
+
   .speed-tiers-toolbar {
     grid-template-columns: 1fr;
     align-items: stretch;

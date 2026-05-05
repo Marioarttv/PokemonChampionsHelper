@@ -22,6 +22,7 @@ export type MoveEffectKind =
   | "protect"
   | "tailwind"
   | "trickRoom"
+  | "weather"
   | "safeguard"
   | "allySwitch"
   | "encore"
@@ -85,6 +86,7 @@ export type BattleMoveEffectData = {
   disableTurns?: number;
   breaksProtect?: boolean;
   breaksGuards?: boolean;
+  weather?: DamageWeather;
   secondaryChance?: number;
   flinchChance?: number;
   powderMove?: boolean;
@@ -251,7 +253,7 @@ export type SearchPlanScore = {
   dependsOnInferredMoves: boolean;
 };
 
-export type SearchMode = "fast" | "balanced" | "deep";
+export type SearchMode = "fast" | "balanced" | "deep" | "tactical";
 export type ObjectiveMode = "robust" | "likely" | "hybrid";
 
 export type SearchPvStep = {
@@ -399,6 +401,7 @@ export type SearchDiagnostics = {
   completedIterations: number;
   enemyAssumptions: string[];
   enemyBeliefs: EnemyAssumptionSummary[];
+  tacticalTriggers: string[];
   pv: SearchPvStep[];
   unsupportedMechanics: UnsupportedMechanicMarker[];
   mechanicsSupportReport?: MechanicSupportReport;

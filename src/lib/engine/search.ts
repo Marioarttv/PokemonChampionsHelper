@@ -74,30 +74,35 @@ const DEFAULT_STAGE_TOP_K: Record<SearchMode, number> = {
   fast: 0,
   balanced: 0,
   deep: 3,
+  tactical: 2,
 };
 
 const DEFAULT_MAX_DEPTH: Record<SearchMode, number> = {
   fast: 1,
   balanced: 2,
   deep: 3,
+  tactical: 4,
 };
 
 const DEFAULT_MAX_NODES: Record<SearchMode, number> = {
   fast: 350,
   balanced: 1_600,
   deep: 4_500,
+  tactical: 3_200,
 };
 
 const DEFAULT_MAX_MS: Record<SearchMode, number> = {
   fast: 20,
   balanced: 120,
   deep: 140,
+  tactical: 180,
 };
 
 const DEFAULT_MAX_SELECTIVE_EXTENSIONS: Record<SearchMode, number> = {
   fast: 0,
   balanced: 0,
   deep: 2,
+  tactical: 1,
 };
 
 const DEFAULT_HYBRID_LAMBDA = 0.65;
@@ -152,10 +157,121 @@ function getBranchPolicy(branchModel: SearchBranchModel, branchPolicy?: BranchPo
 }
 
 function getDefaultBranchModel(searchMode: SearchMode): SearchBranchModel {
-  if (searchMode === "fast") {
+  if (searchMode === "fast" || searchMode === "tactical") {
     return "expectedPlusRisk";
   }
   return "full";
+}
+
+function addUnique(values: string[], value: string) {
+  if (!values.includes(value)) {
+    values.push(value);
+  }
+}
+
+function getActiveCombatants(state: BattleState) {
+  return state.sides.ally.activeIds
+    .concat(state.sides.enemy.activeIds)
+    .map((combatantId) => (combatantId ? state.combatants[combatantId] : null))
+    .filter((combatant): combatant is NonNullable<typeof combatant> => Boolean(combatant && combatant.currentHp > 0));
+}
+
+function getFutureTurnPredictionTriggers(state: BattleState) {
+  const triggers: string[] = [];
+  const activeCombatants = getActiveCombatants(state);
+
+  for (const combatant of activeCombatants) {
+    const hpPercent = combatant.maxHp > 0 ? (combatant.currentHp / combatant.maxHp) * 100 : 0;
+    if (hpPercent <= 35) {
+      addUnique(triggers, "imminent-ko-race");
+    }
+    if (combatant.itemId === "focussash" && !combatant.itemConsumed) {
+      addUnique(triggers, "focus-sash-cleanup");
+    }
+    if (combatant.encoreTurns > 0 || combatant.disableTurns > 0 || combatant.isProtected) {
+      addUnique(triggers, "lock-trap-pressure");
+    }
+
+    for (const { move, certainty } of getBelievedMoves(combatant, { topN: 6 })) {
+      if (certainty < 0.15) {
+        continue;
+      }
+      if (move.effectKind === "tailwind" || move.effectKind === "trickRoom") {
+        addUnique(triggers, "available-speed-control");
+      } else if (move.effectKind === "weather") {
+        addUnique(triggers, "available-weather-control");
+      } else if (move.effectKind === "redirection" || move.effectKind === "allySwitch") {
+        addUnique(triggers, "available-positioning-trick");
+      } else if (move.effectKind === "guard") {
+        addUnique(triggers, "available-team-guard");
+      } else if (move.effectKind === "fakeOut" || (move.priority > 0 && move.category !== null)) {
+        addUnique(triggers, "priority-tempo");
+      } else if (
+        move.effectKind === "status" ||
+        move.effectKind === "taunt" ||
+        move.effectKind === "encore" ||
+        move.effectKind === "disable"
+      ) {
+        addUnique(triggers, "available-disruption");
+      } else if (move.effectKind === "boost") {
+        addUnique(triggers, "available-setup");
+      }
+    }
+  }
+
+  if (state.sides.ally.tailwindTurns > 0 || state.sides.enemy.tailwindTurns > 0 || state.field.trickRoomTurns > 0) {
+    addUnique(triggers, "active-speed-control");
+  }
+  if (state.sides.ally.tailwindTurns === 1 || state.sides.enemy.tailwindTurns === 1 || state.field.trickRoomTurns === 1) {
+    addUnique(triggers, "speed-control-expiring");
+  }
+  if (state.field.weather !== "none") {
+    addUnique(triggers, "active-weather");
+  }
+  if (
+    (state.sides.ally.redirectionTargetId ?? state.sides.enemy.redirectionTargetId) ||
+    state.sides.ally.allySwitchPair ||
+    state.sides.enemy.allySwitchPair
+  ) {
+    addUnique(triggers, "positioning-trick");
+  }
+
+  const allyAlive = Object.values(state.combatants).filter((combatant) => combatant.side === "ally" && combatant.currentHp > 0).length;
+  const enemyAlive = Object.values(state.combatants).filter((combatant) => combatant.side === "enemy" && combatant.currentHp > 0).length;
+  if (allyAlive + enemyAlive <= 3) {
+    addUnique(triggers, "low-count-endgame");
+  }
+
+  return triggers;
+}
+
+function maybeGateTacticalBudget(
+  state: BattleState,
+  budget: SearchBudgetSnapshot,
+  options?: SearchOptions,
+) {
+  if (budget.searchMode !== "tactical") {
+    return { budget, tacticalTriggers: [] };
+  }
+
+  const tacticalTriggers = getFutureTurnPredictionTriggers(state);
+
+  const explicitDepth = typeof options?.maxDepth === "number" || typeof options?.depth === "number";
+  if (explicitDepth || tacticalTriggers.length > 0) {
+    return { budget, tacticalTriggers };
+  }
+
+  return {
+    budget: {
+      ...budget,
+      maxDepth: Math.min(budget.maxDepth, DEFAULT_MAX_DEPTH.balanced),
+      maxNodes: Math.min(budget.maxNodes, DEFAULT_MAX_NODES.balanced),
+      maxMs: Math.min(budget.maxMs, DEFAULT_MAX_MS.balanced),
+      stageTopK: 0,
+      maxSelectiveExtensions: 0,
+    },
+    tacticalTriggers,
+  };
 }
 
 function normalizeSearchBudget(options?: SearchOptions): SearchBudgetSnapshot {
@@ -186,6 +302,7 @@ function createSearchDiagnostics(
   budget: SearchBudgetSnapshot,
   branchModelUsed: string,
   state: BattleState,
+  tacticalTriggers: string[] = [],
 ): SearchDiagnostics {
   const enemyBeliefs = summarizeEnemyBeliefs(state, { topN: 4 });
   return {
@@ -202,6 +319,7 @@ function createSearchDiagnostics(
     objectiveMode: budget.objectiveMode,
     searchMode: budget.searchMode,
     completedIterations: 0,
+    tacticalTriggers,
     enemyAssumptions: enemyBeliefs.flatMap((combatant) =>
       combatant.moves.map(
         (move) =>
@@ -499,10 +617,7 @@ function getEnemyPlanPolicyWeights(state: BattleState, enemyPlans: JointActionPl
 
 function getSelectiveExtensionReasons(state: BattleState) {
   const reasons: string[] = [];
-  const activeCombatants = state.sides.ally.activeIds
-    .concat(state.sides.enemy.activeIds)
-    .map((combatantId) => (combatantId ? state.combatants[combatantId] : null))
-    .filter((combatant): combatant is NonNullable<typeof combatant> => Boolean(combatant && combatant.currentHp > 0));
+  const activeCombatants = getActiveCombatants(state);
 
   const imminentKoRace = activeCombatants.some((combatant) => {
     const hpPercent = combatant.maxHp > 0 ? (combatant.currentHp / combatant.maxHp) * 100 : 0;
@@ -542,7 +657,11 @@ function selectDeepSearchCandidates(
   plans: JointActionPlan[],
   context: SearchContext,
 ) {
-  if (context.budget.searchMode !== "deep" || context.budget.stageTopK <= 0 || plans.length <= context.budget.stageTopK) {
+  if (
+    (context.budget.searchMode !== "deep" && context.budget.searchMode !== "tactical") ||
+    context.budget.stageTopK <= 0 ||
+    plans.length <= context.budget.stageTopK
+  ) {
     return plans;
   }
 
@@ -1042,14 +1161,18 @@ function finalizeDiagnostics(context: SearchContext, depthReached: number, pv: S
 }
 
 export function recommendBestPlan(state: BattleState, options?: SearchOptions): SearchRecommendation {
-  const budget = normalizeSearchBudget(options);
+  const normalizedBudget = normalizeSearchBudget(options);
+  const { budget, tacticalTriggers } = maybeGateTacticalBudget(state, normalizedBudget, options);
   const branchModel = options?.branchModel ?? getDefaultBranchModel(budget.searchMode);
   const branchPolicy = getBranchPolicy(branchModel, options?.branchPolicy);
   const orderingBranchPolicy = getBranchPolicy("expectedOnly");
+  const usesStagedOrdering =
+    (budget.searchMode === "deep" || budget.searchMode === "tactical") && budget.stageTopK > 0;
   const diagnostics = createSearchDiagnostics(
     budget,
-    budget.searchMode === "deep" && budget.stageTopK > 0 ? `${orderingBranchPolicy.key}->${branchPolicy.key}` : branchPolicy.key,
+    usesStagedOrdering ? `${orderingBranchPolicy.key}->${branchPolicy.key}` : branchPolicy.key,
     state,
+    budget.searchMode === "tactical" ? tacticalTriggers : [],
   );
   const context: SearchContext = {
     maxJointPlansPerSide: options?.maxJointPlansPerSide ?? ENGINE_DEFAULTS.maxJointPlans,

@@ -51,13 +51,14 @@ function getSpeedControlScore(state: BattleState) {
   const allyAverage = allySpeeds.length > 0 ? allySpeeds.reduce((sum, speed) => sum + speed, 0) / allySpeeds.length : 0;
   const enemyAverage = enemySpeeds.length > 0 ? enemySpeeds.reduce((sum, speed) => sum + speed, 0) / enemySpeeds.length : 0;
   const baseDelta = allyAverage - enemyAverage;
+  const turnOrderDelta = state.field.trickRoomTurns > 0 ? -baseDelta : baseDelta;
 
-  let score = baseDelta * 3.5;
+  let score = turnOrderDelta * 5;
   if (state.sides.ally.tailwindTurns > 0) {
-    score += 110 + state.sides.ally.tailwindTurns * 18;
+    score += 180 + state.sides.ally.tailwindTurns * 25;
   }
   if (state.sides.enemy.tailwindTurns > 0) {
-    score -= 110 + state.sides.enemy.tailwindTurns * 18;
+    score -= 180 + state.sides.enemy.tailwindTurns * 25;
   }
   if (state.field.trickRoomTurns > 0) {
     score += baseDelta < 0 ? 85 : -85;

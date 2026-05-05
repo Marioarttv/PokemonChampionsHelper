@@ -1261,6 +1261,186 @@ function getSpeedAdvantageScore(state: BattleState, side: BattleSide, trickRoomA
   return score;
 }
 
+function getSupportMoveThreatScore(move: BattleMoveOption) {
+  switch (move.effectKind) {
+    case "trickRoom":
+      return 170;
+    case "tailwind":
+      return 120;
+    case "weather":
+      return 90;
+    case "redirection":
+      return 72;
+    case "guard":
+      return 64;
+    case "screen":
+      return 58;
+    case "status":
+      if (move.effectData?.statusCondition === "sleep") {
+        return 115;
+      }
+      if (move.effectData?.statusCondition === "paralysis" || (move.effectData?.targetStages?.speed ?? 0) < 0) {
+        return 82;
+      }
+      return 55;
+    case "taunt":
+    case "encore":
+    case "disable":
+      return 72;
+    case "boost":
+      return 62;
+    case "heal":
+      return 46;
+    default:
+      return 0;
+  }
+}
+
+function getCombatantSupportThreatScore(combatant: BattleCombatantState) {
+  return getBelievedMoves(combatant, { topN: 6 }).reduce((sum, entry) => {
+    return sum + getSupportMoveThreatScore(entry.move) * (0.55 + entry.certainty * 0.45) * (0.65 + entry.policyWeight * 0.35);
+  }, 0);
+}
+
+function getWeatherAbilityScore(combatant: BattleCombatantState, weather: BattleState["field"]["weather"]) {
+  const abilityKey = getAbilityKey(combatant);
+
+  if (weather === "rain") {
+    if (abilityKey === "swiftswim") {
+      return 95;
+    }
+    if (abilityKey === "raindish") {
+      return 22;
+    }
+  }
+
+  if (weather === "sun") {
+    if (abilityKey === "chlorophyll") {
+      return 95;
+    }
+    if (abilityKey === "solarpower" || abilityKey === "protosynthesis") {
+      return 44;
+    }
+  }
+
+  if (weather === "sand") {
+    if (abilityKey === "sandrush") {
+      return 95;
+    }
+    if (abilityKey === "sandforce" || abilityKey === "sandveil") {
+      return 34;
+    }
+  }
+
+  if (weather === "snow") {
+    if (abilityKey === "slushrush") {
+      return 95;
+    }
+    if (abilityKey === "icebody" || abilityKey === "snowcloak") {
+      return 30;
+    }
+  }
+
+  return 0;
+}
+
+function getSideWeatherAbilityScore(
+  state: BattleState,
+  side: BattleSide,
+  weather: BattleState["field"]["weather"],
+) {
+  return Object.values(state.combatants)
+    .filter((combatant) => combatant.side === side && combatant.currentHp > 0)
+    .reduce((sum, combatant) => {
+      const activityMultiplier = isActiveCombatant(state, combatant.id) ? 1 : 0.42;
+      return sum + getWeatherAbilityScore(combatant, weather) * activityMultiplier;
+    }, 0);
+}
+
+function getSideDamagePressureUnderWeather(
+  state: BattleState,
+  side: BattleSide,
+  weather: BattleState["field"]["weather"],
+) {
+  const projectedState = cloneBattleState(state);
+  projectedState.field.weather = weather;
+  return getActiveIds(projectedState, side).reduce((sum, actorId) => {
+    const bestDamage = Math.max(
+      0,
+      ...getBelievedDamagingMoves(projectedState, actorId).flatMap((entry) =>
+        getActiveIds(projectedState, getOpponentSide(side)).map(
+          (targetId) =>
+            (getDamagePreview(projectedState, actorId, targetId, entry.move)?.estimate.averagePercent ?? 0) *
+            (0.6 + entry.policyWeight * 0.4),
+        ),
+      ),
+    );
+    return sum + bestDamage;
+  }, 0);
+}
+
+function getWeatherSwingScore(
+  state: BattleState,
+  side: BattleSide,
+  weather: BattleState["field"]["weather"],
+) {
+  const currentWeather = state.field.weather;
+  const ownAbilitySwing =
+    getSideWeatherAbilityScore(state, side, weather) - getSideWeatherAbilityScore(state, side, currentWeather);
+  const enemyAbilitySwing =
+    getSideWeatherAbilityScore(state, getOpponentSide(side), weather) -
+    getSideWeatherAbilityScore(state, getOpponentSide(side), currentWeather);
+  const ownDamageSwing =
+    getSideDamagePressureUnderWeather(state, side, weather) -
+    getSideDamagePressureUnderWeather(state, side, currentWeather);
+  const enemyDamageSwing =
+    getSideDamagePressureUnderWeather(state, getOpponentSide(side), weather) -
+    getSideDamagePressureUnderWeather(state, getOpponentSide(side), currentWeather);
+
+  return ownAbilitySwing - enemyAbilitySwing * 0.9 + ownDamageSwing * 0.85 - enemyDamageSwing * 0.75;
+}
+
+function scoreTailwindAction(state: BattleState, actorId: string) {
+  const actor = state.combatants[actorId];
+  if (!actor) {
+    return 0;
+  }
+
+  if (state.sides[actor.side].tailwindTurns > 0) {
+    return 8;
+  }
+
+  const projectedState = cloneBattleState(state);
+  projectedState.sides[actor.side].tailwindTurns = APPLIED_TAILWIND_TURNS;
+  const trickRoomActive = state.field.trickRoomTurns > 0;
+  const currentSpeed = getSpeedAdvantageScore(state, actor.side, trickRoomActive);
+  const projectedSpeed = getSpeedAdvantageScore(projectedState, actor.side, trickRoomActive);
+  const speedSwing = projectedSpeed - currentSpeed;
+  const immediateThreat = Math.max(0, ...getIncomingThreatsAgainst(state, getActiveIds(state, actor.side)));
+  const trickRoomPenalty = trickRoomActive ? 95 : 0;
+
+  return 48 + speedSwing * 82 + Math.min(55, immediateThreat * 0.18) - trickRoomPenalty;
+}
+
+function scoreWeatherAction(
+  state: BattleState,
+  actorId: string,
+  weather: BattleState["field"]["weather"] | undefined,
+) {
+  const actor = state.combatants[actorId];
+  if (!actor || !weather || weather === "none") {
+    return 0;
+  }
+
+  if (state.field.weather === weather) {
+    return 6;
+  }
+
+  const swing = getWeatherSwingScore(state, actor.side, weather);
+  const opposingWeatherBonus = state.field.weather !== "none" ? 34 : 0;
+  return 42 + swing + opposingWeatherBonus;
+}
+
 function scoreTrickRoomAction(state: BattleState, actorId: string) {
   const actor = state.combatants[actorId];
   if (!actor) {
@@ -1345,7 +1525,11 @@ function scoreRedirectionAction(state: BattleState, actorId: string) {
   const partnerIds = getOtherActiveAllyIds(state, actorId);
   const partnerThreat = Math.max(0, ...getIncomingThreatsAgainst(state, partnerIds));
   const actorThreat = Math.max(0, ...getIncomingThreatsAgainst(state, [actorId]));
-  return partnerThreat * 1.1 - actorThreat * 0.2 + 40;
+  const protectedSetupValue = partnerIds.reduce((sum, partnerId) => {
+    const partner = state.combatants[partnerId];
+    return sum + (partner ? getCombatantSupportThreatScore(partner) : 0);
+  }, 0);
+  return partnerThreat * 1.18 + protectedSetupValue * 0.48 - actorThreat * 0.18 + 42;
 }
 
 function scoreScreenAction(state: BattleState, actorId: string, screen: BattleScreenKind | undefined) {
@@ -1477,7 +1661,7 @@ function scoreTauntAction(state: BattleState, targetId: string | null) {
   }
 
   const supportCount = getBelievedMoves(target, { topN: 6 }).filter(({ move, certainty }) => isNonDamagingMove(move) && certainty >= 0.2).length;
-  return 40 + supportCount * 18;
+  return 28 + supportCount * 14 + getCombatantSupportThreatScore(target) * 0.82;
 }
 
 function scoreStatusAction(state: BattleState, move: BattleMoveOption, targetId: string | null) {
@@ -1602,7 +1786,7 @@ function buildPlannedAction(
       actorLabel,
       action,
       summary: `${actorLabel}: Tailwind`,
-      heuristicScore: state.sides[actor.side].tailwindTurns > 0 ? 10 : 95,
+      heuristicScore: scoreTailwindAction(state, actorId),
     };
   }
 
@@ -1613,6 +1797,16 @@ function buildPlannedAction(
       action,
       summary: `${actorLabel}: Trick Room`,
       heuristicScore: scoreTrickRoomAction(state, actorId),
+    };
+  }
+
+  if (move.effectKind === "weather") {
+    return {
+      actorId,
+      actorLabel,
+      action,
+      summary: `${actorLabel}: ${move.name}`,
+      heuristicScore: scoreWeatherAction(state, actorId, move.effectData?.weather),
     };
   }
 
@@ -1746,7 +1940,12 @@ function buildPlannedAction(
   const koBonus = targetIds.some((targetId) => (getDamagePreview(state, actorId, targetId, move)?.estimate.maxPercent ?? 0) >= 100)
     ? 175
     : 0;
-  const fakeOutBonus = move.effectKind === "fakeOut" ? 90 : 0;
+  const targetCombatant = action.targetId ? state.combatants[action.targetId] : null;
+  const fakeOutDisruptionBonus =
+    move.effectKind === "fakeOut" && targetCombatant && !isFakeOutFlinchPrevented(targetCombatant)
+      ? 72 + getCombatantSupportThreatScore(targetCombatant) * 0.72
+      : 0;
+  const fakeOutBonus = move.effectKind === "fakeOut" ? 70 + fakeOutDisruptionBonus : 0;
   const targetLabel =
     move.targetKind === "allOpponents"
       ? "both foes"
@@ -2647,6 +2846,8 @@ function combineActionSets(state: BattleState, side: BattleSide, actionGroups: P
   }
 
   const plans: JointActionPlan[] = [];
+  const defensiveThreats = getDefensiveThreats(state, side);
+  const incomingDamageBundles = getIncomingDamageBundles(state, side);
 
   const walk = (index: number, current: PlannedAction[]) => {
     if (index === actionGroups.length) {
@@ -2665,8 +2866,6 @@ function combineActionSets(state: BattleState, side: BattleSide, actionGroups: P
         }
       }
       const focusBonus = [...focusMap.values()].reduce((sum, count) => sum + (count >= 2 ? 40 : 0), 0);
-      const defensiveThreats = getDefensiveThreats(state, side);
-      const incomingDamageBundles = getIncomingDamageBundles(state, side);
       const defensiveCoverageScore = getDefensiveCoverageScore(state, current, defensiveThreats);
       const offensiveTempoScore = getOffensiveTempoScore(state, current, defensiveThreats);
       const comboDamagePreventionScore = getBundlePreventionScore(state, current, incomingDamageBundles) * 0.7;
@@ -3572,6 +3771,12 @@ function executeMove(
 
   actor.lastMoveId = move.id;
 
+  if (actor.tauntTurns > 0 && isNonDamagingMove(move)) {
+    actor.protectStreak = 0;
+    events.push({ actorId: actor.id, text: `${actor.pokemon.name} cannot use ${move.name} because it is taunted.` });
+    return;
+  }
+
   if (move.effectKind === "protect") {
     if (!doesProtectSucceed(actor.protectStreak, accuracyMode)) {
       actor.protectStreak = 0;
@@ -3611,6 +3816,17 @@ function executeMove(
       actorId: actor.id,
       text: state.field.trickRoomTurns > 0 ? `${actor.pokemon.name} twists the dimensions.` : `${actor.pokemon.name} ends Trick Room.`,
     });
+    return;
+  }
+
+  if (move.effectKind === "weather") {
+    const weather = move.effectData?.weather;
+    if (!weather || weather === "none") {
+      events.push({ actorId: actor.id, text: `${actor.pokemon.name}'s ${move.name} has no supported weather effect.` });
+      return;
+    }
+    state.field.weather = weather;
+    events.push({ actorId: actor.id, text: `${actor.pokemon.name} changes the weather to ${weather} with ${move.name}.` });
     return;
   }
 

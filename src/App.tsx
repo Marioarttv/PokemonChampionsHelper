@@ -57,6 +57,10 @@ import {
   type MoveRecord,
 } from "./lib/battleData";
 import {
+  loadChampionsLearnsets,
+  type ChampionsLearnsetRecord,
+} from "./lib/championsLearnsets";
+import {
   SPREAD_MOVE_MULTIPLIER,
   calculateRoughDamage,
   getEffectiveDamageBaseStats,
@@ -168,7 +172,7 @@ import {
 import { importShowdownTeamText } from "./lib/showdownTeamImport";
 import BattleArenaPage from "./BattleArenaPage";
 
-type SiteMode = "calculator" | "team" | "battle" | "movesets" | "speed" | "ohko" | "history";
+type SiteMode = "calculator" | "team" | "battle" | "movesets" | "moveFinder" | "speed" | "ohko" | "history";
 type CalculatorMode = "defense" | "attack";
 type MatchHistoryTeamSort = "latest" | "name" | "matches" | "winRate";
 type SpeedTierSort = "boosted" | "neutral" | "base" | "name";
@@ -254,6 +258,11 @@ type SpeedTierRow = {
   baseSpeed: number;
   maxSpeed: number;
   boostedSpeed: number;
+};
+type MoveLearnerRow = {
+  pokemon: PokemonRecord;
+  learnsetMoveCount: number;
+  presetHasMove: boolean;
 };
 type PotentialMegaSlot = {
   slotIndex: number;
@@ -2727,6 +2736,47 @@ function getChampionsSpeedTierEntries(database: PokemonRecord[] | null) {
       isChampionsMegaEntry(pokemon)
     );
   });
+}
+
+function getCurrentRegulationMoveFinderEntries(database: PokemonRecord[] | null) {
+  return (database ?? [])
+    .filter((pokemon) => {
+      const movesetKey = getPokemonMovesetKey(pokemon);
+      const baseSpeciesKey = getPokemonBaseSpeciesKey(pokemon);
+
+      return (
+        (pokemon.forme === null && POKEMON_CHAMPIONS_LEGAL_SPECIES_KEY_SET.has(baseSpeciesKey)) ||
+        isChampionsMegaEntry(pokemon) ||
+        OPPONENT_MOVE_PRESET_KEY_SET.has(movesetKey)
+      );
+    })
+    .sort((left, right) => {
+      const leftOrder = LEGAL_ORDER_BY_KEY.get(getPokemonBaseSpeciesKey(left)) ?? Number.MAX_SAFE_INTEGER;
+      const rightOrder = LEGAL_ORDER_BY_KEY.get(getPokemonBaseSpeciesKey(right)) ?? Number.MAX_SAFE_INTEGER;
+
+      return leftOrder - rightOrder || left.name.localeCompare(right.name);
+    });
+}
+
+function getLearnsetMoveIdsForPokemon(
+  pokemon: PokemonRecord,
+  learnsetBySpeciesId: ReadonlyMap<string, ReadonlySet<string>>,
+) {
+  const moveIds = new Set<string>();
+  const ownLearnset = learnsetBySpeciesId.get(getPokemonMovesetKey(pokemon));
+
+  for (const moveId of ownLearnset ?? []) {
+    moveIds.add(moveId);
+  }
+
+  const baseSpeciesKey = getPokemonBaseSpeciesKey(pokemon);
+  if (baseSpeciesKey !== getPokemonMovesetKey(pokemon)) {
+    for (const moveId of learnsetBySpeciesId.get(baseSpeciesKey) ?? []) {
+      moveIds.add(moveId);
+    }
+  }
+
+  return moveIds;
 }
 
 function buildSpeedTierRow(pokemon: PokemonRecord): SpeedTierRow {
@@ -10455,6 +10505,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       fast: { maxJointPlansPerSide: 5, maxIndividualActionsPerActor: 4 },
       balanced: { maxJointPlansPerSide: 8, maxIndividualActionsPerActor: 5 },
       deep: { maxJointPlansPerSide: 10, maxIndividualActionsPerActor: 6 },
+      tactical: { maxJointPlansPerSide: 9, maxIndividualActionsPerActor: 5 },
     };
     const searchOptions = {
       searchMode: battleEngineSearchMode,
@@ -13648,6 +13699,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                           >
                             <option value="fast">Fast</option>
                             <option value="balanced">Balanced</option>
+                            <option value="tactical">Tactical</option>
                             <option value="deep">Deep</option>
                           </select>
                           <select
@@ -15059,6 +15111,294 @@ function MovesetDatabaseView() {
   );
 }
 
+function MoveFinderView() {
+  const [database, setDatabase] = useState<PokemonRecord[] | null>(null);
+  const [battleData, setBattleData] = useState<{ moves: MoveRecord[] } | null>(null);
+  const [learnsets, setLearnsets] = useState<ChampionsLearnsetRecord[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [battleDataError, setBattleDataError] = useState<string | null>(null);
+  const [moveQuery, setMoveQuery] = useState("");
+  const [pokemonQuery, setPokemonQuery] = useState("");
+
+  useEffect(() => {
+    let active = true;
+
+    Promise.all([loadPokemonDatabase(), loadBattleData(), loadChampionsLearnsets()])
+      .then(([db, data, championsLearnsets]) => {
+        if (active) {
+          setDatabase(db.pokemon);
+          setBattleData({ moves: data.moves });
+          setLearnsets(championsLearnsets.learnsets);
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          const message = error instanceof Error ? error.message : "Failed to load move finder data.";
+          setLoadError(message);
+          setBattleDataError(message);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const moveByKey = useMemo(() => {
+    const map = new Map<string, MoveRecord>();
+
+    for (const move of battleData?.moves ?? []) {
+      map.set(move.id, move);
+      map.set(move.name.toLowerCase(), move);
+    }
+
+    return map;
+  }, [battleData]);
+
+  const learnsetBySpeciesId = useMemo(() => {
+    const map = new Map<string, ReadonlySet<string>>();
+
+    for (const learnset of learnsets ?? []) {
+      map.set(normalizePokemonNameKey(learnset.speciesId), new Set(learnset.moveIds));
+    }
+
+    return map;
+  }, [learnsets]);
+
+  const legalPokemon = useMemo(() => getCurrentRegulationMoveFinderEntries(database), [database]);
+  const selectedMove = useMemo(() => getMoveRecordByName(moveQuery, moveByKey), [moveByKey, moveQuery]);
+  const selectedMoveType = selectedMove ? getTypeFromLabel(selectedMove.type) : null;
+  const normalizedMoveQuery = normalizeTextKey(moveQuery);
+  const moveSuggestions = useMemo(() => {
+    if (!normalizedMoveQuery || selectedMove) {
+      return [];
+    }
+
+    return (battleData?.moves ?? [])
+      .filter((move) => normalizeTextKey(move.name).includes(normalizedMoveQuery))
+      .sort((left, right) => {
+        const leftKey = normalizeTextKey(left.name);
+        const rightKey = normalizeTextKey(right.name);
+        const leftStartsWith = leftKey.startsWith(normalizedMoveQuery);
+        const rightStartsWith = rightKey.startsWith(normalizedMoveQuery);
+
+        if (leftStartsWith !== rightStartsWith) {
+          return leftStartsWith ? -1 : 1;
+        }
+
+        return left.name.localeCompare(right.name);
+      })
+      .slice(0, 8);
+  }, [battleData, normalizedMoveQuery, selectedMove]);
+
+  const learnerRows = useMemo<MoveLearnerRow[]>(() => {
+    if (!selectedMove) {
+      return [];
+    }
+
+    const pokemonFilter = normalizeTextKey(pokemonQuery);
+    const rows: MoveLearnerRow[] = [];
+
+    for (const pokemon of legalPokemon) {
+      const learnsetMoveIds = getLearnsetMoveIdsForPokemon(pokemon, learnsetBySpeciesId);
+
+      if (!learnsetMoveIds.has(selectedMove.id)) {
+        continue;
+      }
+
+      if (
+        pokemonFilter &&
+        !normalizeTextKey(pokemon.name).includes(pokemonFilter) &&
+        !pokemon.types.some((typeLabel) => normalizeTextKey(typeLabel).includes(pokemonFilter))
+      ) {
+        continue;
+      }
+
+      const presetHasMove = getOpponentPresetMoveNames(pokemon).some(
+        (moveName) => normalizeTextKey(moveName) === selectedMove.id,
+      );
+
+      rows.push({
+        pokemon,
+        learnsetMoveCount: learnsetMoveIds.size,
+        presetHasMove,
+      });
+    }
+
+    return rows;
+  }, [learnsetBySpeciesId, legalPokemon, pokemonQuery, selectedMove]);
+
+  return (
+    <>
+      <section className="team-builder-hero">
+        <div>
+          <p className="eyebrow">Move Finder</p>
+          <h2>Find legal Pokémon by learnable move</h2>
+          <p className="selector-note">
+            Search the current {POKEMON_CHAMPIONS_ACTIVE_REGULATION} pool against generated @pkmn/dex learnsets.
+          </p>
+        </div>
+        <div className="team-builder-meta">
+          <span>{selectedMove ? `${learnerRows.length} match${learnerRows.length === 1 ? "" : "es"}` : "No move selected"}</span>
+          <span>{legalPokemon.length} regulation entries</span>
+          <span>{POKEMON_CHAMPIONS_ACTIVE_REGULATION_WINDOW}</span>
+        </div>
+      </section>
+
+      <section className="board-panel move-finder-panel">
+        <div className="move-finder-toolbar">
+          <label className="team-input-label" htmlFor="move-finder-move">
+            Move
+          </label>
+          <input
+            id="move-finder-move"
+            className="team-pokemon-input"
+            list="move-finder-options"
+            placeholder={battleData ? "Tailwind" : "Loading move data..."}
+            value={moveQuery}
+            onChange={(event) => setMoveQuery(event.target.value)}
+            disabled={!battleData || !learnsets}
+          />
+
+          <label className="team-input-label" htmlFor="move-finder-pokemon-filter">
+            Filter
+          </label>
+          <input
+            id="move-finder-pokemon-filter"
+            className="team-pokemon-input"
+            placeholder="Pokémon or type"
+            value={pokemonQuery}
+            onChange={(event) => setPokemonQuery(event.target.value)}
+            disabled={!selectedMove}
+          />
+        </div>
+
+        {loadError || battleDataError ? (
+          <p className="storage-message error">{loadError ?? battleDataError}</p>
+        ) : selectedMove ? (
+          <>
+            <article className="move-finder-selected-move">
+              <div className="move-finder-selected-move__main">
+                {selectedMoveType ? (
+                  <span
+                    className="inline-type-pill"
+                    style={
+                      {
+                        "--type-color": TYPE_META[selectedMoveType].color,
+                        "--type-accent": TYPE_META[selectedMoveType].accent,
+                      } as CSSProperties
+                    }
+                  >
+                    <img src={getTypeIconUrl(selectedMoveType)} alt="" aria-hidden="true" />
+                    {TYPE_META[selectedMoveType].label}
+                  </span>
+                ) : null}
+                <div>
+                  <strong>{selectedMove.name}</strong>
+                  <p>
+                    {selectedMove.category}
+                    {selectedMove.basePower > 0 || isLowKickMove(selectedMove.name)
+                      ? ` · Power ${isLowKickMove(selectedMove.name) ? "Weight" : selectedMove.basePower}`
+                      : ""}
+                    {selectedMove.priority !== 0 ? ` · Priority ${selectedMove.priority}` : ""}
+                  </p>
+                </div>
+              </div>
+              <p>{selectedMove.desc || selectedMove.shortDesc || "No description found."}</p>
+            </article>
+
+            {learnerRows.length > 0 ? (
+              <div className="move-finder-results" role="list" aria-label={`${selectedMove.name} learners`}>
+                {learnerRows.map((row) => (
+                  <article key={`move-finder-${selectedMove.id}-${row.pokemon.id}`} className="move-finder-result-card" role="listitem">
+                    <div className="move-finder-result-main">
+                      <PokemonSprite pokemon={row.pokemon} className="move-finder-result-sprite" />
+                      <div>
+                        <strong>{row.pokemon.name}</strong>
+                        <div className="team-type-list">
+                          {row.pokemon.types.map((typeLabel) => {
+                            const type = getTypeFromLabel(typeLabel);
+
+                            return type ? (
+                              <span
+                                key={`move-finder-${row.pokemon.id}-${type}`}
+                                className="inline-type-pill"
+                                style={
+                                  {
+                                    "--type-color": TYPE_META[type].color,
+                                    "--type-accent": TYPE_META[type].accent,
+                                  } as CSSProperties
+                                }
+                              >
+                                <img src={getTypeIconUrl(type)} alt="" aria-hidden="true" />
+                                {TYPE_META[type].label}
+                              </span>
+                            ) : null;
+                          })}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="move-finder-result-meta">
+                      {row.presetHasMove ? <span className="move-finder-preset-pill">Preset Uses Move</span> : null}
+                      <span>{row.learnsetMoveCount} learnable moves</span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="matchup-empty-board">
+                No current-regulation Pokémon match {selectedMove.name}
+                {pokemonQuery.trim() ? ` with "${pokemonQuery.trim()}"` : ""}.
+              </div>
+            )}
+          </>
+        ) : moveSuggestions.length > 0 ? (
+          <div className="move-finder-suggestions">
+            <div className="coverage-preview-header">
+              <p className="eyebrow">Closest Moves</p>
+              <span>{moveSuggestions.length} shown</span>
+            </div>
+            <div className="coverage-chip-list">
+              {moveSuggestions.map((move) => {
+                const moveType = getTypeFromLabel(move.type);
+
+                return (
+                  <button
+                    key={`move-finder-suggestion-${move.id}`}
+                    type="button"
+                    className="move-finder-suggestion-chip"
+                    onClick={() => setMoveQuery(move.name)}
+                  >
+                    {moveType ? (
+                      <span
+                        className="speed-tier-type-dot"
+                        style={{ "--type-color": TYPE_META[moveType].color } as CSSProperties}
+                        title={TYPE_META[moveType].label}
+                      />
+                    ) : null}
+                    {move.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="matchup-empty-board">
+            {battleData ? "No move selected." : "Loading move finder data..."}
+          </div>
+        )}
+      </section>
+
+      <datalist id="move-finder-options">
+        {(battleData?.moves ?? []).map((move) => (
+          <option key={`move-finder-option-${move.id}`} value={move.name} />
+        ))}
+      </datalist>
+    </>
+  );
+}
+
 function SpeedTiersView() {
   const [database, setDatabase] = useState<PokemonRecord[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -16402,9 +16742,10 @@ const SITE_SECTIONS: Array<{ id: SiteMode; index: string; label: string }> = [
   { id: "team", index: "02", label: "Team Builder" },
   { id: "battle", index: "03", label: "Battle Arena" },
   { id: "movesets", index: "04", label: "Movesets DB" },
-  { id: "speed", index: "05", label: "Speed Tiers" },
-  { id: "ohko", index: "06", label: "OHKO Finder" },
-  { id: "history", index: "07", label: "Match History" },
+  { id: "moveFinder", index: "05", label: "Move Finder" },
+  { id: "speed", index: "06", label: "Speed Tiers" },
+  { id: "ohko", index: "07", label: "OHKO Finder" },
+  { id: "history", index: "08", label: "Match History" },
 ];
 
 function App() {
@@ -16473,6 +16814,8 @@ function App() {
           <BattleArenaPage />
         ) : siteMode === "movesets" ? (
           <MovesetDatabaseView />
+        ) : siteMode === "moveFinder" ? (
+          <MoveFinderView />
         ) : siteMode === "speed" ? (
           <SpeedTiersView />
         ) : siteMode === "ohko" ? (

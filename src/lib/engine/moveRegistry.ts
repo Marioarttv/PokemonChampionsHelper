@@ -58,6 +58,11 @@ export const SPECIAL_MOVE_DEFINITIONS: Record<string, SpecialMoveDefinition> = {
   wideguard: { effectKind: "guard", targetKind: "field", effectData: { guard: "wideGuard" } },
   tailwind: { effectKind: "tailwind", targetKind: "field" },
   trickroom: { effectKind: "trickRoom", targetKind: "field" },
+  raindance: { effectKind: "weather", targetKind: "field", effectData: { weather: "rain" } },
+  sunnyday: { effectKind: "weather", targetKind: "field", effectData: { weather: "sun" } },
+  sandstorm: { effectKind: "weather", targetKind: "field", effectData: { weather: "sand" } },
+  snowscape: { effectKind: "weather", targetKind: "field", effectData: { weather: "snow" } },
+  hail: { effectKind: "weather", targetKind: "field", effectData: { weather: "snow" } },
   safeguard: { effectKind: "safeguard", targetKind: "field", effectData: { safeguardTurns: DEFAULT_SCREEN_TURNS } },
   allyswitch: { effectKind: "allySwitch", targetKind: "self" },
   feint: {
@@ -197,6 +202,12 @@ export function getMoveRoleTags(move: Pick<BattleMoveOption, "name" | "effectKin
     case "trickRoom":
       tags.add("trickRoom");
       tags.add("speedControl");
+      break;
+    case "weather":
+      tags.add("weather");
+      if (move.effectData?.weather) {
+        tags.add(`weather${move.effectData.weather}`);
+      }
       break;
     case "redirection":
       tags.add("redirection");
