@@ -11717,6 +11717,97 @@ textarea::placeholder {
   font-weight: 700;
 }
 
+.bl-engine-counterplay {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.bl-engine-counterline {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.45rem 0.5rem;
+  border-radius: 10px;
+  background: rgba(13, 19, 39, 0.78);
+  border: 1px solid rgba(226, 232, 255, 0.07);
+}
+
+.bl-engine-counterline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.bl-engine-counterline-head div {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+
+.bl-engine-counterline-head strong {
+  color: var(--ink-strong);
+  font-size: 0.7rem;
+}
+
+.bl-engine-counterline-head span {
+  color: var(--ink-soft);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.bl-engine-line-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.35rem;
+}
+
+.bl-engine-line-side {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  padding-left: 0.45rem;
+  border-left: 2px solid rgba(226, 232, 255, 0.11);
+}
+
+.bl-engine-line-side.enemy {
+  border-left-color: rgba(255, 85, 101, 0.38);
+}
+
+.bl-engine-line-side.ally {
+  border-left-color: rgba(74, 222, 128, 0.38);
+}
+
+.bl-engine-line-side > span {
+  color: var(--ink-soft);
+  font-size: 0.58rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.bl-engine-line-side ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.15rem;
+}
+
+.bl-engine-line-side li {
+  color: var(--ink-body);
+  font-size: 0.68rem;
+  line-height: 1.25;
+}
+
+.bl-engine-line-side li strong {
+  color: var(--ink-strong);
+  font-size: 0.68rem;
+  margin-right: 0.25rem;
+}
+
 .bl-engine-alts {
   display: grid;
   gap: 0.3rem;

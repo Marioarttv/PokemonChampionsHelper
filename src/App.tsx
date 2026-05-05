@@ -5630,6 +5630,14 @@ type ChosenAction =
   | { kind: "switch"; switchInId: string }
   | { kind: "pass" };
 
+type BattleEngineEnemyLineOption = {
+  enemyPlan: JointActionPlan;
+  responsePlan: JointActionPlan;
+  score: number;
+  rank: number;
+  labels: string[];
+};
+
 type SimulationRun = {
   startState: BattleState;
   finalState: BattleState;
@@ -5823,6 +5831,10 @@ function buildJointPlanFromUserChoices(
     summary: actions.length > 0 ? actions.map((a) => a.summary).join(" + ") : `${side} pass`,
     heuristicScore: 0,
   };
+}
+
+function getPlannedActionDetail(action: PlannedAction) {
+  return action.summary.replace(`${action.actorLabel}: `, "");
 }
 
 function getMoveOptionFromBattleAction(state: BattleState, action: BattleAction) {
@@ -9495,6 +9507,51 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
 
     return options;
   }, [battleEngineCurrentState, battleEngineRecommendation]);
+  const battleEngineEnemyLineOptions = useMemo<BattleEngineEnemyLineOption[]>(() => {
+    if (!battleEngineRecommendation) {
+      return [];
+    }
+
+    const byEnemySummary = new Map<string, BattleEngineEnemyLineOption>();
+    const addEnemyLine = (
+      scoreEntry: SearchPlanScore,
+      enemyPlan: JointActionPlan | null,
+      label: string,
+      rank: number,
+    ) => {
+      if (!enemyPlan) {
+        return;
+      }
+
+      const key = enemyPlan.summary;
+      const existing = byEnemySummary.get(key);
+      if (!existing || scoreEntry.score > existing.score) {
+        byEnemySummary.set(key, {
+          enemyPlan,
+          responsePlan: scoreEntry.plan,
+          score: scoreEntry.score,
+          rank,
+          labels: existing?.labels.includes(label) ? existing.labels : [...(existing?.labels ?? []), label],
+        });
+        return;
+      }
+
+      if (!existing.labels.includes(label)) {
+        existing.labels.push(label);
+      }
+    };
+
+    battleEngineRecommendation.consideredPlans.forEach((scoreEntry, index) => {
+      addEnemyLine(scoreEntry, scoreEntry.predictedEnemyResponse, "Likely", index);
+      if (scoreEntry.enemyBestResponse?.summary !== scoreEntry.predictedEnemyResponse?.summary) {
+        addEnemyLine(scoreEntry, scoreEntry.enemyBestResponse, "Worst", index);
+      }
+    });
+
+    return [...byEnemySummary.values()]
+      .sort((left, right) => left.rank - right.rank || right.score - left.score)
+      .slice(0, 4);
+  }, [battleEngineRecommendation]);
   const selectedBattleScenario = useMemo(
     () => battleScenarioOptions.find((option) => option.id === selectedBattleScenarioId) ?? battleScenarioOptions[0] ?? null,
     [battleScenarioOptions, selectedBattleScenarioId],
@@ -9937,9 +9994,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     setUserChosenActions((c) => ({ ...c, [combatantId]: action }));
   };
 
-  const applyEngineRecommendationToChosen = () => {
-    if (!battleEngineCurrentState || !battleEngineRecommendation) return;
-    const state = battleEngineCurrentState;
+  const applyJointPlansToChosen = (...plans: Array<JointActionPlan | null>) => {
     const next: Record<string, ChosenAction> = {};
 
     const copyPlan = (plan: JointActionPlan | null) => {
@@ -9951,10 +10006,19 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         else next[p.actorId] = { kind: "pass" };
       }
     };
-    copyPlan(battleEngineRecommendation.bestPlan);
-    copyPlan(battleEngineRecommendation.predictedEnemyResponse);
-    setUserChosenActions((c) => ({ ...c, ...next }));
-    void state; // keep reference, lint
+
+    plans.forEach(copyPlan);
+    if (Object.keys(next).length > 0) {
+      setUserChosenActions((c) => ({ ...c, ...next }));
+    }
+  };
+
+  const applyEngineRecommendationToChosen = () => {
+    if (!battleEngineRecommendation) return;
+    applyJointPlansToChosen(
+      battleEngineRecommendation.bestPlan,
+      battleEngineRecommendation.predictedEnemyResponse,
+    );
   };
 
   useEffect(() => {
@@ -13759,7 +13823,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                                 {battleEngineRecommendation.bestPlan.actions.map((a) => (
                                   <li key={`bl-eng-ally-${a.actorId}`}>
                                     <strong>{a.actorLabel}</strong>{" "}
-                                    {a.summary.replace(`${a.actorLabel}: `, "")}
+                                    {getPlannedActionDetail(a)}
                                   </li>
                                 ))}
                               </ul>
@@ -13775,7 +13839,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                                 {battleEngineRecommendation.predictedEnemyResponse.actions.map((a) => (
                                   <li key={`bl-eng-enemy-${a.actorId}`}>
                                     <strong>{a.actorLabel}</strong>{" "}
-                                    {a.summary.replace(`${a.actorLabel}: `, "")}
+                                    {getPlannedActionDetail(a)}
                                   </li>
                                 ))}
                               </ul>
@@ -13783,6 +13847,56 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                               <p className="bl-engine-muted">No enemy response available.</p>
                             )}
                           </div>
+
+                          {battleEngineEnemyLineOptions.length > 0 ? (
+                            <div className="bl-engine-counterplay">
+                              <span className="bl-engine-alts-label">Enemy options</span>
+                              {battleEngineEnemyLineOptions.map((option, index) => (
+                                <article
+                                  key={`bl-eng-enemy-line-${option.enemyPlan.summary}-${index}`}
+                                  className="bl-engine-counterline"
+                                >
+                                  <div className="bl-engine-counterline-head">
+                                    <div>
+                                      <strong>Line {index + 1}</strong>
+                                      <span>{option.labels.join(" / ")}</span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className="bl-engine-apply"
+                                      onClick={() => applyJointPlansToChosen(option.responsePlan, option.enemyPlan)}
+                                    >
+                                      Use
+                                    </button>
+                                  </div>
+                                  <div className="bl-engine-line-pair">
+                                    <div className="bl-engine-line-side enemy">
+                                      <span>Enemy</span>
+                                      <ul>
+                                        {option.enemyPlan.actions.map((a) => (
+                                          <li key={`bl-eng-line-enemy-${index}-${a.actorId}`}>
+                                            <strong>{a.actorLabel}</strong>{" "}
+                                            {getPlannedActionDetail(a)}
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                    <div className="bl-engine-line-side ally">
+                                      <span>Answer</span>
+                                      <ul>
+                                        {option.responsePlan.actions.map((a) => (
+                                          <li key={`bl-eng-line-ally-${index}-${a.actorId}`}>
+                                            <strong>{a.actorLabel}</strong>{" "}
+                                            {getPlannedActionDetail(a)}
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  </div>
+                                </article>
+                              ))}
+                            </div>
+                          ) : null}
 
                           {battleEngineRecommendation.consideredPlans.length > 1 ? (
                             <div className="bl-engine-alts">
@@ -13794,23 +13908,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                                     key={`bl-eng-alt-${i}`}
                                     type="button"
                                     className="bl-engine-alt"
-                                    onClick={() => {
-                                      // Load this plan's actions as user's chosen
-                                      const next: Record<string, ChosenAction> = {};
-                                      for (const a of scoreEntry.plan.actions) {
-                                        const act = a.action;
-                                        if (act.type === "move")
-                                          next[a.actorId] = {
-                                            kind: "move",
-                                            moveId: act.moveId,
-                                            targetId: act.targetId,
-                                          };
-                                        else if (act.type === "switch")
-                                          next[a.actorId] = { kind: "switch", switchInId: act.switchInId };
-                                        else next[a.actorId] = { kind: "pass" };
-                                      }
-                                      setUserChosenActions((c) => ({ ...c, ...next }));
-                                    }}
+                                    onClick={() => applyJointPlansToChosen(scoreEntry.plan, scoreEntry.predictedEnemyResponse)}
                                     title={scoreEntry.plan.summary}
                                   >
                                     <strong>#{i + 2}</strong>
