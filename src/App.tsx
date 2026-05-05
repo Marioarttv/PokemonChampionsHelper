@@ -5636,6 +5636,11 @@ type BattleEngineEnemyLineOption = {
   score: number;
   rank: number;
   labels: string[];
+  confidence: number;
+  riskLabel: string;
+  riskTone: "safe" | "watch" | "danger";
+  scoreDelta: number;
+  tags: string[];
 };
 
 type SimulationRun = {
@@ -5835,6 +5840,51 @@ function buildJointPlanFromUserChoices(
 
 function getPlannedActionDetail(action: PlannedAction) {
   return action.summary.replace(`${action.actorLabel}: `, "");
+}
+
+function getBattleEngineMechanicTags(...sources: Array<string | null | undefined>) {
+  const text = sources.filter(Boolean).join(" ").toLowerCase();
+  const tags: string[] = [];
+  const add = (tag: string) => {
+    if (!tags.includes(tag)) tags.push(tag);
+  };
+
+  if (text.includes("protect") || text.includes("guard")) add("Protect line");
+  if (text.includes("fake out") || text.includes("sucker") || text.includes("extreme speed") || text.includes("priority")) add("Priority");
+  if (text.includes("tailwind") || text.includes("trick room") || text.includes("speed-control") || text.includes("speed control")) add("Speed control");
+  if (text.includes("trick room")) add("Trick Room");
+  if (text.includes("rain") || text.includes("sun") || text.includes("snow") || text.includes("sand") || text.includes("weather")) add("Weather");
+  if (text.includes("focus sash") || text.includes("sash")) add("Focus Sash");
+  if (text.includes("intimidate")) add("Intimidate");
+  if (text.includes("swords dance") || text.includes("nasty plot") || text.includes("dragon dance") || text.includes("setup")) add("Setup");
+  if (text.includes("taunt") || text.includes("encore") || text.includes("disable") || text.includes("spore") || text.includes("sleep")) add("Disruption");
+  if (text.includes("follow me") || text.includes("rage powder") || text.includes("redirection")) add("Redirection");
+  if (text.includes("ko-race") || text.includes("ko race") || text.includes("close combat") || text.includes("wave crash")) add("KO race");
+
+  return tags.slice(0, 4);
+}
+
+function getBattleEngineLineRisk(scoreDelta: number, labels: string[]) {
+  if (labels.some((label) => label.toLowerCase().includes("worst")) || scoreDelta <= -800) {
+    return { label: "High risk", tone: "danger" as const };
+  }
+  if (scoreDelta <= -250) {
+    return { label: "Watch", tone: "watch" as const };
+  }
+  return { label: "Stable", tone: "safe" as const };
+}
+
+function getBattleEngineLineConfidence(labels: string[], policyWeight: number) {
+  const base = labels.some((label) => label.toLowerCase().includes("likely")) ? 58 : 36;
+  const normalizedPolicyWeight = Math.max(0, Math.min(1, policyWeight));
+  const policyBoost = Math.round(normalizedPolicyWeight * 34);
+  const worstPenalty = labels.some((label) => label.toLowerCase().includes("worst")) ? -8 : 0;
+  return Math.max(18, Math.min(96, base + policyBoost + worstPenalty));
+}
+
+function formatBattleEngineSigned(value: number) {
+  const rounded = Math.round(value);
+  return `${rounded > 0 ? "+" : ""}${rounded}`;
 }
 
 function getMoveOptionFromBattleAction(state: BattleState, action: BattleAction) {
@@ -9518,6 +9568,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       enemyPlan: JointActionPlan | null,
       label: string,
       rank: number,
+      policyWeight: number,
     ) => {
       if (!enemyPlan) {
         return;
@@ -9525,13 +9576,28 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
 
       const key = enemyPlan.summary;
       const existing = byEnemySummary.get(key);
+      const labels = existing?.labels.includes(label) ? existing.labels : [...(existing?.labels ?? []), label];
+      const scoreDelta = scoreEntry.score - battleEngineRecommendation.rootScore;
+      const risk = getBattleEngineLineRisk(scoreDelta, labels);
+      const tags = getBattleEngineMechanicTags(
+        enemyPlan.summary,
+        scoreEntry.plan.summary,
+        ...battleEngineRecommendation.diagnostics.tacticalTriggers,
+      );
+      const confidence = getBattleEngineLineConfidence(labels, policyWeight);
+
       if (!existing || scoreEntry.score > existing.score) {
         byEnemySummary.set(key, {
           enemyPlan,
           responsePlan: scoreEntry.plan,
           score: scoreEntry.score,
           rank,
-          labels: existing?.labels.includes(label) ? existing.labels : [...(existing?.labels ?? []), label],
+          labels,
+          confidence: Math.max(confidence, existing?.confidence ?? 0),
+          riskLabel: risk.label,
+          riskTone: risk.tone,
+          scoreDelta,
+          tags: [...new Set([...(existing?.tags ?? []), ...tags])].slice(0, 4),
         });
         return;
       }
@@ -9539,12 +9605,17 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       if (!existing.labels.includes(label)) {
         existing.labels.push(label);
       }
+      existing.confidence = Math.max(existing.confidence, confidence);
+      existing.tags = [...new Set([...existing.tags, ...tags])].slice(0, 4);
+      const updatedRisk = getBattleEngineLineRisk(existing.scoreDelta, existing.labels);
+      existing.riskLabel = updatedRisk.label;
+      existing.riskTone = updatedRisk.tone;
     };
 
     battleEngineRecommendation.consideredPlans.forEach((scoreEntry, index) => {
-      addEnemyLine(scoreEntry, scoreEntry.predictedEnemyResponse, "Likely", index);
+      addEnemyLine(scoreEntry, scoreEntry.predictedEnemyResponse, "Likely", index, scoreEntry.enemyPolicyWeight);
       if (scoreEntry.enemyBestResponse?.summary !== scoreEntry.predictedEnemyResponse?.summary) {
-        addEnemyLine(scoreEntry, scoreEntry.enemyBestResponse, "Worst", index);
+        addEnemyLine(scoreEntry, scoreEntry.enemyBestResponse, "Worst case", index, 0.35);
       }
     });
 
@@ -13743,17 +13814,30 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
 
                     <aside className="bl-engine">
                       <div className="bl-engine-head">
-                        <div>
-                          <p className="eyebrow">Battle Engine</p>
-                          <span className="bl-engine-status">
-                            {battleEngineSearching
-                              ? "Searching..."
-                              : battleEngineRecommendation
-                                ? battleEngineIsStale
-                                  ? "Stale · rerun"
-                                  : `Depth ${battleEngineRecommendation.depthReached}`
-                                : "Not yet run"}
-                          </span>
+                        <div className="bl-engine-title-row">
+                          <div>
+                            <p className="eyebrow">Battle Engine</p>
+                            <div className="bl-engine-title-line">
+                              <strong>Turn planner</strong>
+                              <span className={`bl-engine-status ${battleEngineIsStale ? "stale" : ""}`}>
+                                {battleEngineSearching
+                                  ? "Searching"
+                                  : battleEngineRecommendation
+                                    ? battleEngineIsStale
+                                      ? "Stale"
+                                      : `Depth ${battleEngineRecommendation.depthReached}`
+                                    : "Ready"}
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="primary-button bl-engine-run"
+                            onClick={runBattleEngineAnalysis}
+                            disabled={!canRunBattleEngine || battleEngineSearching}
+                          >
+                            {battleEngineSearching ? "..." : battleEngineRecommendation ? "Rerun" : "Run"}
+                          </button>
                         </div>
                         <div className="bl-engine-controls">
                           <select
@@ -13775,14 +13859,11 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                             <option value="likely">Likely</option>
                             <option value="hybrid">Hybrid</option>
                           </select>
-                          <button
-                            type="button"
-                            className="primary-button bl-engine-run"
-                            onClick={runBattleEngineAnalysis}
-                            disabled={!canRunBattleEngine || battleEngineSearching}
-                          >
-                            {battleEngineSearching ? "..." : "Run"}
-                          </button>
+                          <span className="bl-engine-budget">
+                            {battleEngineRecommendation
+                              ? `${Math.round(battleEngineRecommendation.diagnostics.elapsedMs)}ms`
+                              : "No run"}
+                          </span>
                         </div>
                       </div>
 
@@ -13792,24 +13873,46 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
 
                       {battleEngineRecommendation ? (
                         <>
-                          <div className="bl-engine-scores">
-                            <span className="bl-score-pill primary">
-                              Score {Math.round(battleEngineRecommendation.rootScore)}
-                            </span>
-                            <span className="bl-score-pill">
-                              Rob {Math.round(battleEngineRecommendation.robustScore)}
-                            </span>
-                            <span className="bl-score-pill">
-                              Lik {Math.round(battleEngineRecommendation.likelyScore)}
-                            </span>
-                            <span className="bl-score-pill">
-                              {Math.round(battleEngineRecommendation.diagnostics.elapsedMs)}ms
-                            </span>
+                          <div className="bl-engine-score-grid">
+                            <div className="bl-engine-score-cell primary">
+                              <span>Score</span>
+                              <strong>{Math.round(battleEngineRecommendation.rootScore)}</strong>
+                            </div>
+                            <div className="bl-engine-score-cell">
+                              <span>Robust</span>
+                              <strong>{Math.round(battleEngineRecommendation.robustScore)}</strong>
+                            </div>
+                            <div className="bl-engine-score-cell">
+                              <span>Likely</span>
+                              <strong>{Math.round(battleEngineRecommendation.likelyScore)}</strong>
+                            </div>
+                            <div className="bl-engine-score-cell">
+                              <span>Nodes</span>
+                              <strong>{battleEngineRecommendation.diagnostics.searchNodes}</strong>
+                            </div>
                           </div>
 
-                          <div className="bl-engine-card ally">
-                            <div className="bl-engine-card-top">
-                              <strong>Best ally line</strong>
+                          <div className="bl-engine-mechanic-strip">
+                            {getBattleEngineMechanicTags(
+                              battleEngineRecommendation.bestPlan?.summary,
+                              battleEngineRecommendation.predictedEnemyResponse?.summary,
+                              ...battleEngineRecommendation.diagnostics.tacticalTriggers,
+                            ).map((tag) => (
+                              <span key={`bl-engine-mechanic-${tag}`}>{tag}</span>
+                            ))}
+                            {battleEngineRecommendation.budget.searchMode === "tactical" ? (
+                              <span>Tactical lookahead</span>
+                            ) : null}
+                          </div>
+
+                          <section className="bl-engine-primary-line">
+                            <div className="bl-engine-primary-head">
+                              <div>
+                                <span>Recommended line</span>
+                                <strong>
+                                  {battleEngineRecommendation.bestPlan?.summary ?? "No legal ally plan"}
+                                </strong>
+                              </div>
                               <button
                                 type="button"
                                 className="bl-engine-apply"
@@ -13818,39 +13921,46 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                                 Use
                               </button>
                             </div>
-                            {battleEngineRecommendation.bestPlan ? (
-                              <ul>
-                                {battleEngineRecommendation.bestPlan.actions.map((a) => (
-                                  <li key={`bl-eng-ally-${a.actorId}`}>
-                                    <strong>{a.actorLabel}</strong>{" "}
-                                    {getPlannedActionDetail(a)}
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : (
-                              <p className="bl-engine-muted">No legal ally plan.</p>
-                            )}
-                          </div>
-
-                          <div className="bl-engine-card enemy">
-                            <strong>Predicted enemy reply</strong>
-                            {battleEngineRecommendation.predictedEnemyResponse ? (
-                              <ul>
-                                {battleEngineRecommendation.predictedEnemyResponse.actions.map((a) => (
-                                  <li key={`bl-eng-enemy-${a.actorId}`}>
-                                    <strong>{a.actorLabel}</strong>{" "}
-                                    {getPlannedActionDetail(a)}
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : (
-                              <p className="bl-engine-muted">No enemy response available.</p>
-                            )}
-                          </div>
+                            <div className="bl-engine-primary-grid">
+                              <div className="bl-engine-plan-block ally">
+                                <span>Our plan</span>
+                                {battleEngineRecommendation.bestPlan ? (
+                                  <ul>
+                                    {battleEngineRecommendation.bestPlan.actions.map((a) => (
+                                      <li key={`bl-eng-ally-${a.actorId}`}>
+                                        <strong>{a.actorLabel}</strong>{" "}
+                                        {getPlannedActionDetail(a)}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  <p className="bl-engine-muted">No legal ally plan.</p>
+                                )}
+                              </div>
+                              <div className="bl-engine-plan-block enemy">
+                                <span>Expected reply</span>
+                                {battleEngineRecommendation.predictedEnemyResponse ? (
+                                  <ul>
+                                    {battleEngineRecommendation.predictedEnemyResponse.actions.map((a) => (
+                                      <li key={`bl-eng-enemy-${a.actorId}`}>
+                                        <strong>{a.actorLabel}</strong>{" "}
+                                        {getPlannedActionDetail(a)}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  <p className="bl-engine-muted">No enemy response available.</p>
+                                )}
+                              </div>
+                            </div>
+                          </section>
 
                           {battleEngineEnemyLineOptions.length > 0 ? (
                             <div className="bl-engine-counterplay">
-                              <span className="bl-engine-alts-label">Enemy options</span>
+                              <div className="bl-engine-section-head">
+                                <span>Enemy options</span>
+                                <small>{battleEngineEnemyLineOptions.length} lines</small>
+                              </div>
                               {battleEngineEnemyLineOptions.map((option, index) => (
                                 <article
                                   key={`bl-eng-enemy-line-${option.enemyPlan.summary}-${index}`}
@@ -13859,7 +13969,9 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                                   <div className="bl-engine-counterline-head">
                                     <div>
                                       <strong>Line {index + 1}</strong>
-                                      <span>{option.labels.join(" / ")}</span>
+                                      <span className={`bl-engine-risk ${option.riskTone}`}>
+                                        {option.riskLabel}
+                                      </span>
                                     </div>
                                     <button
                                       type="button"
@@ -13869,6 +13981,27 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                                       Use
                                     </button>
                                   </div>
+                                  <div className="bl-engine-line-meta">
+                                    <div className="bl-engine-line-labels">
+                                      {option.labels.map((label) => (
+                                        <span key={`bl-engine-line-label-${index}-${label}`}>{label}</span>
+                                      ))}
+                                    </div>
+                                    <div className="bl-engine-confidence">
+                                      <span>Conf {option.confidence}%</span>
+                                      <i>
+                                        <b style={{ width: `${option.confidence}%` }} />
+                                      </i>
+                                    </div>
+                                    <em>{formatBattleEngineSigned(option.scoreDelta)}</em>
+                                  </div>
+                                  {option.tags.length > 0 ? (
+                                    <div className="bl-engine-tags">
+                                      {option.tags.map((tag) => (
+                                        <span key={`bl-engine-line-tag-${index}-${tag}`}>{tag}</span>
+                                      ))}
+                                    </div>
+                                  ) : null}
                                   <div className="bl-engine-line-pair">
                                     <div className="bl-engine-line-side enemy">
                                       <span>Enemy</span>
@@ -13898,9 +14031,27 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                             </div>
                           ) : null}
 
+                          {battleEngineRecommendation.pv.length > 0 ? (
+                            <div className="bl-engine-future">
+                              <div className="bl-engine-section-head">
+                                <span>Future preview</span>
+                                <small>Primary line</small>
+                              </div>
+                              <div className="bl-engine-timeline">
+                                {battleEngineRecommendation.pv.slice(0, 2).map((step, index) => (
+                                  <div key={`bl-engine-pv-${index}`} className="bl-engine-pv-step">
+                                    <span>{index === 0 ? `Turn ${step.turn}` : `Turn ${step.turn} next`}</span>
+                                    <strong>{step.allyPlan?.summary ?? "Our line pending"}</strong>
+                                    <small>{step.enemyPlan?.summary ?? "Enemy line pending"}</small>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+
                           {battleEngineRecommendation.consideredPlans.length > 1 ? (
                             <div className="bl-engine-alts">
-                              <span className="bl-engine-alts-label">Watch out for:</span>
+                              <span className="bl-engine-alts-label">Other ally lines</span>
                               {battleEngineRecommendation.consideredPlans
                                 .slice(1, 4)
                                 .map((scoreEntry: SearchPlanScore, i) => (
