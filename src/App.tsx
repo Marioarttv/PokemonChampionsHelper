@@ -170,12 +170,19 @@ import {
   type PersistedSpeciesMoveset,
 } from "./lib/speciesMovesets";
 import { importShowdownTeamText } from "./lib/showdownTeamImport";
+import {
+  showdownSnapshotToBattleInput,
+  type ShowdownBridgeImportResult,
+  type ShowdownBridgeSnapshot,
+} from "./lib/showdownBridge";
+import { exportShowdownTeamText } from "./lib/showdownTeamExport";
 import BattleArenaPage from "./BattleArenaPage";
 
 type SiteMode = "calculator" | "team" | "battle" | "movesets" | "moveFinder" | "speed" | "ohko" | "history";
 type CalculatorMode = "defense" | "attack";
 type MatchHistoryTeamSort = "latest" | "name" | "matches" | "winRate";
 type SpeedTierSort = "boosted" | "neutral" | "base" | "name";
+type ShowdownBridgeStatus = "idle" | "ready" | "installed" | "waiting" | "error";
 
 type TypePoolProps = {
   selectedTypes: PokemonType[];
@@ -195,13 +202,22 @@ type MatchupGroupProps = {
 type TeamSlotState = {
   query: string;
   pokemonId: string | null;
+  activeFormPokemonId: string | null;
   itemName: string | null;
   statSpread: ChampionsStatSpread | null;
   knownMoves: PersistedKnownMove[];
   savedAttacks: PersistedSavedAttack[];
 };
+type TeamFormOption = {
+  pokemon: PokemonRecord;
+  activeFormPokemonId: string | null;
+  label: string;
+  isBase: boolean;
+};
 type LoadedTeamSlot = TeamSlotState & {
   pokemon: PokemonRecord | null;
+  basePokemon: PokemonRecord | null;
+  formOptions: TeamFormOption[];
   abilityName: string | null;
   defaultStatSpread: ChampionsStatSpread | null;
   resolvedStatSpread: ChampionsStatSpread | null;
@@ -210,7 +226,6 @@ type LoadedTeamSlot = TeamSlotState & {
 type TeamMatrixMode = "defense" | "offense";
 type DamageCalcMode = "attack" | "defend";
 type TeamBuilderFormat = "all" | "regulationMA";
-type MegaSelectionMode = "auto" | "manual";
 type LeadSummary = {
   slotIndex: number;
   pokemon: PokemonRecord;
@@ -263,11 +278,6 @@ type MoveLearnerRow = {
   pokemon: PokemonRecord;
   learnsetMoveCount: number;
   presetHasMove: boolean;
-};
-type PotentialMegaSlot = {
-  slotIndex: number;
-  megaPokemon: PokemonRecord;
-  basePokemon: PokemonRecord;
 };
 type OhkoSpeedFilter = "any" | "outspeeds" | "notSlower" | "slowerOrTie";
 type OhkoSurvivalFilter = "any" | "survivesBestHit";
@@ -371,6 +381,7 @@ function createEmptyTeamSlot(): TeamSlotState {
   return {
     query: "",
     pokemonId: null,
+    activeFormPokemonId: null,
     itemName: null,
     statSpread: null,
     knownMoves: [],
@@ -737,17 +748,115 @@ function isChampionsMegaEntry(pokemon: Pick<PokemonRecord, "baseSpecies" | "name
   );
 }
 
-function getEffectivePokemonForMegaSelection(
-  slotIndex: number,
+function getBasePokemonForBattleForm(
   pokemon: PokemonRecord,
-  activeMegaSlotIndex: number | null,
   basePokemonBySpeciesKey: ReadonlyMap<string, PokemonRecord>,
 ) {
-  if (!isChampionsMegaEntry(pokemon) || slotIndex === activeMegaSlotIndex) {
+  if (!isChampionsMegaEntry(pokemon)) {
     return pokemon;
   }
 
   return basePokemonBySpeciesKey.get(getPokemonBaseFormKey(pokemon)) ?? pokemon;
+}
+
+function isCompatibleBattleForm(basePokemon: PokemonRecord, formPokemon: PokemonRecord) {
+  return isChampionsMegaEntry(formPokemon) && getPokemonBaseFormKey(basePokemon) === getPokemonBaseFormKey(formPokemon);
+}
+
+function getBattleFormLabel(pokemon: PokemonRecord) {
+  if (!isChampionsMegaEntry(pokemon)) {
+    return "Normal";
+  }
+
+  if (pokemon.forme === "Mega-X") {
+    return "Mega X";
+  }
+
+  if (pokemon.forme === "Mega-Y") {
+    return "Mega Y";
+  }
+
+  if (pokemon.forme === "Primal") {
+    return "Primal";
+  }
+
+  return pokemon.forme?.replace(/-/g, " ") ?? pokemon.name;
+}
+
+function getTeamFormOptions(
+  basePokemon: PokemonRecord | null,
+  megaFormsByBaseSpeciesKey: ReadonlyMap<string, PokemonRecord[]>,
+): TeamFormOption[] {
+  if (!basePokemon) {
+    return [];
+  }
+
+  const forms = megaFormsByBaseSpeciesKey.get(getPokemonBaseFormKey(basePokemon)) ?? [];
+  return [
+    {
+      pokemon: basePokemon,
+      activeFormPokemonId: null,
+      label: "Normal",
+      isBase: true,
+    },
+    ...forms.map((pokemon) => ({
+      pokemon,
+      activeFormPokemonId: pokemon.id,
+      label: getBattleFormLabel(pokemon),
+      isBase: false,
+    })),
+  ];
+}
+
+function inferMegaEvolutionItemName(
+  megaPokemon: PokemonRecord | null | undefined,
+  itemOptions: readonly ItemRecord[] = [],
+) {
+  if (!megaPokemon || !isChampionsMegaEntry(megaPokemon)) {
+    return null;
+  }
+
+  const baseSpecies = megaPokemon.baseSpecies || megaPokemon.name;
+  const baseSpeciesKey = normalizePokemonNameKey(baseSpecies);
+
+  if (megaPokemon.forme === "Primal") {
+    if (baseSpeciesKey === "groudon") {
+      return "Red Orb";
+    }
+    if (baseSpeciesKey === "kyogre") {
+      return "Blue Orb";
+    }
+  }
+
+  const formSuffix =
+    megaPokemon.forme === "Mega-X"
+      ? "x"
+      : megaPokemon.forme === "Mega-Y"
+        ? "y"
+        : null;
+  const candidateItems = itemOptions.filter((item) => {
+    const itemKey = normalizePokemonNameKey(item.name);
+    const itemTextKey = normalizePokemonNameKey(`${item.shortDesc} ${item.desc}`);
+    return (
+      itemKey.includes(baseSpeciesKey) ||
+      itemTextKey.includes(`heldbya${baseSpeciesKey}`) ||
+      itemTextKey.includes(`heldbyan${baseSpeciesKey}`)
+    );
+  });
+  const matchedItem =
+    (formSuffix
+      ? candidateItems.find((item) => normalizePokemonNameKey(item.name).endsWith(formSuffix))
+      : candidateItems.find((item) => !/[xy]$/.test(normalizePokemonNameKey(item.name)))) ??
+    candidateItems[0] ??
+    null;
+
+  if (matchedItem) {
+    return matchedItem.name;
+  }
+
+  const spacedSuffix =
+    megaPokemon.forme === "Mega-X" ? " X" : megaPokemon.forme === "Mega-Y" ? " Y" : "";
+  return `${baseSpecies}ite${spacedSuffix}`;
 }
 
 function getPokemonPrimaryAbilityName(pokemon: PokemonRecord | null | undefined) {
@@ -2597,47 +2706,6 @@ function getStoredOrPresetSavedAttacks(
     sanitizeSavedAttacks,
     sanitizeKnownMovesToSavedAttacks,
   });
-}
-
-function resolveEffectiveTeamSlotForMegaSelection(
-  slot: LoadedTeamSlot,
-  slotIndex: number,
-  activeMegaSlotIndex: number | null,
-  basePokemonBySpeciesKey: ReadonlyMap<string, PokemonRecord>,
-  speciesMovesetByKey: ReadonlyMap<string, PersistedSpeciesMoveset>,
-  moveByKey: ReadonlyMap<string, MoveRecord>,
-): LoadedTeamSlot {
-  if (!slot.pokemon) {
-    return slot;
-  }
-
-  const effectivePokemon = getEffectivePokemonForMegaSelection(
-    slotIndex,
-    slot.pokemon,
-    activeMegaSlotIndex,
-    basePokemonBySpeciesKey,
-  );
-
-  if (effectivePokemon.id === slot.pokemon.id) {
-    return slot;
-  }
-
-  const resolvedMoveset = getStoredOrPresetSavedAttacks(
-    effectivePokemon,
-    speciesMovesetByKey,
-    moveByKey,
-    MAX_SPECIES_MOVESET_SIZE,
-  );
-  const defaultStatSpread = resolvedMoveset.statSpread ?? getDefaultChampionsStatSpreadForPokemon(effectivePokemon);
-  const resolvedStatSpread = normalizeChampionsStatSpread(slot.statSpread ?? undefined, defaultStatSpread);
-
-  return {
-    ...slot,
-    pokemon: effectivePokemon,
-    abilityName: resolvedMoveset.abilityName ?? null,
-    defaultStatSpread,
-    resolvedStatSpread,
-  };
 }
 
 function buildPreviewBattleEngineAllyMembersFromTeam(
@@ -4658,6 +4726,7 @@ function normalizeTeamSlots(
     return {
       query: slot.query ?? "",
       pokemonId: slot.pokemonId ?? null,
+      activeFormPokemonId: slot.activeFormPokemonId ?? null,
       itemName: getResolvedFieldValue(slot.itemName),
       statSpread: slot.statSpread ? normalizeChampionsStatSpread(slot.statSpread) : null,
       knownMoves,
@@ -4898,6 +4967,7 @@ type TeamSlotCardProps = {
   onClear: (slotIndex: number) => void;
   onApplySlotMoveset: (slotIndex: number, config: { knownMoves: PersistedKnownMove[]; itemName: string | null }) => void;
   onApplySlotStatSpread: (slotIndex: number, statSpread: ChampionsStatSpread | null) => void;
+  onBattleFormChange: (slotIndex: number, activeFormPokemonId: string | null) => void;
 };
 
 function TeamSlotCard({
@@ -4912,6 +4982,7 @@ function TeamSlotCard({
   onClear,
   onApplySlotMoveset,
   onApplySlotStatSpread,
+  onBattleFormChange,
 }: TeamSlotCardProps) {
   const [isEditingAttacks, setIsEditingAttacks] = useState(false);
   const [isEditingStatSpread, setIsEditingStatSpread] = useState(false);
@@ -4924,11 +4995,11 @@ function TeamSlotCard({
     setDraftKnownMoves(slot.knownMoves);
     setDraftItemName(slot.itemName ?? "");
     setDraftStatSpread(slot.resolvedStatSpread);
-  }, [slot.itemName, slot.knownMoves, slot.pokemonId, slot.resolvedStatSpread]);
+  }, [slot.activeFormPokemonId, slot.itemName, slot.knownMoves, slot.pokemonId, slot.resolvedStatSpread]);
 
   useEffect(() => {
     setShowStatsDetails(false);
-  }, [slot.pokemonId]);
+  }, [slot.activeFormPokemonId, slot.pokemonId]);
 
   const pokemon = slot.pokemon;
   const coveredTypes = useMemo(
@@ -5176,6 +5247,33 @@ function TeamSlotCard({
             ) : null}
           </div>
 
+          {slot.formOptions.length > 1 ? (
+            <section className="team-form-switcher" aria-label={`${slot.basePokemon?.name ?? pokemon.name} battle forms`}>
+              <div className="team-form-switcher__head">
+                <p className="eyebrow">Battle Form</p>
+                <span>{slot.basePokemon ? `Base: ${slot.basePokemon.name}` : pokemon.name}</span>
+              </div>
+              <div className="team-form-switcher__options">
+                {slot.formOptions.map((option) => {
+                  const isSelected = (slot.activeFormPokemonId ?? null) === option.activeFormPokemonId;
+                  return (
+                    <button
+                      key={`${slotIndex}-${option.pokemon.id}`}
+                      type="button"
+                      className={`team-form-option${isSelected ? " is-selected" : ""}`}
+                      onClick={() => onBattleFormChange(slotIndex, option.activeFormPokemonId)}
+                      aria-pressed={isSelected}
+                      title={`Use ${option.pokemon.name} as the current battle form`}
+                    >
+                      <PokemonSprite pokemon={option.pokemon} className="team-form-option__sprite" />
+                      <span>{option.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
+
           <div className="coverage-preview">
             <div className="coverage-preview-header">
               <p className="eyebrow">Weak To</p>
@@ -5347,14 +5445,14 @@ function TeamSlotCard({
 
             <div className="saved-attack-list">
               {slot.knownMoves.length > 0 ? (
-                slot.knownMoves.map((move) => {
+                slot.knownMoves.map((move, moveIndex) => {
                   const category = getKnownMoveCategory(move, pokemon);
                   const basePower = getKnownMoveBasePower(move);
                   const moveType = getKnownMoveType(move);
 
                   return (
                     <article
-                      key={move.id}
+                      key={`${move.id}-${getKnownMoveName(move)}-${moveIndex}`}
                       className="saved-attack-chip"
                       style={moveType
                         ? (
@@ -5442,7 +5540,7 @@ function TeamSlotCard({
                       const isWeightBasedPowerMove = isLowKickMove(getKnownMoveName(move));
 
                       return (
-                      <article key={move.id} className="saved-attack-editor-card">
+                        <article key={`${move.id}-${getKnownMoveName(move)}-${moveIndex}`} className="saved-attack-editor-card">
                         <div className="saved-attack-editor-header">
                           {moveType ? (
                             <span
@@ -6525,6 +6623,8 @@ type BattleLabSlotProps = {
   onEditPatch: (patch: Partial<BattleSimulatorMemberState>) => void;
   simulatorPatch: BattleSimulatorMemberState | null;
   motion?: BattleLabSlotMotion | null;
+  formOptions?: TeamFormOption[];
+  onBattleFormChange?: (activeFormPokemonId: string | null) => void;
 };
 
 function BattleLabSlot({
@@ -6545,6 +6645,8 @@ function BattleLabSlot({
   onEditPatch,
   simulatorPatch,
   motion = null,
+  formOptions = [],
+  onBattleFormChange,
 }: BattleLabSlotProps) {
   if (!combatant) {
     return (
@@ -6738,6 +6840,29 @@ function BattleLabSlot({
                   </button>
                 </div>
                 <div className={`bl-slot-editor ${side}`}>
+                  {formOptions.length > 1 && onBattleFormChange ? (
+                    <div className="bl-slot-form-switcher" aria-label={`${combatant.pokemon.name} battle form`}>
+                      <span>Battle Form</span>
+                      <div className="bl-slot-form-switcher__options">
+                        {formOptions.map((option) => {
+                          const isSelected = option.pokemon.id === combatant.pokemon.id;
+                          return (
+                            <button
+                              key={`${combatant.id}-${option.pokemon.id}`}
+                              type="button"
+                              className={isSelected ? "is-selected" : ""}
+                              onClick={() => onBattleFormChange(option.activeFormPokemonId)}
+                              aria-pressed={isSelected}
+                              title={`Use ${option.pokemon.name}`}
+                            >
+                              <PokemonSprite pokemon={option.pokemon} className="bl-slot-form-switcher__sprite" />
+                              <span>{option.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
                   <label>
                     <span>HP %</span>
                     <input
@@ -7466,8 +7591,6 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const [analyzedOpponentEntries, setAnalyzedOpponentEntries] = useState<LoadedOpponentEntry[]>([]);
   const [bringSelectionMode, setBringSelectionMode] = useState<BringSelectionMode>("auto");
   const [manualBringSlotIndices, setManualBringSlotIndices] = useState<number[]>([]);
-  const [megaSelectionMode, setMegaSelectionMode] = useState<MegaSelectionMode>("auto");
-  const [manualMegaSlotIndex, setManualMegaSlotIndex] = useState<number | null>(null);
   const [knownEnemyBringSlotIndices, setKnownEnemyBringSlotIndices] = useState<number[]>([]);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [database, setDatabase] = useState<PokemonRecord[] | null>(null);
@@ -7493,6 +7616,9 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const [matchEnemyLeadSlotIndices, setMatchEnemyLeadSlotIndices] = useState<number[]>([]);
   const [showdownImportText, setShowdownImportText] = useState("");
   const [showdownImportOpen, setShowdownImportOpen] = useState(false);
+  const [showdownExportText, setShowdownExportText] = useState("");
+  const [showdownExportWarnings, setShowdownExportWarnings] = useState<string[]>([]);
+  const [showdownExportOpen, setShowdownExportOpen] = useState(false);
   const [activeSavedTeamId, setActiveSavedTeamId] = useState<string | null>(null);
   const [teamBuilderFormat, setTeamBuilderFormat] = useState<TeamBuilderFormat>("regulationMA");
   const [quickPokemonQuery, setQuickPokemonQuery] = useState("");
@@ -7538,6 +7664,9 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const [battleEngineError, setBattleEngineError] = useState<string | null>(null);
   const [battleEngineAnalysisSignature, setBattleEngineAnalysisSignature] = useState("");
   const [selectedBattleScenarioId, setSelectedBattleScenarioId] = useState<string>("current-board");
+  const [showdownBridgeSnapshot, setShowdownBridgeSnapshot] = useState<ShowdownBridgeSnapshot | null>(null);
+  const [showdownBridgeStatus, setShowdownBridgeStatus] = useState<ShowdownBridgeStatus>("idle");
+  const [showdownBridgeMessage, setShowdownBridgeMessage] = useState("Extension not detected");
   const battleEngineWorkerRef = useRef<Worker | null>(null);
   const battleEngineSearchRequestIdRef = useRef(0);
 
@@ -7679,6 +7808,38 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     resetDoublesTurn();
   };
 
+  const requestShowdownSnapshot = () => {
+    window.postMessage({ type: "PCH_REQUEST_SHOWDOWN_SNAPSHOT" }, window.location.origin);
+  };
+
+  useEffect(() => {
+    const handleShowdownBridgeMessage = (event: MessageEvent) => {
+      if (event.source !== window) return;
+      const data = event.data as {
+        type?: string;
+        snapshot?: ShowdownBridgeSnapshot;
+        status?: ShowdownBridgeStatus;
+        message?: string;
+      };
+
+      if (data?.type === "PCH_SHOWDOWN_SNAPSHOT" && data.snapshot?.source === "pokemon-showdown") {
+        setShowdownBridgeSnapshot(data.snapshot);
+        setShowdownBridgeStatus("ready");
+        setShowdownBridgeMessage("Live Showdown battle connected");
+        return;
+      }
+
+      if (data?.type === "PCH_SHOWDOWN_BRIDGE_STATUS") {
+        setShowdownBridgeStatus(data.status ?? "ready");
+        setShowdownBridgeMessage(data.message ?? "Showdown bridge status updated");
+      }
+    };
+
+    window.addEventListener("message", handleShowdownBridgeMessage);
+    requestShowdownSnapshot();
+    return () => window.removeEventListener("message", handleShowdownBridgeMessage);
+  }, []);
+
   useEffect(() => {
     let active = true;
 
@@ -7777,6 +7938,27 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     return map;
   }, [database]);
 
+  const megaFormsByBaseSpeciesKey = useMemo(() => {
+    const map = new Map<string, PokemonRecord[]>();
+
+    for (const pokemon of database ?? []) {
+      if (!isChampionsMegaEntry(pokemon)) {
+        continue;
+      }
+
+      const baseSpeciesKey = getPokemonBaseFormKey(pokemon);
+      const bucket = map.get(baseSpeciesKey) ?? [];
+      bucket.push(pokemon);
+      map.set(baseSpeciesKey, bucket);
+    }
+
+    for (const bucket of map.values()) {
+      bucket.sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    return map;
+  }, [database]);
+
   const abilityByKey = useMemo(() => {
     const map = new Map<string, AbilityRecord>();
 
@@ -7810,6 +7992,23 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     return map;
   }, [battleData]);
 
+  const showdownBridgeImport = useMemo<ShowdownBridgeImportResult | null>(() => {
+    if (!showdownBridgeSnapshot || !database || !battleData) {
+      return null;
+    }
+
+    return showdownSnapshotToBattleInput(showdownBridgeSnapshot, {
+      pokemonEntries: database,
+      moveByKey,
+    });
+  }, [battleData, database, moveByKey, showdownBridgeSnapshot]);
+  const showdownBridgeCapturedLabel = useMemo(() => {
+    if (!showdownBridgeSnapshot?.capturedAt) return "";
+    const capturedAt = new Date(showdownBridgeSnapshot.capturedAt);
+    if (Number.isNaN(capturedAt.getTime())) return "";
+    return capturedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }, [showdownBridgeSnapshot]);
+
   const speciesMovesetByKey = useMemo(() => {
     const map = new Map<string, PersistedSpeciesMoveset>();
 
@@ -7840,7 +8039,25 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const team = useMemo(
     () =>
       teamSlots.map((slot) => {
-        const pokemon = slot.pokemonId ? pokemonByKey.get(slot.pokemonId) ?? null : null;
+        const storedPokemon = slot.pokemonId ? pokemonByKey.get(slot.pokemonId) ?? null : null;
+        const basePokemon = storedPokemon
+          ? getBasePokemonForBattleForm(storedPokemon, basePokemonBySpeciesKey)
+          : null;
+        const storedPokemonIsBattleForm =
+          storedPokemon && basePokemon && storedPokemon.id !== basePokemon.id && isCompatibleBattleForm(basePokemon, storedPokemon);
+        const requestedBattleForm = slot.activeFormPokemonId
+          ? pokemonByKey.get(slot.activeFormPokemonId) ?? null
+          : null;
+        const activeFormPokemon =
+          basePokemon && requestedBattleForm && isCompatibleBattleForm(basePokemon, requestedBattleForm)
+            ? requestedBattleForm
+            : storedPokemonIsBattleForm
+              ? storedPokemon
+              : null;
+        const pokemon = activeFormPokemon ?? basePokemon;
+        const formOptions = getTeamFormOptions(basePokemon, megaFormsByBaseSpeciesKey);
+        const activeFormPokemonId =
+          activeFormPokemon && basePokemon && activeFormPokemon.id !== basePokemon.id ? activeFormPokemon.id : null;
         const resolvedMoveset = pokemon
           ? getStoredOrPresetSavedAttacks(pokemon, speciesMovesetByKey, moveByKey, MAX_SPECIES_MOVESET_SIZE)
           : null;
@@ -7853,36 +8070,22 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
 
         return {
           ...slot,
+          pokemonId: basePokemon?.id ?? slot.pokemonId,
+          activeFormPokemonId,
           pokemon,
+          basePokemon,
+          formOptions,
           abilityName: resolvedMoveset?.abilityName ?? null,
           defaultStatSpread,
           resolvedStatSpread,
         };
       }),
-    [moveByKey, pokemonByKey, speciesMovesetByKey, teamSlots],
+    [basePokemonBySpeciesKey, megaFormsByBaseSpeciesKey, moveByKey, pokemonByKey, speciesMovesetByKey, teamSlots],
   );
 
   const selectedPokemon = team
     .map((slot) => slot.pokemon)
     .filter((pokemon): pokemon is PokemonRecord => Boolean(pokemon));
-  const potentialMegaSlots = useMemo<PotentialMegaSlot[]>(
-    () =>
-      team.flatMap((slot, slotIndex) => {
-        if (!slot.pokemon || !isChampionsMegaEntry(slot.pokemon)) {
-          return [];
-        }
-
-        const basePokemon = basePokemonBySpeciesKey.get(getPokemonBaseFormKey(slot.pokemon)) ?? null;
-        return basePokemon ? [{ slotIndex, megaPokemon: slot.pokemon, basePokemon }] : [];
-      }),
-    [basePokemonBySpeciesKey, team],
-  );
-  const potentialMegaSlotSet = useMemo(
-    () => new Set(potentialMegaSlots.map((entry) => entry.slotIndex)),
-    [potentialMegaSlots],
-  );
-  const manualActiveMegaSlotIndex =
-    manualMegaSlotIndex !== null && potentialMegaSlotSet.has(manualMegaSlotIndex) ? manualMegaSlotIndex : null;
   const filledTeamSlotIndices = useMemo(
     () =>
       team
@@ -7890,14 +8093,6 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         .filter((slotIndex): slotIndex is number => slotIndex !== null),
     [team],
   );
-  useEffect(() => {
-    if (manualMegaSlotIndex !== null && !potentialMegaSlotSet.has(manualMegaSlotIndex)) {
-      setManualMegaSlotIndex(null);
-    }
-    if (potentialMegaSlots.length === 0 && megaSelectionMode !== "auto") {
-      setMegaSelectionMode("auto");
-    }
-  }, [manualMegaSlotIndex, megaSelectionMode, potentialMegaSlotSet, potentialMegaSlots.length]);
 
   const selectedSavedAttackCount = useMemo(
     () => team.reduce((total, slot) => total + slot.savedAttacks.length, 0),
@@ -8083,6 +8278,11 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       teamBuilderPokemonByKey.get(nextQuery.trim().toLowerCase()) ??
       teamBuilderPokemonByKey.get(nextQuery.trim()) ??
       null;
+    const baseMatch = match ? getBasePokemonForBattleForm(match, basePokemonBySpeciesKey) : null;
+    const activeFormPokemonId =
+      match && baseMatch && match.id !== baseMatch.id && isCompatibleBattleForm(baseMatch, match)
+        ? match.id
+        : null;
     const resolvedMoveset = match
       ? getStoredOrPresetSavedAttacks(
           match,
@@ -8091,37 +8291,47 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           MAX_ATTACK_TYPES_PER_SLOT,
         )
       : null;
+    const inferredMegaItemName = activeFormPokemonId
+      ? inferMegaEvolutionItemName(match, battleData?.items ?? [])
+      : null;
 
     setTeamSlots((current) =>
-      current.map((slot, index) =>
-        index === slotIndex
-          ? {
-              ...slot,
-              query: nextQuery,
-              pokemonId: match?.id ?? null,
-              statSpread: !match
-                ? null
-                : slot.pokemonId === match.id
-                  ? slot.statSpread
-                  : null,
-              itemName: !match
-                ? null
-                : slot.pokemonId === match.id
-                  ? slot.itemName
-                  : resolvedMoveset?.itemName ?? null,
-              knownMoves: !match
-                ? []
-                : slot.pokemonId === match.id
-                  ? slot.knownMoves
-                  : resolvedMoveset?.knownMoves ?? [],
-              savedAttacks: !match
-                ? []
-                : slot.pokemonId === match.id
-                  ? slot.savedAttacks
-                  : resolvedMoveset?.savedAttacks ?? [],
-            }
-          : slot,
-      ),
+      current.map((slot, index) => {
+        if (index !== slotIndex) {
+          return slot;
+        }
+
+        if (!match || !baseMatch) {
+          return {
+            ...slot,
+            query: nextQuery,
+            pokemonId: null,
+            activeFormPokemonId: null,
+            statSpread: null,
+            itemName: null,
+            knownMoves: [],
+            savedAttacks: [],
+          };
+        }
+
+        const sameBase = slot.pokemonId === baseMatch.id;
+        const activeFormChanged = (slot.activeFormPokemonId ?? null) !== activeFormPokemonId;
+
+        return {
+          ...slot,
+          query: baseMatch.name,
+          pokemonId: baseMatch.id,
+          activeFormPokemonId,
+          statSpread: sameBase ? slot.statSpread : null,
+          itemName: sameBase
+            ? inferredMegaItemName && (!slot.itemName || activeFormChanged)
+              ? inferredMegaItemName
+              : slot.itemName
+            : inferredMegaItemName ?? resolvedMoveset?.itemName ?? null,
+          knownMoves: sameBase ? slot.knownMoves : resolvedMoveset?.knownMoves ?? [],
+          savedAttacks: sameBase ? slot.savedAttacks : resolvedMoveset?.savedAttacks ?? [],
+        };
+      }),
     );
   };
 
@@ -8135,13 +8345,15 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     slotIndex: number,
     config: { knownMoves: PersistedKnownMove[]; itemName: string | null },
   ) => {
+    const loadedPokemon = team[slotIndex]?.pokemon ?? null;
+
     setTeamSlots((current) =>
       current.map((slot, index) => {
         if (index !== slotIndex) {
           return slot;
         }
 
-        const pokemon = slot.pokemonId ? pokemonByKey.get(slot.pokemonId) ?? null : null;
+        const pokemon = loadedPokemon ?? (slot.pokemonId ? pokemonByKey.get(slot.pokemonId) ?? null : null);
 
         return {
           ...slot,
@@ -8166,6 +8378,68 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     );
   };
 
+  const changeTeamSlotBattleForm = (slotIndex: number, activeFormPokemonId: string | null) => {
+    const loadedSlot = team[slotIndex];
+    const basePokemon = loadedSlot?.basePokemon ?? loadedSlot?.pokemon ?? null;
+    const currentPokemon = loadedSlot?.pokemon ?? null;
+    const nextFormPokemon = activeFormPokemonId ? pokemonByKey.get(activeFormPokemonId) ?? null : null;
+    const nextPokemon = nextFormPokemon ?? basePokemon;
+
+    if (!basePokemon || !nextPokemon) {
+      return;
+    }
+
+    if (nextFormPokemon && !isCompatibleBattleForm(basePokemon, nextFormPokemon)) {
+      return;
+    }
+
+    const normalizedActiveFormPokemonId = nextPokemon.id === basePokemon.id ? null : nextPokemon.id;
+    const inferredMegaItemName = normalizedActiveFormPokemonId
+      ? inferMegaEvolutionItemName(nextPokemon, battleData?.items ?? [])
+      : null;
+
+    setTeamSlots((current) =>
+      current.map((slot, index) => {
+        if (index !== slotIndex) {
+          return slot;
+        }
+
+        return {
+          ...slot,
+          query: basePokemon.name,
+          pokemonId: basePokemon.id,
+          activeFormPokemonId: normalizedActiveFormPokemonId,
+          itemName: inferredMegaItemName && (!slot.itemName || (slot.activeFormPokemonId ?? null) !== normalizedActiveFormPokemonId)
+            ? inferredMegaItemName
+            : slot.itemName,
+        };
+      }),
+    );
+
+    const currentPokemonId = currentPokemon?.id ?? basePokemon.id;
+    if (currentPokemonId !== nextPokemon.id) {
+      const oldKey = getBattleSimulatorStateKey("ally", slotIndex, currentPokemonId);
+      const nextKey = getBattleSimulatorStateKey("ally", slotIndex, nextPokemon.id);
+      setBattleSimulatorState((current) => {
+        const existing = current[oldKey];
+        if (!existing || current[nextKey]) {
+          return current;
+        }
+
+        const { [oldKey]: _discarded, ...rest } = current;
+        return {
+          ...rest,
+          [nextKey]: existing,
+        };
+      });
+    }
+
+    setBattleEngineRecommendation(null);
+    setBattleEngineAnalysisSignature("");
+    setSimulationRun(null);
+    setSimViewMode("real");
+  };
+
   const refreshSavedTeams = async () => {
     const teams = await listSavedTeams();
     setSavedTeams(teams);
@@ -8183,6 +8457,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     return teamSlots.some(
       (slot) =>
         Boolean(slot.pokemonId) ||
+        Boolean(slot.activeFormPokemonId) ||
         slot.query.trim().length > 0 ||
         slot.savedAttacks.length > 0 ||
         Boolean(slot.statSpread),
@@ -8212,13 +8487,24 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     );
   };
 
+  const getPersistableTeamSlots = (): TeamSlotState[] =>
+    team.map((slot) => ({
+      query: slot.basePokemon?.name ?? slot.query,
+      pokemonId: slot.basePokemon?.id ?? slot.pokemonId,
+      activeFormPokemonId: slot.activeFormPokemonId ?? null,
+      itemName: slot.itemName,
+      statSpread: slot.statSpread,
+      knownMoves: slot.knownMoves,
+      savedAttacks: slot.savedAttacks,
+    }));
+
   const saveCurrentTeam = async () => {
     try {
       setStorageError(null);
       const saved = await saveTeam({
         id: activeSavedTeamId ?? undefined,
         name: teamName.trim() || "My Team",
-        slots: teamSlots,
+        slots: getPersistableTeamSlots(),
         openerSelections,
       });
       setActiveSavedTeamId(saved.id);
@@ -8260,8 +8546,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       id: activeSavedTeamId ?? "exported-team",
       name: teamName.trim() || "My Team",
       updatedAt: new Date().toISOString(),
-      version: 7,
-      slots: teamSlots,
+      version: 8,
+      slots: getPersistableTeamSlots(),
       openerSelections,
     };
 
@@ -8278,6 +8564,79 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     URL.revokeObjectURL(url);
     setStorageMessage(`Exported "${payload.name}" to JSON.`);
     setStorageError(null);
+  };
+
+  const buildCurrentShowdownExport = () =>
+    exportShowdownTeamText({
+      slots: team.map((slot) => {
+        const basePokemon = slot.basePokemon ?? slot.pokemon;
+        const battleFormPokemon =
+          slot.pokemon && basePokemon && slot.pokemon.id !== basePokemon.id ? slot.pokemon : null;
+        const baseResolvedMoveset = basePokemon
+          ? getStoredOrPresetSavedAttacks(basePokemon, speciesMovesetByKey, moveByKey, MAX_SPECIES_MOVESET_SIZE)
+          : null;
+
+        return {
+          pokemon: basePokemon,
+          battleFormPokemon,
+          itemName: slot.itemName ?? inferMegaEvolutionItemName(battleFormPokemon, battleData?.items ?? []),
+          abilityName: baseResolvedMoveset?.abilityName ?? getPokemonPrimaryAbilityName(basePokemon),
+          statSpread: slot.resolvedStatSpread,
+          knownMoves: slot.knownMoves,
+          savedAttacks: slot.savedAttacks,
+        };
+      }),
+      moveByKey,
+      maxMovesPerSlot: MAX_ATTACK_TYPES_PER_SLOT,
+      level: 50,
+    });
+
+  const openShowdownExport = () => {
+    const exported = buildCurrentShowdownExport();
+
+    if (exported.exportedPokemonCount === 0) {
+      setStorageError("Add at least one Pokemon before exporting to Showdown.");
+      setStorageMessage(null);
+      return;
+    }
+
+    setShowdownExportText(exported.text);
+    setShowdownExportWarnings(exported.warnings);
+    setShowdownExportOpen(true);
+    setStorageError(null);
+  };
+
+  const copyShowdownExportToClipboard = async () => {
+    const text = showdownExportText.trim();
+
+    if (!text) {
+      setStorageError("Generate a Showdown export first.");
+      return;
+    }
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.append(textarea);
+        textarea.select();
+        const copied = document.execCommand("copy");
+        textarea.remove();
+        if (!copied) {
+          throw new Error("Clipboard copy failed.");
+        }
+      }
+
+      setStorageMessage(`Copied ${teamName.trim() || "team"} as Pokemon Showdown text.`);
+      setStorageError(null);
+    } catch (error) {
+      setStorageError(error instanceof Error ? error.message : "Failed to copy Showdown text.");
+    }
   };
 
   const openImportPicker = () => {
@@ -8377,7 +8736,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   };
 
   useEffect(() => {
-    if (!showdownImportOpen) {
+    if (!showdownImportOpen && !showdownExportOpen) {
       return;
     }
 
@@ -8387,6 +8746,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setShowdownImportOpen(false);
+        setShowdownExportOpen(false);
       }
     };
     window.addEventListener("keydown", handleKey);
@@ -8395,7 +8755,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       window.removeEventListener("keydown", handleKey);
       document.body.style.overflow = previousOverflow;
     };
-  }, [showdownImportOpen]);
+  }, [showdownExportOpen, showdownImportOpen]);
 
   useEffect(() => {
     if (filledLeadOptions.length === 0) {
@@ -9044,7 +9404,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       }),
     [battleSimulatorState, doublesEnemySelection, enemyBattleEntries, moveByKey],
   );
-  const battleLabReady = doublesAllyMembers.length >= 1 && doublesEnemyMembers.length >= 1;
+  const teamBuilderBattleLabReady = doublesAllyMembers.length >= 1 && doublesEnemyMembers.length >= 1;
   const doublesThreatReady = doublesAllyMembers.length === 2 && doublesEnemyMembers.length === 2;
   const previewRecommendationSettings = useMemo(
     () => ({
@@ -9068,10 +9428,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   );
   const deferredAnalyzedOpponentEntries = useDeferredValue(analyzedOpponentEntries);
   const deferredPreviewRecommendationSettings = useDeferredValue(previewRecommendationSettings);
-  const teamPreviewResult = useMemo<{
-    recommendation: TeamPreviewRecommendation;
-    activeMegaSlotIndex: number | null;
-  } | null>(() => {
+  const teamPreviewRecommendation = useMemo<TeamPreviewRecommendation | null>(() => {
     if (filledTeamSlotIndices.length < 4 || deferredAnalyzedOpponentEntries.length < 4) {
       return null;
     }
@@ -9085,12 +9442,6 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       maxLeadsPerFour: 2,
     };
 
-    const scenarioMegaSlotIndices =
-      megaSelectionMode === "manual"
-        ? [manualActiveMegaSlotIndex]
-        : potentialMegaSlots.length > 0
-          ? potentialMegaSlots.map((entry) => entry.slotIndex)
-          : [null];
     const enemy = deferredAnalyzedOpponentEntries.map((entry) => {
       return buildPreviewEnemyBattleStateMember({
         slotIndex: entry.slotIndex,
@@ -9108,114 +9459,61 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         isActive: entry.slotIndex < 2,
       });
     });
-    let bestResult: { recommendation: TeamPreviewRecommendation; activeMegaSlotIndex: number | null } | null = null;
 
-    for (const activeMegaSlotIndex of scenarioMegaSlotIndices) {
-      const scenarioTeam = team.map((slot, slotIndex) =>
-        resolveEffectiveTeamSlotForMegaSelection(
-          slot,
-          slotIndex,
-          activeMegaSlotIndex,
-          basePokemonBySpeciesKey,
-          speciesMovesetByKey,
-          moveByKey,
-        ),
-      );
-      const ally = buildPreviewBattleEngineAllyMembersFromTeam(
-        scenarioTeam,
-        speciesMovesetByKey,
-        moveByKey,
-      ).map((member) => ({
-        ...member,
-        isActive: false,
-        currentHp: undefined,
-        currentHpPercent: 100,
-        stages: undefined,
-        statusCondition: "none" as const,
-        sleepTurns: 0,
-        tauntTurns: 0,
-        encoreTurns: 0,
-        encoredMoveId: null,
-        disableTurns: 0,
-        disabledMoveId: null,
-        helpingHandTurns: 0,
-        turnsActive: 0,
-        isProtected: false,
-        isFlinched: false,
-        wasSwitchedInThisTurn: false,
-      }));
+    const ally = buildPreviewBattleEngineAllyMembersFromTeam(
+      team,
+      speciesMovesetByKey,
+      moveByKey,
+    ).map((member) => ({
+      ...member,
+      isActive: false,
+      currentHp: undefined,
+      currentHpPercent: 100,
+      stages: undefined,
+      statusCondition: "none" as const,
+      sleepTurns: 0,
+      tauntTurns: 0,
+      encoreTurns: 0,
+      encoredMoveId: null,
+      disableTurns: 0,
+      disabledMoveId: null,
+      helpingHandTurns: 0,
+      turnsActive: 0,
+      isProtected: false,
+      isFlinched: false,
+      wasSwitchedInThisTurn: false,
+    }));
 
-      if (ally.length < 4) {
-        continue;
-      }
-
-      const recommendation = recommendTeamPreview({
-        ally,
-        enemy,
-        moveByKey,
-        weather: deferredPreviewRecommendationSettings.weather,
-        terrain: deferredPreviewRecommendationSettings.terrain,
-        allyTailwind: deferredPreviewRecommendationSettings.allyTailwind,
-        enemyTailwind: deferredPreviewRecommendationSettings.enemyTailwind,
-        trickRoom: deferredPreviewRecommendationSettings.trickRoom,
-        attackStage: deferredPreviewRecommendationSettings.attackStage,
-        defenseStage: deferredPreviewRecommendationSettings.defenseStage,
-        ...previewModeOptions,
-      });
-
-      if (!recommendation) {
-        continue;
-      }
-
-      if (
-        !bestResult ||
-        recommendation.robustScore > bestResult.recommendation.robustScore ||
-        (
-          recommendation.robustScore === bestResult.recommendation.robustScore &&
-          recommendation.averageScore > bestResult.recommendation.averageScore
-        )
-      ) {
-        bestResult = { recommendation, activeMegaSlotIndex };
-      }
+    if (ally.length < 4) {
+      return null;
     }
 
-    return bestResult;
+    return recommendTeamPreview({
+      ally,
+      enemy,
+      moveByKey,
+      weather: deferredPreviewRecommendationSettings.weather,
+      terrain: deferredPreviewRecommendationSettings.terrain,
+      allyTailwind: deferredPreviewRecommendationSettings.allyTailwind,
+      enemyTailwind: deferredPreviewRecommendationSettings.enemyTailwind,
+      trickRoom: deferredPreviewRecommendationSettings.trickRoom,
+      attackStage: deferredPreviewRecommendationSettings.attackStage,
+      defenseStage: deferredPreviewRecommendationSettings.defenseStage,
+      ...previewModeOptions,
+    });
   }, [
-    basePokemonBySpeciesKey,
     deferredAnalyzedOpponentEntries,
     deferredPreviewRecommendationSettings,
     filledTeamSlotIndices.length,
-    manualActiveMegaSlotIndex,
-    megaSelectionMode,
     moveByKey,
-    potentialMegaSlots,
     speciesMovesetByKey,
     team,
   ]);
-  const teamPreviewRecommendation = teamPreviewResult?.recommendation ?? null;
-  const activeMegaSlotIndex =
-    megaSelectionMode === "manual"
-      ? manualActiveMegaSlotIndex
-      : teamPreviewResult?.activeMegaSlotIndex ??
-        (potentialMegaSlots.length === 1 ? potentialMegaSlots[0]?.slotIndex ?? null : null);
-  const effectiveTeam = useMemo(
-    () =>
-      team.map((slot, slotIndex) =>
-        resolveEffectiveTeamSlotForMegaSelection(
-          slot,
-          slotIndex,
-          activeMegaSlotIndex,
-          basePokemonBySpeciesKey,
-          speciesMovesetByKey,
-          moveByKey,
-        ),
-      ),
-    [activeMegaSlotIndex, basePokemonBySpeciesKey, moveByKey, speciesMovesetByKey, team],
-  );
   const previewBattleEngineAllyMembers = useMemo<BattleStateMemberInput[]>(
-    () => buildPreviewBattleEngineAllyMembersFromTeam(effectiveTeam, speciesMovesetByKey, moveByKey),
-    [effectiveTeam, moveByKey, speciesMovesetByKey],
+    () => buildPreviewBattleEngineAllyMembersFromTeam(team, speciesMovesetByKey, moveByKey),
+    [moveByKey, speciesMovesetByKey, team],
   );
+  const effectiveTeam = team;
   const solverBringOrder = useMemo(() => {
     if (!teamPreviewRecommendation) {
       return [];
@@ -9417,31 +9715,52 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       ),
     [battleSimulatorState, bringSelectedSlotSet, doublesAllySelection, previewBattleEngineAllyMembers],
   );
+  const showdownBridgeInput = showdownBridgeImport?.input ?? null;
+  const battleEngineUsesShowdown = Boolean(showdownBridgeInput);
+  const battleEngineSourceAllyMembers = showdownBridgeInput?.ally ?? battleEngineAllyMembers;
+  const battleEngineSourceEnemyMembers = showdownBridgeInput?.enemy ?? battleEngineEnemyMembers;
+  const battleEngineWeather = showdownBridgeInput?.weather ?? damageWeather;
+  const battleEngineTerrain = showdownBridgeInput?.terrain ?? damageTerrain;
+  const battleEngineAllySide = showdownBridgeInput?.allySide ?? { tailwindTurns: battleFieldRuntime.allyTailwindTurns };
+  const battleEngineEnemySide = showdownBridgeInput?.enemySide ?? { tailwindTurns: battleFieldRuntime.enemyTailwindTurns };
+  const battleEngineFieldState = showdownBridgeInput?.fieldState ?? {
+    turn: battleFieldRuntime.turn,
+    trickRoomTurns: battleFieldRuntime.trickRoomTurns,
+  };
+  const battleLabReady =
+    battleEngineUsesShowdown
+      ? battleEngineSourceAllyMembers.some((member) => member.isActive) &&
+        battleEngineSourceEnemyMembers.some((member) => member.isActive)
+      : teamBuilderBattleLabReady;
   const battleEngineCurrentState = useMemo(
     () =>
       battleLabReady
         ? createBattleState({
-            ally: battleEngineAllyMembers,
-            enemy: battleEngineEnemyMembers,
+            ally: battleEngineSourceAllyMembers,
+            enemy: battleEngineSourceEnemyMembers,
             moveByKey,
-            weather: damageWeather,
-            terrain: damageTerrain,
-            allyTailwind: doublesAllyTailwind,
-            enemyTailwind: doublesEnemyTailwind,
-            trickRoom: doublesTrickRoom,
-            allySide: { tailwindTurns: battleFieldRuntime.allyTailwindTurns },
-            enemySide: { tailwindTurns: battleFieldRuntime.enemyTailwindTurns },
-            fieldState: { turn: battleFieldRuntime.turn, trickRoomTurns: battleFieldRuntime.trickRoomTurns },
+            weather: battleEngineWeather,
+            terrain: battleEngineTerrain,
+            allyTailwind: battleEngineUsesShowdown ? false : doublesAllyTailwind,
+            enemyTailwind: battleEngineUsesShowdown ? false : doublesEnemyTailwind,
+            trickRoom: battleEngineUsesShowdown ? false : doublesTrickRoom,
+            allySide: battleEngineAllySide,
+            enemySide: battleEngineEnemySide,
+            fieldState: battleEngineFieldState,
             universalProtect: true,
+            applyInitialEntryEffects: battleEngineUsesShowdown ? false : undefined,
           })
         : null,
     [
-      battleEngineAllyMembers,
-      battleEngineEnemyMembers,
+      battleEngineAllySide,
+      battleEngineEnemySide,
+      battleEngineFieldState,
+      battleEngineSourceAllyMembers,
+      battleEngineSourceEnemyMembers,
+      battleEngineTerrain,
+      battleEngineUsesShowdown,
+      battleEngineWeather,
       battleLabReady,
-      damageTerrain,
-      damageWeather,
-      battleFieldRuntime,
       doublesAllyTailwind,
       doublesEnemyTailwind,
       doublesTrickRoom,
@@ -9651,33 +9970,32 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       buildBattleEngineInputSignature({
         allySelection: doublesAllySelection,
         enemySelection: doublesEnemySelection,
-        allyMembers: battleEngineAllyMembers,
-        enemyMembers: battleEngineEnemyMembers,
-        weather: damageWeather,
-        terrain: damageTerrain,
-        allyTailwind: doublesAllyTailwind,
-        enemyTailwind: doublesEnemyTailwind,
-        trickRoom: doublesTrickRoom,
-        allyTailwindTurns: battleFieldRuntime.allyTailwindTurns,
-        enemyTailwindTurns: battleFieldRuntime.enemyTailwindTurns,
-        trickRoomTurns: battleFieldRuntime.trickRoomTurns,
-        turn: battleFieldRuntime.turn,
+        allyMembers: battleEngineSourceAllyMembers,
+        enemyMembers: battleEngineSourceEnemyMembers,
+        weather: battleEngineWeather,
+        terrain: battleEngineTerrain,
+        allyTailwind: (battleEngineAllySide.tailwindTurns ?? 0) > 0,
+        enemyTailwind: (battleEngineEnemySide.tailwindTurns ?? 0) > 0,
+        trickRoom: (battleEngineFieldState.trickRoomTurns ?? 0) > 0,
+        allyTailwindTurns: battleEngineAllySide.tailwindTurns ?? 0,
+        enemyTailwindTurns: battleEngineEnemySide.tailwindTurns ?? 0,
+        trickRoomTurns: battleEngineFieldState.trickRoomTurns ?? 0,
+        turn: battleEngineFieldState.turn ?? 1,
         searchMode: battleEngineSearchMode,
         objectiveMode: battleEngineObjectiveMode,
       }),
     [
-      battleEngineAllyMembers,
-      battleEngineEnemyMembers,
+      battleEngineAllySide,
+      battleEngineEnemySide,
+      battleEngineFieldState,
       battleEngineObjectiveMode,
       battleEngineSearchMode,
-      damageTerrain,
-      damageWeather,
+      battleEngineSourceAllyMembers,
+      battleEngineSourceEnemyMembers,
+      battleEngineTerrain,
+      battleEngineWeather,
       doublesAllySelection,
       doublesEnemySelection,
-      battleFieldRuntime,
-      doublesAllyTailwind,
-      doublesEnemyTailwind,
-      doublesTrickRoom,
     ],
   );
   const battleEngineIsStale =
@@ -10836,25 +11154,46 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
               Import JSON
             </button>
           </div>
-          <button
-            type="button"
-            className="showdown-import-trigger"
-            onClick={() => setShowdownImportOpen(true)}
-            aria-haspopup="dialog"
-            aria-expanded={showdownImportOpen}
-          >
-            <span className="showdown-import-trigger__text">
-              <span className="showdown-import-trigger__title">Pokemon Showdown Import</span>
-              <span className="showdown-import-trigger__hint">
-                {showdownImportText.trim()
-                  ? `${showdownImportText.trim().length} chars pasted · click to review`
-                  : "Open the import dialog to paste a Showdown export"}
+          <div className="showdown-transfer-grid">
+            <button
+              type="button"
+              className="showdown-import-trigger"
+              onClick={() => setShowdownImportOpen(true)}
+              aria-haspopup="dialog"
+              aria-expanded={showdownImportOpen}
+            >
+              <span className="showdown-import-trigger__text">
+                <span className="showdown-import-trigger__title">Pokemon Showdown Import</span>
+                <span className="showdown-import-trigger__hint">
+                  {showdownImportText.trim()
+                    ? `${showdownImportText.trim().length} chars pasted · click to review`
+                    : "Paste Showdown text into this team builder"}
+                </span>
               </span>
-            </span>
-            <span className="showdown-import-trigger__icon" aria-hidden="true">
-              ↗
-            </span>
-          </button>
+              <span className="showdown-import-trigger__icon" aria-hidden="true">
+                ↙
+              </span>
+            </button>
+            <button
+              type="button"
+              className="showdown-import-trigger"
+              onClick={openShowdownExport}
+              aria-haspopup="dialog"
+              aria-expanded={showdownExportOpen}
+            >
+              <span className="showdown-import-trigger__text">
+                <span className="showdown-import-trigger__title">Pokemon Showdown Export</span>
+                <span className="showdown-import-trigger__hint">
+                  {selectedPokemon.length > 0
+                    ? `Copy ${selectedPokemon.length} Pokemon for Showdown`
+                    : "Add Pokemon before exporting"}
+                </span>
+              </span>
+              <span className="showdown-import-trigger__icon" aria-hidden="true">
+                ↗
+              </span>
+            </button>
+          </div>
           <input
             ref={importInputRef}
             className="hidden-file-input"
@@ -11020,6 +11359,92 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             document.body,
           )
           : null}
+
+        {showdownExportOpen && typeof document !== "undefined"
+          ? createPortal(
+          <div
+            className="showdown-import-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="showdown-export-modal-title"
+            onClick={(event) => {
+              if (event.target === event.currentTarget) {
+                setShowdownExportOpen(false);
+              }
+            }}
+          >
+            <div className="showdown-import-modal__dialog" role="document">
+              <header className="showdown-import-modal__header">
+                <div className="showdown-import-modal__title">
+                  <span className="eyebrow">Export</span>
+                  <h3 id="showdown-export-modal-title">Pokemon Showdown Export</h3>
+                </div>
+                <button
+                  type="button"
+                  className="showdown-import-modal__close"
+                  onClick={() => setShowdownExportOpen(false)}
+                  aria-label="Close Showdown export"
+                  title="Close"
+                >
+                  ×
+                </button>
+              </header>
+              <div className="showdown-import-modal__body">
+                <textarea
+                  className="showdown-import-input"
+                  rows={12}
+                  value={showdownExportText}
+                  onChange={(event) => setShowdownExportText(event.target.value)}
+                  onFocus={(event) => event.currentTarget.select()}
+                  aria-label="Pokemon Showdown team text"
+                  autoFocus
+                />
+                <p className="selector-note">
+                  Champions stat points are written to the EV line so the text stays compatible with
+                  Showdown import/export.
+                </p>
+                {showdownExportWarnings.length > 0 ? (
+                  <div className="showdown-export-warnings">
+                    {showdownExportWarnings.slice(0, 4).map((warning, index) => (
+                      <span key={`showdown-export-warning-${index}`}>{warning}</span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <footer className="showdown-import-modal__footer">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    const exported = buildCurrentShowdownExport();
+                    setShowdownExportText(exported.text);
+                    setShowdownExportWarnings(exported.warnings);
+                  }}
+                >
+                  Regenerate
+                </button>
+                <div className="showdown-import-modal__footer-spacer" />
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setShowdownExportOpen(false)}
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={copyShowdownExportToClipboard}
+                  disabled={!showdownExportText.trim()}
+                >
+                  Copy Showdown Text
+                </button>
+              </footer>
+            </div>
+          </div>,
+            document.body,
+          )
+          : null}
       </section>
 
       <section className="team-grid">
@@ -11037,71 +11462,10 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             onClear={clearSlot}
             onApplySlotMoveset={applySlotConfig}
             onApplySlotStatSpread={applySlotStatSpread}
+            onBattleFormChange={changeTeamSlotBattleForm}
           />
         ))}
       </section>
-
-      {potentialMegaSlots.length > 0 ? (
-        <section className="mega-picker-panel" aria-label="Potential mega evolutions">
-          <div className="mega-picker-panel__head">
-            <div>
-              <p className="eyebrow">Potential Mega Evolutions</p>
-              <h3>Active mega for preview scoring</h3>
-            </div>
-            <span className="mini-type-pill neutral-pill">
-              {activeMegaSlotIndex !== null
-                ? `Slot ${activeMegaSlotIndex + 1} mega`
-                : megaSelectionMode === "auto" && potentialMegaSlots.length > 1 && !teamPreviewRecommendation
-                  ? "Auto waits for solve"
-                  : "No mega active"}
-            </span>
-          </div>
-
-          <div className="mega-picker-panel__actions">
-            <button
-              type="button"
-              className={`mega-picker-button mega-picker-button--auto${megaSelectionMode === "auto" ? " is-selected" : ""}`}
-              onClick={() => {
-                setMegaSelectionMode("auto");
-                setManualMegaSlotIndex(null);
-              }}
-              aria-pressed={megaSelectionMode === "auto"}
-            >
-              <span className="mega-picker-button__title">Auto</span>
-              <span className="mega-picker-button__meta">
-                {teamPreviewRecommendation ? "Solver picked the best mega scenario" : "Solver will compare mega scenarios"}
-              </span>
-            </button>
-
-            {potentialMegaSlots.map(({ slotIndex, megaPokemon, basePokemon }) => {
-              const isSelected = activeMegaSlotIndex === slotIndex;
-              return (
-                <button
-                  key={`mega-picker-${slotIndex}`}
-                  type="button"
-                  className={`mega-picker-button${isSelected ? " is-selected" : ""}`}
-                  onClick={() => {
-                    setMegaSelectionMode("manual");
-                    setManualMegaSlotIndex(slotIndex);
-                  }}
-                  aria-pressed={isSelected}
-                  aria-label={`Set ${megaPokemon.name} as the active mega evolution`}
-                >
-                  <span className="mega-picker-button__slot">Slot {slotIndex + 1}</span>
-                  <span className="mega-picker-button__sprites" aria-hidden="true">
-                    <PokemonSprite pokemon={megaPokemon} className="mega-picker-button__sprite" />
-                    <PokemonSprite pokemon={basePokemon} className="mega-picker-button__sprite is-base" />
-                  </span>
-                  <span className="mega-picker-button__title">{megaPokemon.name}</span>
-                  <span className="mega-picker-button__meta">
-                    Other mega slots score as their normal form
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
 
       <section className="team-analysis-layout">
         <section className="board-panel team-matrix-panel">
@@ -13249,9 +13613,30 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             </section>
           ) : null}
 
+          <section className={`damage-doubles-block bl-showdown-bridge ${battleEngineUsesShowdown ? "connected" : showdownBridgeStatus}`}>
+            <div>
+              <p className="eyebrow">Showdown Live</p>
+              <strong>{battleEngineUsesShowdown ? showdownBridgeImport?.summary : showdownBridgeMessage}</strong>
+              <span>
+                {battleEngineUsesShowdown && showdownBridgeCapturedLabel
+                  ? `Snapshot ${showdownBridgeCapturedLabel}`
+                  : "Open a Showdown battle tab with the bridge extension enabled."}
+              </span>
+            </div>
+            <button type="button" className="secondary-button" onClick={requestShowdownSnapshot}>
+              Refresh
+            </button>
+            {showdownBridgeImport?.unresolvedSpecies.length ? (
+              <p>Unmatched: {showdownBridgeImport.unresolvedSpecies.slice(0, 4).join(", ")}</p>
+            ) : null}
+            {showdownBridgeImport?.warnings.length ? (
+              <p>{showdownBridgeImport.warnings.slice(0, 2).join(" ")}</p>
+            ) : null}
+          </section>
+
           {battleLabReady && battleLabDisplayState ? (
             <>
-            {(() => {
+              {(() => {
               const displayState = battleLabDisplayState;
               const realState = battleEngineCurrentState!;
               const currentEvent =
@@ -13403,35 +13788,45 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                       </button>
                     </div>
                     <div className="bl-top-fields">
-                      <label className={`bl-field-pill ally ${doublesAllyTailwind ? "on" : ""}`}>
+                      <label className={`bl-field-pill ally ${
+                        (battleEngineUsesShowdown ? displayState.sides.ally.tailwindTurns > 0 : doublesAllyTailwind) ? "on" : ""
+                      }`}>
                         <input
                           type="checkbox"
-                          checked={doublesAllyTailwind}
+                          checked={battleEngineUsesShowdown ? displayState.sides.ally.tailwindTurns > 0 : doublesAllyTailwind}
                           onChange={(e) => setAllyTailwindActive(e.target.checked)}
+                          disabled={battleEngineUsesShowdown}
                         />
                         My TW
                       </label>
-                      <label className={`bl-field-pill enemy ${doublesEnemyTailwind ? "on" : ""}`}>
+                      <label className={`bl-field-pill enemy ${
+                        (battleEngineUsesShowdown ? displayState.sides.enemy.tailwindTurns > 0 : doublesEnemyTailwind) ? "on" : ""
+                      }`}>
                         <input
                           type="checkbox"
-                          checked={doublesEnemyTailwind}
+                          checked={battleEngineUsesShowdown ? displayState.sides.enemy.tailwindTurns > 0 : doublesEnemyTailwind}
                           onChange={(e) => setEnemyTailwindActive(e.target.checked)}
+                          disabled={battleEngineUsesShowdown}
                         />
                         Enemy TW
                       </label>
-                      <label className={`bl-field-pill ${doublesTrickRoom ? "on" : ""}`}>
+                      <label className={`bl-field-pill ${
+                        (battleEngineUsesShowdown ? displayState.field.trickRoomTurns > 0 : doublesTrickRoom) ? "on" : ""
+                      }`}>
                         <input
                           type="checkbox"
-                          checked={doublesTrickRoom}
+                          checked={battleEngineUsesShowdown ? displayState.field.trickRoomTurns > 0 : doublesTrickRoom}
                           onChange={(e) => setTrickRoomActive(e.target.checked)}
+                          disabled={battleEngineUsesShowdown}
                         />
                         Trick Room
                       </label>
                       <select
                         className="bl-field-select"
-                        value={damageWeather}
+                        value={battleEngineUsesShowdown ? displayState.field.weather : damageWeather}
                         onChange={(e) => setDamageWeather(e.target.value as DamageWeather)}
                         aria-label="Weather"
+                        disabled={battleEngineUsesShowdown}
                       >
                         <option value="none">Weather · none</option>
                         <option value="sun">Sun</option>
@@ -13441,9 +13836,10 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                       </select>
                       <select
                         className="bl-field-select"
-                        value={damageTerrain}
+                        value={battleEngineUsesShowdown ? displayState.field.terrain : damageTerrain}
                         onChange={(e) => setDamageTerrain(e.target.value as DamageTerrain)}
                         aria-label="Terrain"
+                        disabled={battleEngineUsesShowdown}
                       >
                         <option value="none">Terrain · none</option>
                         <option value="electric">Electric</option>
@@ -13516,7 +13912,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                           entries={enemyRosterEntries}
                           activeRanksById={enemyActiveRanksById}
                           replacementRanks={enemyReplacementRanks}
-                          editable={simViewMode === "real"}
+                          editable={simViewMode === "real" && !battleEngineUsesShowdown}
                           deployingCombatantId={
                             currentEventMotion?.kind === "switch" && currentEventMotion.side === "enemy"
                               ? currentEventMotion.incomingId
@@ -13571,8 +13967,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                                   effectFlash={id ? slotFlashes[id] ?? null : null}
                                   motion={getSlotMotion("enemy", i === 0 ? 0 : 1, id)}
                                   editing={editingSlotKey === slotKey && simViewMode === "real"}
-                                  quickEditing={simViewMode === "real"}
-                                  canFaint={simViewMode === "real" && Boolean(combatant && combatant.currentHp > 0)}
+                                  quickEditing={simViewMode === "real" && !battleEngineUsesShowdown}
+                                  canFaint={simViewMode === "real" && !battleEngineUsesShowdown && Boolean(combatant && combatant.currentHp > 0)}
                                   onFaint={() => {
                                     if (!id) return;
                                     triggerBattleLabFaint("enemy", i === 0 ? 0 : 1, id);
@@ -13641,6 +14037,10 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                                   : null;
                               const projectedCombatant =
                                 simViewMode === "real" && id ? battleLabDamageProjection?.state.combatants[id] ?? null : null;
+                              const formOptions =
+                                !battleEngineUsesShowdown && teamIndex != null
+                                  ? team[teamIndex]?.formOptions ?? []
+                                  : [];
                               return (
                                 <BattleLabSlot
                                   key={slotKey}
@@ -13661,8 +14061,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                                   effectFlash={id ? slotFlashes[id] ?? null : null}
                                   motion={getSlotMotion("ally", i === 0 ? 0 : 1, id)}
                                   editing={editingSlotKey === slotKey && simViewMode === "real"}
-                                  quickEditing={simViewMode === "real"}
-                                  canFaint={simViewMode === "real" && Boolean(combatant && combatant.currentHp > 0)}
+                                  quickEditing={simViewMode === "real" && !battleEngineUsesShowdown}
+                                  canFaint={simViewMode === "real" && !battleEngineUsesShowdown && Boolean(combatant && combatant.currentHp > 0)}
                                   onFaint={() => {
                                     if (!id) return;
                                     triggerBattleLabFaint("ally", i === 0 ? 0 : 1, id);
@@ -13677,6 +14077,12 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                                     }
                                   }}
                                   simulatorPatch={patchState}
+                                  formOptions={formOptions}
+                                  onBattleFormChange={
+                                    !battleEngineUsesShowdown && teamIndex != null
+                                      ? (nextFormPokemonId) => changeTeamSlotBattleForm(teamIndex, nextFormPokemonId)
+                                      : undefined
+                                  }
                                 />
                               );
                             })}
@@ -13794,7 +14200,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                           entries={allyRosterEntries}
                           activeRanksById={allyActiveRanksById}
                           replacementRanks={allyReplacementRanks}
-                          editable={simViewMode === "real"}
+                          editable={simViewMode === "real" && !battleEngineUsesShowdown}
                           deployingCombatantId={
                             currentEventMotion?.kind === "switch" && currentEventMotion.side === "ally"
                               ? currentEventMotion.incomingId
@@ -14322,7 +14728,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                   </details>
                 </section>
               );
-            })()}
+              })()}
             </>
           ) : (
             <div className="matchup-empty-board">
@@ -14366,8 +14772,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       </datalist>
 
       <datalist id="move-options">
-        {(battleData?.moves ?? []).map((move) => (
-          <option key={move.id} value={move.name} />
+        {(battleData?.moves ?? []).map((move, index) => (
+          <option key={`${move.id}-${move.name}-${index}`} value={move.name} />
         ))}
       </datalist>
 
@@ -15180,7 +15586,7 @@ function MovesetDatabaseView() {
                         const isWeightBasedPowerMove = isLowKickMove(getKnownMoveName(move));
 
                         return (
-                          <article key={move.id} className="saved-attack-editor-card">
+                          <article key={`${move.id}-${getKnownMoveName(move)}-${moveIndex}`} className="saved-attack-editor-card">
                             <div className="saved-attack-editor-header">
                               {moveType ? (
                                 <span
@@ -15352,8 +15758,8 @@ function MovesetDatabaseView() {
       </section>
 
       <datalist id="moveset-database-options">
-        {(battleData?.moves ?? []).map((move) => (
-          <option key={move.id} value={move.name} />
+        {(battleData?.moves ?? []).map((move, index) => (
+          <option key={`${move.id}-${move.name}-${index}`} value={move.name} />
         ))}
       </datalist>
     </>

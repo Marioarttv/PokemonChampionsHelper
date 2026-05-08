@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Pokemon Champions Showdown Bridge",
+  "description": "Mirrors live Pokemon Showdown battle state into Pokemon Champions Helper.",
+  "version": "0.1.0",
+  "permissions": ["tabs"],
+  "host_permissions": [
+    "https://play.pokemonshowdown.com/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "https://mariomanzocco.github.io/PokemonChampionsHelper/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://play.pokemonshowdown.com/*"],
+      "js": ["showdown-content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "http://localhost/*",
+        "http://127.0.0.1/*",
+        "https://mariomanzocco.github.io/PokemonChampionsHelper/*"
+      ],
+      "js": ["app-content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["showdown-page-probe.js"],
+      "matches": ["https://play.pokemonshowdown.com/*"]
+    }
+  ]
+}

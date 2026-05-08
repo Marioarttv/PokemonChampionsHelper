@@ -103,6 +103,7 @@ function parseShowdownSet(block: string): ParsedShowdownSet | null {
 function buildPokemonLookup(pokemonEntries: PokemonRecord[]) {
   const byNameKey = new Map<string, PokemonRecord>();
   const megaCandidatesByBaseSpeciesKey = new Map<string, PokemonRecord[]>();
+  const basePokemonBySpeciesKey = new Map<string, PokemonRecord>();
 
   for (const pokemon of pokemonEntries) {
     const keys = new Set([
@@ -117,6 +118,10 @@ function buildPokemonLookup(pokemonEntries: PokemonRecord[]) {
       }
     }
 
+    if (!pokemon.forme) {
+      basePokemonBySpeciesKey.set(normalizePokemonNameKey(pokemon.baseSpecies || pokemon.name), pokemon);
+    }
+
     if (pokemon.forme && /(mega|primal)/i.test(pokemon.forme)) {
       const baseSpeciesKey = normalizePokemonNameKey(pokemon.baseSpecies);
       const bucket = megaCandidatesByBaseSpeciesKey.get(baseSpeciesKey) ?? [];
@@ -128,6 +133,7 @@ function buildPokemonLookup(pokemonEntries: PokemonRecord[]) {
   return {
     byNameKey,
     megaCandidatesByBaseSpeciesKey,
+    basePokemonBySpeciesKey,
   };
 }
 
@@ -181,7 +187,16 @@ function resolveImportedPokemon(
     return null;
   }
 
-  return resolveMegaOrPrimalForm(exactMatch, parsedSet.itemName, lookup.megaCandidatesByBaseSpeciesKey);
+  const pokemon = resolveMegaOrPrimalForm(exactMatch, parsedSet.itemName, lookup.megaCandidatesByBaseSpeciesKey);
+  const basePokemon =
+    pokemon.forme && /(mega|primal)/i.test(pokemon.forme)
+      ? lookup.basePokemonBySpeciesKey.get(normalizePokemonNameKey(pokemon.baseSpecies)) ?? exactMatch
+      : pokemon;
+
+  return {
+    pokemon,
+    basePokemon,
+  };
 }
 
 function buildImportedSavedAttack(move: MoveRecord): PersistedSavedAttack | null {
@@ -255,13 +270,14 @@ export function importShowdownTeamText(
   const skippedStatusMoves: string[] = [];
 
   for (const parsedSet of parsedSets.slice(0, options.maxTeamSize)) {
-    const pokemon = resolveImportedPokemon(parsedSet, lookup);
+    const resolved = resolveImportedPokemon(parsedSet, lookup);
 
-    if (!pokemon) {
+    if (!resolved) {
       unresolvedSpecies.push(parsedSet.speciesName);
       slots.push({
         query: parsedSet.speciesName,
         pokemonId: null,
+        activeFormPokemonId: null,
         itemName: parsedSet.itemName,
         knownMoves: [],
         savedAttacks: [],
@@ -269,6 +285,7 @@ export function importShowdownTeamText(
       continue;
     }
 
+    const { pokemon, basePokemon } = resolved;
     const knownMoves: PersistedKnownMove[] = [];
     const savedAttacks: PersistedSavedAttack[] = [];
 
@@ -299,8 +316,9 @@ export function importShowdownTeamText(
     }
 
     slots.push({
-      query: pokemon.name,
-      pokemonId: pokemon.id,
+      query: basePokemon.name,
+      pokemonId: basePokemon.id,
+      activeFormPokemonId: pokemon.id !== basePokemon.id ? pokemon.id : null,
       itemName: parsedSet.itemName,
       knownMoves,
       savedAttacks,

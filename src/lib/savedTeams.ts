@@ -28,6 +28,7 @@ export type PersistedSavedAttack = {
 export type PersistedTeamSlot = {
   query: string;
   pokemonId: string | null;
+  activeFormPokemonId?: string | null;
   itemName?: string | null;
   statSpread?: ChampionsStatSpread | null;
   savedAttacks?: PersistedSavedAttack[];
@@ -43,7 +44,7 @@ export type PersistedTeam = {
   id: string;
   name: string;
   updatedAt: string;
-  version: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  version: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
   slots: PersistedTeamSlot[];
   openerSelections?: PersistedOpenerSelection[];
 };
@@ -111,7 +112,7 @@ export async function saveTeam(team: Omit<PersistedTeam, "id" | "updatedAt" | "v
       : `team-${Date.now()}`),
     name: team.name,
     updatedAt: new Date().toISOString(),
-    version: 7,
+    version: 8,
     slots: team.slots,
     openerSelections: team.openerSelections,
   };
