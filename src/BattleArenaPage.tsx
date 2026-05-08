@@ -609,6 +609,8 @@ function formatArenaStatus(combatant: BattleCombatantState) {
       return "PSN";
     case "badPoison":
       return `TOX${combatant.toxicTurns > 0 ? ` ${combatant.toxicTurns}` : ""}`;
+    case "freeze":
+      return "FRZ";
     default:
       return "";
   }
@@ -890,6 +892,8 @@ function classifyEvent(event: TurnEvent | null): EventTone {
     text.includes("taunt") ||
     text.includes("spore") ||
     text.includes("sleep") ||
+    text.includes("freeze") ||
+    text.includes("frozen") ||
     text.includes("burn") ||
     text.includes("paralysis") ||
     text.includes("redirect") ||

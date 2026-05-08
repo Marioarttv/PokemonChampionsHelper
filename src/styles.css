@@ -13476,6 +13476,7 @@ textarea::placeholder {
 .arena-status.sleep { color: #b9cfff; background: rgba(122, 160, 255, 0.13); }
 .arena-status.poison { color: #d5b5ff; background: rgba(183, 121, 255, 0.14); }
 .arena-status.badPoison { color: #e1a6ff; background: rgba(201, 87, 255, 0.15); }
+.arena-status.freeze { color: #b7eaff; background: rgba(125, 211, 252, 0.14); }
 
 .arena-sprite-stage {
   position: relative;

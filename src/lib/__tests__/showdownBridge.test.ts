@@ -252,12 +252,15 @@ describe("showdownSnapshotToBattleInput", () => {
     expect(result.input?.enemy[0].pokemon.name).toBe("Floette-Mega");
   });
 
-  it("normalizes Showdown poison status ids into battle statuses", () => {
+  it("normalizes Showdown status ids into battle statuses", () => {
     const snapshot = baseSnapshot();
     const floette = snapshot.battle.sides.p1?.active[0];
     if (!floette) throw new Error("missing Floette fixture");
     floette.status = "tox";
     floette.statusData = { toxicTurns: 3 };
+    const archaludon = snapshot.battle.sides.p2?.active[1];
+    if (!archaludon) throw new Error("missing Archaludon fixture");
+    archaludon.status = "frz";
 
     const garchomp = showdownPokemon({
       name: "Garchomp",
@@ -273,9 +276,12 @@ describe("showdownSnapshotToBattleInput", () => {
 
     expect(result.warnings).not.toContain('Floette-Mega has unsupported status "tox".');
     expect(result.warnings).not.toContain('Garchomp has unsupported status "psn".');
+    expect(result.warnings).not.toContain('Archaludon has unsupported status "frz".');
     expect(result.input?.ally[0].statusCondition).toBe("badPoison");
     expect(result.input?.ally[0].toxicTurns).toBe(3);
     expect(result.input?.enemy[0].pokemon.name).toBe("Garchomp");
     expect(result.input?.enemy[0].statusCondition).toBe("poison");
+    expect(result.input?.enemy[1].pokemon.name).toBe("Archaludon");
+    expect(result.input?.enemy[1].statusCondition).toBe("freeze");
   });
 });

@@ -161,6 +161,7 @@ type HpParseResult = {
 const STATUS_MAP: Record<string, BattleStatusCondition> = {
   "": "none",
   brn: "burn",
+  frz: "freeze",
   par: "paralysis",
   psn: "poison",
   slp: "sleep",

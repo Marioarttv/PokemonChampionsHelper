@@ -374,6 +374,7 @@ const BATTLE_STATUS_OPTIONS: Array<{ value: BattleStatusCondition; label: string
   { value: "sleep", label: "Sleep" },
   { value: "poison", label: "Poison" },
   { value: "badPoison", label: "Badly Poisoned" },
+  { value: "freeze", label: "Freeze" },
 ];
 const BATTLE_STAGE_OPTIONS = Array.from({ length: 13 }, (_, index) => index - 6);
 const LEGAL_ORDER_BY_KEY = new Map(
@@ -3275,6 +3276,8 @@ function formatBattlefieldStatusLabel(statusCondition: BattleStatusCondition, sl
       return "PSN";
     case "badPoison":
       return `TOX ${Math.max(1, toxicTurns || 1)}`;
+    case "freeze":
+      return "FRZ";
     default:
       return null;
   }
@@ -5836,6 +5839,7 @@ const STATUS_PALETTE: Record<BattleStatusCondition, { label: string; tint: strin
   sleep: { label: "SLP", tint: "rgba(122, 160, 255, 0.28)", color: "#b9cfff" },
   poison: { label: "PSN", tint: "rgba(183, 121, 255, 0.24)", color: "#d5b5ff" },
   badPoison: { label: "TOX", tint: "rgba(201, 87, 255, 0.26)", color: "#e1a6ff" },
+  freeze: { label: "FRZ", tint: "rgba(125, 211, 252, 0.24)", color: "#b7eaff" },
 };
 
 function getBattleLabAvailableMoves(combatant: BattleCombatantState) {
@@ -6264,7 +6268,7 @@ function applyBattleLabEventToDisplayState(state: BattleState, event: TurnEvent,
     return;
   }
 
-  match = text.match(/^(.+?) is now (burned|paralyzed|asleep|poisoned|badly poisoned)\.$/i);
+  match = text.match(/^(.+?) is now (burned|paralyzed|asleep|poisoned|badly poisoned|frozen)\.$/i);
   if (match) {
     const targetId = getBattleLabEventCombatantId(state, event, "target", match[1]);
     const target = targetId ? state.combatants[targetId] : null;
@@ -6275,6 +6279,7 @@ function applyBattleLabEventToDisplayState(state: BattleState, event: TurnEvent,
         asleep: "sleep",
         poisoned: "poison",
         "badly poisoned": "badPoison",
+        frozen: "freeze",
       };
       const statusLabel = (match[2] ?? "").toLowerCase();
       target.statusCondition = statusByLabel[statusLabel] ?? "none";
@@ -6509,6 +6514,11 @@ function summarizeBattleLabEvent(text: string) {
   match = trimmed.match(/^(.+?) is asleep and cannot move\.$/i);
   if (match) {
     return `${match[1]} asleep`;
+  }
+
+  match = trimmed.match(/^(.+?) is frozen solid and cannot move\.$/i);
+  if (match) {
+    return `${match[1]} frozen`;
   }
 
   match = trimmed.match(/^(.+?)'s (.+?) fails\.$/i);
@@ -10382,6 +10392,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       text.includes("fell asleep") ||
       text.includes("sleep") ||
       text.includes("asleep") ||
+      text.includes("freeze") ||
+      text.includes("frozen") ||
       text.includes("poison") ||
       text.includes("poisoned")
     ) {

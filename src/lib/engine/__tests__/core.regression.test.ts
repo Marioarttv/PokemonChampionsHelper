@@ -1078,6 +1078,62 @@ describe("engine regression coverage", () => {
     expect(result.state.combatants["enemy-0"].statusCondition).toBe("none");
   });
 
+  it("prevents frozen active combatants from moving", () => {
+    const frozenAttacker = makePokemon("Frozen Attacker");
+    const defender = makePokemon("Defender");
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 60, target: "normal" });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: frozenAttacker, moveNames: ["Tackle"], statusCondition: "freeze" })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: defender, moveNames: [] })],
+      moves: [tackle],
+    });
+
+    const result = resolveTurn(
+      state,
+      buildMovePlan(state, "ally", [{ actorId: "ally-0", moveName: "Tackle", targetId: "enemy-0" }]),
+      buildPassPlan(state, "enemy", ["enemy-0"]),
+    );
+
+    expect(result.state.combatants["enemy-0"].currentHp).toBe(state.combatants["enemy-0"].currentHp);
+    expect(result.events.some((event) => event.text.includes("is frozen solid and cannot move"))).toBe(true);
+  });
+
+  it("blocks freeze against Ice types and in sun", () => {
+    const attacker = makePokemon("Ice Attacker", { baseStats: { spa: 120 } });
+    const iceTarget = makePokemon("Ice Target", { types: ["Ice"], baseStats: { hp: 180, spd: 120 } });
+    const sunTarget = makePokemon("Sun Target", { baseStats: { hp: 180, spd: 120 } });
+    const iceBeam = makeMove("Ice Beam", { type: "Ice", category: "Special", basePower: 50, target: "normal" });
+    const iceState = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: attacker, moveNames: ["Ice Beam"] })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: iceTarget, moveNames: [] })],
+      moves: [iceBeam],
+    });
+    const sunState = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: attacker, moveNames: ["Ice Beam"] })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: sunTarget, moveNames: [] })],
+      moves: [iceBeam],
+      weather: "sun",
+    });
+
+    const iceResult = resolveTurn(
+      iceState,
+      buildMovePlan(iceState, "ally", [{ actorId: "ally-0", moveName: "Ice Beam", targetId: "enemy-0" }]),
+      buildPassPlan(iceState, "enemy", ["enemy-0"]),
+      "average",
+      { secondaryMode: "on" },
+    );
+    const sunResult = resolveTurn(
+      sunState,
+      buildMovePlan(sunState, "ally", [{ actorId: "ally-0", moveName: "Ice Beam", targetId: "enemy-0" }]),
+      buildPassPlan(sunState, "enemy", ["enemy-0"]),
+      "average",
+      { secondaryMode: "on" },
+    );
+
+    expect(iceResult.state.combatants["enemy-0"].statusCondition).toBe("none");
+    expect(sunResult.state.combatants["enemy-0"].statusCondition).toBe("none");
+  });
+
   it("reaches depth 3 in deep mode on low-branch positions and returns PV diagnostics", () => {
     const ally = makePokemon("Closer", { baseStats: { atk: 120, spe: 105 } });
     const enemy = makePokemon("Wall", { baseStats: { hp: 110, def: 110, spe: 70 } });

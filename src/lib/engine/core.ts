@@ -99,6 +99,8 @@ function formatStatusEventLabel(statusCondition: BattleStatusCondition) {
       return "poisoned";
     case "badPoison":
       return "badly poisoned";
+    case "freeze":
+      return "frozen";
     default:
       return "healthy";
   }
@@ -1320,6 +1322,9 @@ function getSupportMoveThreatScore(move: BattleMoveOption) {
       if (isPoisonStatus(move.effectData?.statusCondition ?? "none")) {
         return 68;
       }
+      if (move.effectData?.statusCondition === "freeze") {
+        return 88;
+      }
       return 55;
     case "taunt":
     case "encore":
@@ -1731,6 +1736,10 @@ function scoreStatusAction(state: BattleState, move: BattleMoveOption, targetId:
     return 42;
   }
 
+  if (move.effectData?.statusCondition === "freeze") {
+    return 72;
+  }
+
   return 30;
 }
 
@@ -2114,7 +2123,7 @@ function generateActionsForActor(
     actions.push(buildPlannedAction(state, actorId, { type: "pass", actorId }));
   }
 
-  if (actor.statusCondition === "sleep" && actor.sleepTurns > 1) {
+  if (actor.statusCondition === "freeze" || (actor.statusCondition === "sleep" && actor.sleepTurns > 1)) {
     return actions
       .filter((entry) => entry.action.type === "switch" || entry.action.type === "pass")
       .slice(0, maxIndividualActions);
@@ -3762,11 +3771,16 @@ function applyOnHitEffects(
 }
 
 function resolveStartOfTurnSleep(state: BattleState, events: TurnEvent[]) {
-  const asleepThisTurn = new Set<string>();
+  const statusLockedThisTurn = new Set<string>();
 
   for (const actorId of [...getActiveIds(state, "ally"), ...getActiveIds(state, "enemy")]) {
     const actor = state.combatants[actorId];
-    if (!actor || actor.statusCondition !== "sleep") {
+    if (!actor || (actor.statusCondition !== "sleep" && actor.statusCondition !== "freeze")) {
+      continue;
+    }
+
+    if (actor.statusCondition === "freeze") {
+      statusLockedThisTurn.add(actor.id);
       continue;
     }
 
@@ -3778,10 +3792,10 @@ function resolveStartOfTurnSleep(state: BattleState, events: TurnEvent[]) {
     }
 
     actor.sleepTurns -= 1;
-    asleepThisTurn.add(actor.id);
+    statusLockedThisTurn.add(actor.id);
   }
 
-  return asleepThisTurn;
+  return statusLockedThisTurn;
 }
 
 type TurnResolutionOptions = {
@@ -3796,7 +3810,7 @@ function executeMove(
   damageMode: DamageRollMode,
   resolutionOptions: TurnResolutionOptions,
   actedIds: Set<string>,
-  asleepThisTurn: Set<string>,
+  statusLockedThisTurn: Set<string>,
 ) {
   const actor = state.combatants[action.actorId];
   const move = getMoveOption(state, action.actorId, action.moveId);
@@ -3806,8 +3820,14 @@ function executeMove(
     return;
   }
 
-  if (asleepThisTurn.has(actor.id)) {
-    events.push({ actorId: actor.id, text: `${actor.pokemon.name} is asleep and cannot move.` });
+  if (statusLockedThisTurn.has(actor.id)) {
+    events.push({
+      actorId: actor.id,
+      text:
+        actor.statusCondition === "freeze"
+          ? `${actor.pokemon.name} is frozen solid and cannot move.`
+          : `${actor.pokemon.name} is asleep and cannot move.`,
+    });
     return;
   }
 
@@ -4379,7 +4399,7 @@ export function resolveTurn(
   const state = cloneBattleState(initialState);
   const events: TurnEvent[] = [];
   const startingActiveIds = new Set([...getActiveIds(state, "ally"), ...getActiveIds(state, "enemy")]);
-  const asleepThisTurn = resolveStartOfTurnSleep(state, events);
+  const statusLockedThisTurn = resolveStartOfTurnSleep(state, events);
   const allActions = [...(allyPlan?.actions ?? []), ...(enemyPlan?.actions ?? [])];
   const switchedActiveIds = new Map<string, string>();
 
@@ -4432,7 +4452,7 @@ export function resolveTurn(
       continue;
     }
 
-    executeMove(state, action.action, events, damageMode, resolutionOptions, actedIds, asleepThisTurn);
+    executeMove(state, action.action, events, damageMode, resolutionOptions, actedIds, statusLockedThisTurn);
     actedIds.add(action.actorId);
   }
 

@@ -15,6 +15,10 @@ function blocksStatusByTerrain(state: BattleState, target: BattleCombatantState,
     return true;
   }
 
+  if (state.field.weather === "sun" && statusCondition === "freeze") {
+    return true;
+  }
+
   return false;
 }
 
@@ -28,6 +32,10 @@ function blocksStatusByType(target: BattleCombatantState, statusCondition: Battl
   }
 
   if (statusCondition === "sleep" && move?.effectData?.powderMove && target.pokemon.types.includes("Grass")) {
+    return true;
+  }
+
+  if (statusCondition === "freeze" && target.pokemon.types.includes("Ice")) {
     return true;
   }
 
