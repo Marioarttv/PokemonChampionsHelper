@@ -38,6 +38,7 @@ type FixtureMemberOptions = {
   itemName?: string | null;
   statusCondition?: BattleStateMemberInput["statusCondition"];
   sleepTurns?: number;
+  toxicTurns?: number;
   knownMoves?: PersistedKnownMove[];
   candidateMoves?: CandidateMove[];
   knowledge?: BattleStateMemberInput["knowledge"];
@@ -134,6 +135,7 @@ export function makeMember(options: FixtureMemberOptions): BattleStateMemberInpu
     stages: options.stages,
     statusCondition: options.statusCondition ?? "none",
     sleepTurns: options.sleepTurns ?? 0,
+    toxicTurns: options.toxicTurns ?? 0,
     isProtected: options.isProtected ?? false,
     tauntTurns: options.tauntTurns ?? 0,
     encoreTurns: options.encoreTurns ?? 0,

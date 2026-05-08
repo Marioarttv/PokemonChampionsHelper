@@ -34,6 +34,7 @@ type RuntimeBattleState = {
   speedStage: number;
   statusCondition: BattleStateMemberInput["statusCondition"];
   sleepTurns: number;
+  toxicTurns?: number;
   tauntTurns: number;
   encoreTurns: number;
   encoredMoveId: string | null;
@@ -303,6 +304,7 @@ export function buildAllyBattleStateMember(input: AllyMemberInput & { moveByKey:
     stages: toStageBlock(input.runtime),
     statusCondition: input.runtime.statusCondition,
     sleepTurns: input.runtime.statusCondition === "sleep" ? input.runtime.sleepTurns : 0,
+    toxicTurns: input.runtime.statusCondition === "badPoison" ? input.runtime.toxicTurns ?? 1 : 0,
     tauntTurns: input.runtime.tauntTurns,
     encoreTurns: input.runtime.encoreTurns,
     encoredMoveId: input.runtime.encoredMoveId,
@@ -342,6 +344,7 @@ export function buildEnemyBattleStateMember(input: EnemyMemberInput) {
     stages: toStageBlock(input.runtime),
     statusCondition: input.runtime.statusCondition,
     sleepTurns: input.runtime.statusCondition === "sleep" ? input.runtime.sleepTurns : 0,
+    toxicTurns: input.runtime.statusCondition === "badPoison" ? input.runtime.toxicTurns ?? 1 : 0,
     tauntTurns: input.runtime.tauntTurns,
     encoreTurns: input.runtime.encoreTurns,
     encoredMoveId: input.runtime.encoredMoveId,

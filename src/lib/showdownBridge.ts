@@ -162,7 +162,9 @@ const STATUS_MAP: Record<string, BattleStatusCondition> = {
   "": "none",
   brn: "burn",
   par: "paralysis",
+  psn: "poison",
   slp: "sleep",
+  tox: "badPoison",
   fnt: "none",
 };
 
@@ -294,12 +296,26 @@ function parseHpCondition(condition: string | null | undefined, fallbackHp: numb
   return { hpPercent: 100, fainted: false };
 }
 
-function mapStatus(status: string, warnings: string[], label: string): BattleStatusCondition {
-  const key = normalizeKey(status);
+function parseStatusFromCondition(condition: string | null | undefined) {
+  const parts = condition?.trim().split(/\s+/).slice(1) ?? [];
+  return parts.find((part) => STATUS_MAP[normalizeKey(part)]) ?? "";
+}
+
+function mapStatus(status: string | null | undefined, warnings: string[], label: string): BattleStatusCondition {
+  const key = normalizeKey(status ?? "");
   const mapped = STATUS_MAP[key];
   if (mapped) return mapped;
   if (key) warnings.push(`${label} has unsupported status "${status}".`);
   return "none";
+}
+
+function getToxicTurns(pokemon: ShowdownPokemonSnapshot, statusCondition: BattleStatusCondition) {
+  if (statusCondition !== "badPoison") {
+    return 0;
+  }
+
+  const toxicTurns = pokemon.statusData?.toxicTurns;
+  return typeof toxicTurns === "number" && Number.isFinite(toxicTurns) ? Math.max(1, Math.round(toxicTurns)) : 1;
 }
 
 function cleanPublicName(value: string | null | undefined) {
@@ -443,7 +459,7 @@ function buildMembersForSide(
       showdownPokemon.hp,
       showdownPokemon.maxhp,
     );
-    const statusCondition = mapStatus(showdownPokemon.status, warnings, pokemon.name);
+    const statusCondition = mapStatus(showdownPokemon.status || parseStatusFromCondition(requestPokemon?.condition), warnings, pokemon.name);
     const knownMoveNames = getKnownMoveNames(role, showdownPokemon, requestPokemon, requestActive);
     const publicAbilityName = cleanPublicName(showdownPokemon.ability || showdownPokemon.baseAbility);
     const publicItemName = cleanPublicName(showdownPokemon.item);
@@ -471,6 +487,7 @@ function buildMembersForSide(
       stages: getStageBlock(showdownPokemon.boosts),
       statusCondition,
       sleepTurns: statusCondition === "sleep" ? Math.max(1, showdownPokemon.statusData?.sleepTurns ?? 1) : 0,
+      toxicTurns: getToxicTurns(showdownPokemon, statusCondition),
       tauntTurns: showdownPokemon.volatiles.includes("taunt") ? 1 : 0,
       encoreTurns: showdownPokemon.volatiles.includes("encore") ? 1 : 0,
       encoredMoveId: null,

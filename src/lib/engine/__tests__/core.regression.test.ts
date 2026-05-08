@@ -1031,6 +1031,53 @@ describe("engine regression coverage", () => {
     expect(result.state.combatants["enemy-0"].currentHp).toBeLessThan(enemyStartingHp);
   });
 
+  it("applies poison and bad poison residual damage at end of turn", () => {
+    const regularPoisoned = makePokemon("Regular Poisoned", { baseStats: { hp: 160 } });
+    const badlyPoisoned = makePokemon("Badly Poisoned", { baseStats: { hp: 160 } });
+    const enemy = makePokemon("Enemy");
+    const state = createTestBattleState({
+      ally: [
+        makeMember({ side: "ally", slot: 0, pokemon: regularPoisoned, moveNames: [], statusCondition: "poison" }),
+        makeMember({ side: "ally", slot: 1, pokemon: badlyPoisoned, moveNames: [], statusCondition: "badPoison", toxicTurns: 2 }),
+      ],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: enemy, moveNames: [] })],
+      moves: [],
+    });
+
+    const regularStartHp = state.combatants["ally-0"].currentHp;
+    const badlyStartHp = state.combatants["ally-1"].currentHp;
+    const regularDamage = Math.max(1, Math.floor(state.combatants["ally-0"].maxHp / 8));
+    const badlyPoisonDamage = Math.max(1, Math.floor((state.combatants["ally-1"].maxHp * 2) / 16));
+    const result = resolveTurn(
+      state,
+      buildPassPlan(state, "ally", ["ally-0", "ally-1"]),
+      buildPassPlan(state, "enemy", ["enemy-0"]),
+    );
+
+    expect(result.state.combatants["ally-0"].currentHp).toBe(regularStartHp - regularDamage);
+    expect(result.state.combatants["ally-1"].currentHp).toBe(badlyStartHp - badlyPoisonDamage);
+    expect(result.state.combatants["ally-1"].toxicTurns).toBe(3);
+  });
+
+  it("blocks poison and bad poison against immune types", () => {
+    const attacker = makePokemon("Status Attacker");
+    const steelTarget = makePokemon("Steel Target", { types: ["Steel"] });
+    const toxic = makeMove("Toxic", { type: "Poison", category: "Status", basePower: 0, target: "normal" });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: attacker, moveNames: ["Toxic"] })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: steelTarget, moveNames: [] })],
+      moves: [toxic],
+    });
+
+    const result = resolveTurn(
+      state,
+      buildMovePlan(state, "ally", [{ actorId: "ally-0", moveName: "Toxic", targetId: "enemy-0" }]),
+      buildPassPlan(state, "enemy", ["enemy-0"]),
+    );
+
+    expect(result.state.combatants["enemy-0"].statusCondition).toBe("none");
+  });
+
   it("reaches depth 3 in deep mode on low-branch positions and returns PV diagnostics", () => {
     const ally = makePokemon("Closer", { baseStats: { atk: 120, spe: 105 } });
     const enemy = makePokemon("Wall", { baseStats: { hp: 110, def: 110, spe: 70 } });

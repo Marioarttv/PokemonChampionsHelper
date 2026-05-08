@@ -7,6 +7,7 @@ function serializeCombatant(combatant: BattleCombatantState) {
     combatant.turnsActive,
     combatant.statusCondition,
     combatant.sleepTurns,
+    combatant.toxicTurns,
     combatant.tauntTurns,
     combatant.encoreTurns,
     combatant.encoredMoveId ?? "",

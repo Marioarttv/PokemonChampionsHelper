@@ -29,6 +29,11 @@ const pokemonEntries = [
     types: ["Steel", "Dragon"],
     abilities: { "0": "Stamina" },
   }),
+  makePokemon("Garchomp", {
+    id: "garchomp",
+    types: ["Dragon", "Ground"],
+    abilities: { "0": "Rough Skin" },
+  }),
   makePokemon("Politoed", {
     id: "politoed",
     types: ["Water"],
@@ -245,5 +250,32 @@ describe("showdownSnapshotToBattleInput", () => {
 
     expect(result.input?.ally[0].pokemon.name).toBe("Manectric");
     expect(result.input?.enemy[0].pokemon.name).toBe("Floette-Mega");
+  });
+
+  it("normalizes Showdown poison status ids into battle statuses", () => {
+    const snapshot = baseSnapshot();
+    const floette = snapshot.battle.sides.p1?.active[0];
+    if (!floette) throw new Error("missing Floette fixture");
+    floette.status = "tox";
+    floette.statusData = { toxicTurns: 3 };
+
+    const garchomp = showdownPokemon({
+      name: "Garchomp",
+      speciesForme: "Garchomp",
+      ident: "p2a: Garchomp",
+      details: "Garchomp, L50, M",
+      status: "psn",
+    });
+    snapshot.battle.sides.p2!.active[0] = garchomp;
+    snapshot.battle.sides.p2!.pokemon = [garchomp, ...snapshot.battle.sides.p2!.pokemon.slice(1)];
+
+    const result = showdownSnapshotToBattleInput(snapshot, { pokemonEntries, moveByKey });
+
+    expect(result.warnings).not.toContain('Floette-Mega has unsupported status "tox".');
+    expect(result.warnings).not.toContain('Garchomp has unsupported status "psn".');
+    expect(result.input?.ally[0].statusCondition).toBe("badPoison");
+    expect(result.input?.ally[0].toxicTurns).toBe(3);
+    expect(result.input?.enemy[0].pokemon.name).toBe("Garchomp");
+    expect(result.input?.enemy[0].statusCondition).toBe("poison");
   });
 });

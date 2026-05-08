@@ -8,7 +8,8 @@ Load this folder as an unpacked Chrome extension.
 4. Select `Extension/showdown-bridge`.
 5. Reload any already-open Pokemon Showdown and helper app tabs so the content
    scripts attach.
-6. Keep one tab on Pokemon Showdown and one tab on this app.
+6. Keep one tab on Pokemon Showdown and one tab on this app. The helper app can
+   be local, GitHub Pages, or `https://pokemon-champions-helper.vercel.app/`.
 
 The bridge injects a page-context probe into Pokemon Showdown, reads the active
 `BattleRoom` runtime state, and relays sanitized snapshots into the helper app.

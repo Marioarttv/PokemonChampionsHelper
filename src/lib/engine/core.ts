@@ -48,6 +48,9 @@ const DOUBLES_SCREEN_MULTIPLIER = 2 / 3;
 const SITRUS_BERRY_HEAL_FRACTION = 0.25;
 const LEFTOVERS_HEAL_FRACTION = 1 / 16;
 const BLACK_SLUDGE_DAMAGE_FRACTION = 1 / 8;
+const BURN_DAMAGE_FRACTION = 1 / 16;
+const POISON_DAMAGE_FRACTION = 1 / 8;
+const POISON_HEAL_FRACTION = 1 / 8;
 const STAGE_KEYS: Array<keyof BattleStatStages> = ["attack", "defense", "specialAttack", "specialDefense", "speed"];
 const WEATHER_ENTRY_ABILITIES: Record<string, BattleState["field"]["weather"]> = {
   drizzle: "rain",
@@ -78,6 +81,27 @@ function hasAnyAbilityKey(combatant: BattleCombatantState, keys: readonly string
 
 function hasAnyItemKey(combatant: BattleCombatantState, keys: readonly string[]) {
   return keys.includes(getItemKey(combatant));
+}
+
+function isPoisonStatus(statusCondition: BattleStatusCondition) {
+  return statusCondition === "poison" || statusCondition === "badPoison";
+}
+
+function formatStatusEventLabel(statusCondition: BattleStatusCondition) {
+  switch (statusCondition) {
+    case "burn":
+      return "burned";
+    case "paralysis":
+      return "paralyzed";
+    case "sleep":
+      return "asleep";
+    case "poison":
+      return "poisoned";
+    case "badPoison":
+      return "badly poisoned";
+    default:
+      return "healthy";
+  }
 }
 
 function getMoveFromLookup(moveName: string, moveByKey: ReadonlyMap<string, MoveRecord>) {
@@ -367,6 +391,7 @@ function createCombatantState(
   const statusCondition = member.statusCondition ?? "none";
   const sleepTurns =
     statusCondition === "sleep" ? Math.max(1, Math.round(member.sleepTurns ?? DEFAULT_SLEEP_TURNS)) : 0;
+  const toxicTurns = statusCondition === "badPoison" ? Math.max(1, Math.round(member.toxicTurns ?? 1)) : 0;
   const infoMode = member.infoMode ?? "custom";
   const hypothesisCandidateMoves =
     infoMode === "closedSheet"
@@ -425,6 +450,7 @@ function createCombatantState(
     },
     statusCondition,
     sleepTurns,
+    toxicTurns,
     tauntTurns: Math.max(0, Math.round(member.tauntTurns ?? 0)),
     encoreTurns: Math.max(0, Math.round(member.encoreTurns ?? 0)),
     encoredMoveId: member.encoredMoveId ?? null,
@@ -804,7 +830,16 @@ export function getDamagePreview(
   let externalMultiplier = 1;
   externalMultiplier *= getScreenDamageMultiplier(state, defender, move);
 
-  if (attacker.statusCondition === "burn" && move.category === "physical") {
+  const attackerAbilityKey = getAbilityKey(attacker);
+  if (attackerAbilityKey === "guts" && attacker.statusCondition !== "none" && move.category === "physical") {
+    externalMultiplier *= 1.5;
+  }
+
+  if (attackerAbilityKey === "toxicboost" && isPoisonStatus(attacker.statusCondition) && move.category === "physical") {
+    externalMultiplier *= 1.5;
+  }
+
+  if (attacker.statusCondition === "burn" && move.category === "physical" && attackerAbilityKey !== "guts") {
     externalMultiplier *= 0.5;
   }
 
@@ -1282,6 +1317,9 @@ function getSupportMoveThreatScore(move: BattleMoveOption) {
       if (move.effectData?.statusCondition === "paralysis" || (move.effectData?.targetStages?.speed ?? 0) < 0) {
         return 82;
       }
+      if (isPoisonStatus(move.effectData?.statusCondition ?? "none")) {
+        return 68;
+      }
       return 55;
     case "taunt":
     case "encore":
@@ -1685,6 +1723,14 @@ function scoreStatusAction(state: BattleState, move: BattleMoveOption, targetId:
     return 50 + Math.max(0, target.stages.attack) * 12;
   }
 
+  if (move.effectData?.statusCondition === "badPoison") {
+    return 58 + Math.round((target.currentHp / Math.max(1, target.maxHp)) * 30);
+  }
+
+  if (move.effectData?.statusCondition === "poison") {
+    return 42;
+  }
+
   return 30;
 }
 
@@ -1958,7 +2004,8 @@ function buildPlannedAction(
     Math.abs(move.effectData?.targetStages?.attack ?? 0) * 22 +
     Math.abs(move.effectData?.targetStages?.specialAttack ?? 0) * 22 +
     Math.abs(move.effectData?.targetStages?.speed ?? 0) * 18 +
-    (move.effectData?.statusCondition === "paralysis" ? 35 : 0);
+    (move.effectData?.statusCondition === "paralysis" ? 35 : 0) +
+    (isPoisonStatus(move.effectData?.statusCondition ?? "none") ? 24 : 0);
 
   const uncertaintyPenalty =
     move.source === "candidate" || move.source === "inferred"
@@ -3503,6 +3550,7 @@ function applyStatusCondition(
 
   target.statusCondition = statusCondition;
   target.sleepTurns = statusCondition === "sleep" ? DEFAULT_SLEEP_TURNS : 0;
+  target.toxicTurns = statusCondition === "badPoison" ? 1 : 0;
   return true;
 }
 
@@ -3700,7 +3748,7 @@ function applyOnHitEffects(
   ) {
     events.push({
       targetId: target.id,
-      text: `${target.pokemon.name} is now ${move.effectData.statusCondition}.`,
+      text: `${target.pokemon.name} is now ${formatStatusEventLabel(move.effectData.statusCondition)}.`,
     });
   }
 
@@ -3967,7 +4015,7 @@ function executeMove(
       }
       if (move.effectData?.statusCondition && applyStatusCondition(state, target, move.effectData.statusCondition, move)) {
         appliedAnything = true;
-        events.push({ actorId: actor.id, targetId, text: `${target.pokemon.name} is now ${move.effectData.statusCondition}.` });
+        events.push({ actorId: actor.id, targetId, text: `${target.pokemon.name} is now ${formatStatusEventLabel(move.effectData.statusCondition)}.` });
       }
       if (appliedAnything) {
         events.push({ actorId: actor.id, targetId, text: `${actor.pokemon.name} uses ${move.name} on ${target.pokemon.name}.` });
@@ -4159,6 +4207,66 @@ function decaySideConditions(sideState: BattleState["sides"][BattleSide]) {
   sideState.allySwitchPair = null;
 }
 
+function applyEndOfTurnStatusEffects(state: BattleState, combatant: BattleCombatantState, events: TurnEvent[]) {
+  if (combatant.currentHp <= 0 || combatant.statusCondition === "none" || !isActiveCombatant(state, combatant.id)) {
+    return;
+  }
+
+  const abilityKey = getAbilityKey(combatant);
+  if (abilityKey === "magicguard") {
+    if (combatant.statusCondition === "badPoison") {
+      combatant.toxicTurns = Math.min(15, Math.max(1, combatant.toxicTurns || 1) + 1);
+    }
+    return;
+  }
+
+  if (isPoisonStatus(combatant.statusCondition) && abilityKey === "poisonheal") {
+    const healed = healCombatant(state, combatant.id, POISON_HEAL_FRACTION);
+    if (healed > 0) {
+      events.push({
+        targetId: combatant.id,
+        text: `${combatant.pokemon.name} restores ${healed} HP with Poison Heal.`,
+      });
+    }
+    if (combatant.statusCondition === "badPoison") {
+      combatant.toxicTurns = Math.min(15, combatant.toxicTurns + 1);
+    }
+    return;
+  }
+
+  let damage = 0;
+  let source = "";
+  if (combatant.statusCondition === "burn") {
+    damage = Math.max(1, Math.floor(combatant.maxHp * BURN_DAMAGE_FRACTION));
+    source = "its burn";
+  } else if (combatant.statusCondition === "poison") {
+    damage = Math.max(1, Math.floor(combatant.maxHp * POISON_DAMAGE_FRACTION));
+    source = "poison";
+  } else if (combatant.statusCondition === "badPoison") {
+    const toxicStage = Math.max(1, Math.min(15, combatant.toxicTurns || 1));
+    damage = Math.max(1, Math.floor((combatant.maxHp * toxicStage) / 16));
+    source = "bad poison";
+    combatant.toxicTurns = Math.min(15, toxicStage + 1);
+  }
+
+  const appliedDamage = applyDamage(state, combatant.id, damage);
+  if (appliedDamage <= 0) {
+    return;
+  }
+
+  events.push({
+    targetId: combatant.id,
+    text: `${combatant.pokemon.name} is hurt by ${source} for ${appliedDamage} HP.`,
+  });
+
+  if (combatant.currentHp <= 0) {
+    events.push({
+      targetId: combatant.id,
+      text: `${combatant.pokemon.name} faints.`,
+    });
+  }
+}
+
 function applyEndOfTurnItemEffects(state: BattleState, combatant: BattleCombatantState, events: TurnEvent[]) {
   if (combatant.itemId === "leftovers") {
     const healed = healCombatant(state, combatant.id, LEFTOVERS_HEAL_FRACTION);
@@ -4207,6 +4315,16 @@ function applyEndOfTurnItemEffects(state: BattleState, combatant: BattleCombatan
 
 function finalizeTurn(state: BattleState, startingActiveIds: Set<string>, events: TurnEvent[]) {
   for (const combatant of Object.values(state.combatants)) {
+    if (combatant.currentHp <= 0) {
+      combatant.isProtected = false;
+      combatant.isFlinched = false;
+      combatant.wasSwitchedInThisTurn = false;
+      combatant.helpingHandTurns = 0;
+      continue;
+    }
+
+    applyEndOfTurnStatusEffects(state, combatant, events);
+
     if (combatant.currentHp <= 0) {
       combatant.isProtected = false;
       combatant.isFlinched = false;

@@ -80,6 +80,10 @@ function getStatusScore(state: BattleState, side: BattleSide) {
         score -= 90;
       } else if (combatant.statusCondition === "burn") {
         score -= 70;
+      } else if (combatant.statusCondition === "badPoison") {
+        score -= 85 + Math.max(0, combatant.toxicTurns - 1) * 12;
+      } else if (combatant.statusCondition === "poison") {
+        score -= 60;
       }
 
       score -= combatant.tauntTurns * 18;

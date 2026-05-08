@@ -26,6 +26,7 @@ export function buildBattleEngineInputSignature(options: BattleEngineInputSignat
     stages: member.stages ?? null,
     statusCondition: member.statusCondition ?? "none",
     sleepTurns: member.sleepTurns ?? 0,
+    toxicTurns: member.toxicTurns ?? 0,
     tauntTurns: member.tauntTurns ?? 0,
     encoreTurns: member.encoreTurns ?? 0,
     encoredMoveId: member.encoredMoveId ?? null,

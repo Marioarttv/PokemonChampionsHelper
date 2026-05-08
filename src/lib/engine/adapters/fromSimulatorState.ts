@@ -9,6 +9,7 @@ export type BattleRuntimeSnapshot = {
   speedStage: number;
   statusCondition: BattleStatusCondition;
   sleepTurns: number;
+  toxicTurns?: number;
   tauntTurns: number;
   encoreTurns: number;
   encoredMoveId: string | null;
@@ -41,6 +42,7 @@ export function applyRuntimeToBattleStateMembers(
       },
       statusCondition: runtime.statusCondition,
       sleepTurns: runtime.sleepTurns,
+      toxicTurns: runtime.statusCondition === "badPoison" ? runtime.toxicTurns ?? 1 : 0,
       tauntTurns: runtime.tauntTurns,
       encoreTurns: runtime.encoreTurns,
       encoredMoveId: runtime.encoredMoveId,

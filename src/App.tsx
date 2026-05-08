@@ -372,6 +372,8 @@ const BATTLE_STATUS_OPTIONS: Array<{ value: BattleStatusCondition; label: string
   { value: "burn", label: "Burn" },
   { value: "paralysis", label: "Paralysis" },
   { value: "sleep", label: "Sleep" },
+  { value: "poison", label: "Poison" },
+  { value: "badPoison", label: "Badly Poisoned" },
 ];
 const BATTLE_STAGE_OPTIONS = Array.from({ length: 13 }, (_, index) => index - 6);
 const LEGAL_ORDER_BY_KEY = new Map(
@@ -1268,6 +1270,7 @@ type BattleSimulatorMemberState = {
   speedStage: number;
   statusCondition: BattleStatusCondition;
   sleepTurns: number;
+  toxicTurns: number;
   tauntTurns: number;
   encoreTurns: number;
   encoredMoveId: string | null;
@@ -1301,6 +1304,7 @@ const DEFAULT_BATTLE_SIMULATOR_MEMBER_STATE: BattleSimulatorMemberState = {
   speedStage: 0,
   statusCondition: "none",
   sleepTurns: 0,
+  toxicTurns: 0,
   tauntTurns: 0,
   encoreTurns: 0,
   encoredMoveId: null,
@@ -3171,6 +3175,7 @@ function BattleSimulatorCard({
                   statusCondition === "sleep"
                     ? Math.max(1, state.sleepTurns || DEFAULT_BATTLE_SIMULATOR_MEMBER_STATE.sleepTurns || 2)
                     : 0,
+                toxicTurns: statusCondition === "badPoison" ? Math.max(1, state.toxicTurns || 1) : 0,
               });
             }}
           >
@@ -3195,6 +3200,26 @@ function BattleSimulatorCard({
             >
               {[1, 2, 3].map((turnCount) => (
                 <option key={`battle-sleep-turns-${turnCount}`} value={turnCount}>
+                  {turnCount}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+
+        {state.statusCondition === "badPoison" ? (
+          <label className="battle-simulator-field">
+            <span>Toxic turns</span>
+            <select
+              value={Math.max(1, state.toxicTurns || 1)}
+              onChange={(event) =>
+                onChange({
+                  toxicTurns: Math.max(1, Number(event.target.value) || 1),
+                })
+              }
+            >
+              {Array.from({ length: 15 }, (_, index) => index + 1).map((turnCount) => (
+                <option key={`battle-toxic-turns-${turnCount}`} value={turnCount}>
                   {turnCount}
                 </option>
               ))}
@@ -3238,7 +3263,7 @@ type BattleScenarioOption = {
   events: TurnEvent[];
 };
 
-function formatBattlefieldStatusLabel(statusCondition: BattleStatusCondition, sleepTurns: number) {
+function formatBattlefieldStatusLabel(statusCondition: BattleStatusCondition, sleepTurns: number, toxicTurns = 0) {
   switch (statusCondition) {
     case "burn":
       return "BRN";
@@ -3246,6 +3271,10 @@ function formatBattlefieldStatusLabel(statusCondition: BattleStatusCondition, sl
       return "PAR";
     case "sleep":
       return `SLP ${Math.max(1, sleepTurns || 1)}`;
+    case "poison":
+      return "PSN";
+    case "badPoison":
+      return `TOX ${Math.max(1, toxicTurns || 1)}`;
     default:
       return null;
   }
@@ -3293,7 +3322,7 @@ function BattlefieldPokemonSlot({ state, combatantId, side, rankLabel }: Battlef
   }
 
   const hpPercent = combatant.maxHp > 0 ? clampPercent((combatant.currentHp / combatant.maxHp) * 100) : 0;
-  const statusLabel = formatBattlefieldStatusLabel(combatant.statusCondition, combatant.sleepTurns);
+  const statusLabel = formatBattlefieldStatusLabel(combatant.statusCondition, combatant.sleepTurns, combatant.toxicTurns);
   const stageChips = getBattlefieldStageChips(state, combatantId);
   const sideLabel = side === "ally" ? `Slot ${combatant.teamIndex + 1}` : `Enemy ${combatant.teamIndex + 1}`;
 
@@ -5805,6 +5834,8 @@ const STATUS_PALETTE: Record<BattleStatusCondition, { label: string; tint: strin
   burn: { label: "BRN", tint: "rgba(239, 125, 87, 0.28)", color: "#ffb8a5" },
   paralysis: { label: "PAR", tint: "rgba(246, 207, 77, 0.26)", color: "#ffe489" },
   sleep: { label: "SLP", tint: "rgba(122, 160, 255, 0.28)", color: "#b9cfff" },
+  poison: { label: "PSN", tint: "rgba(183, 121, 255, 0.24)", color: "#d5b5ff" },
+  badPoison: { label: "TOX", tint: "rgba(201, 87, 255, 0.26)", color: "#e1a6ff" },
 };
 
 function getBattleLabAvailableMoves(combatant: BattleCombatantState) {
@@ -6233,12 +6264,22 @@ function applyBattleLabEventToDisplayState(state: BattleState, event: TurnEvent,
     return;
   }
 
-  match = text.match(/^(.+?) is now (burn|paralysis|sleep)\.$/i);
+  match = text.match(/^(.+?) is now (burned|paralyzed|asleep|poisoned|badly poisoned)\.$/i);
   if (match) {
     const targetId = getBattleLabEventCombatantId(state, event, "target", match[1]);
     const target = targetId ? state.combatants[targetId] : null;
     if (target) {
-      target.statusCondition = match[2] as BattleStatusCondition;
+      const statusByLabel: Record<string, BattleStatusCondition> = {
+        burned: "burn",
+        paralyzed: "paralysis",
+        asleep: "sleep",
+        poisoned: "poison",
+        "badly poisoned": "badPoison",
+      };
+      const statusLabel = (match[2] ?? "").toLowerCase();
+      target.statusCondition = statusByLabel[statusLabel] ?? "none";
+      target.sleepTurns = target.statusCondition === "sleep" ? Math.max(1, target.sleepTurns || 2) : 0;
+      target.toxicTurns = target.statusCondition === "badPoison" ? Math.max(1, target.toxicTurns || 1) : 0;
     }
     return;
   }
@@ -6483,6 +6524,11 @@ function summarizeBattleLabEvent(text: string) {
   match = trimmed.match(/^(.+?) restores (\d+) HP with (.+?)\.$/i);
   if (match) {
     return `${match[1]} +${match[2]} ${match[3]}`;
+  }
+
+  match = trimmed.match(/^(.+?) is hurt by (.+?) for (\d+) HP\.$/i);
+  if (match) {
+    return `${match[1]} ${match[2]} -${match[3]}`;
   }
 
   match = trimmed.match(/^(.+?) takes (\d+) Life Orb recoil\.$/i);
@@ -6752,6 +6798,7 @@ function BattleLabSlot({
             <small className="bl-slot-status" style={{ color: status.color }}>
               {status.label}
               {combatant.statusCondition === "sleep" && combatant.sleepTurns > 0 ? ` ${combatant.sleepTurns}` : ""}
+              {combatant.statusCondition === "badPoison" && combatant.toxicTurns > 0 ? ` ${combatant.toxicTurns}` : ""}
             </small>
           ) : null}
         </div>
@@ -6920,6 +6967,7 @@ function BattleLabSlot({
                         onEditPatch({
                           statusCondition: next,
                           sleepTurns: next === "sleep" ? Math.max(1, simulatorPatch.sleepTurns || 2) : 0,
+                          toxicTurns: next === "badPoison" ? Math.max(1, simulatorPatch.toxicTurns || 1) : 0,
                         });
                       }}
                     >
@@ -7001,13 +7049,17 @@ function BattleLabSlot({
                         {simulatorPatch.sleepTurns > 0 && simulatorPatch.statusCondition === "sleep" ? (
                           <span className="bl-stage-pill up">Sleep {simulatorPatch.sleepTurns}</span>
                         ) : null}
+                        {simulatorPatch.toxicTurns > 0 && simulatorPatch.statusCondition === "badPoison" ? (
+                          <span className="bl-stage-pill down">Toxic {simulatorPatch.toxicTurns}</span>
+                        ) : null}
                         {!lastMove &&
                         simulatorPatch.turnsActive === 0 &&
                         simulatorPatch.protectStreak === 0 &&
                         simulatorPatch.tauntTurns === 0 &&
                         simulatorPatch.encoreTurns === 0 &&
                         simulatorPatch.disableTurns === 0 &&
-                        (simulatorPatch.statusCondition !== "sleep" || simulatorPatch.sleepTurns === 0) ? (
+                        (simulatorPatch.statusCondition !== "sleep" || simulatorPatch.sleepTurns === 0) &&
+                        (simulatorPatch.statusCondition !== "badPoison" || simulatorPatch.toxicTurns === 0) ? (
                           <span className="bl-slot-editor-stage-neutral">No extra turn-state overrides</span>
                         ) : null}
                       </span>
@@ -7050,6 +7102,21 @@ function BattleLabSlot({
                             value={Math.max(1, simulatorPatch.sleepTurns || 1)}
                             onChange={(e) =>
                               onEditPatch({ sleepTurns: Math.max(1, Math.round(Number(e.target.value) || 1)) })
+                            }
+                          />
+                        </label>
+                      ) : null}
+                      {simulatorPatch.statusCondition === "badPoison" ? (
+                        <label>
+                          <span>Toxic Turns</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={15}
+                            step={1}
+                            value={Math.max(1, simulatorPatch.toxicTurns || 1)}
+                            onChange={(e) =>
+                              onEditPatch({ toxicTurns: Math.max(1, Math.min(15, Math.round(Number(e.target.value) || 1))) })
                             }
                           />
                         </label>
@@ -7667,6 +7734,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const [showdownBridgeSnapshot, setShowdownBridgeSnapshot] = useState<ShowdownBridgeSnapshot | null>(null);
   const [showdownBridgeStatus, setShowdownBridgeStatus] = useState<ShowdownBridgeStatus>("idle");
   const [showdownBridgeMessage, setShowdownBridgeMessage] = useState("Extension not detected");
+  const [pendingShowdownEnemyImport, setPendingShowdownEnemyImport] = useState(false);
   const battleEngineWorkerRef = useRef<Worker | null>(null);
   const battleEngineSearchRequestIdRef = useRef(0);
 
@@ -7764,6 +7832,10 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         nextStatusCondition === "sleep"
           ? Math.max(1, Math.round(patch.sleepTurns ?? existing.sleepTurns ?? 2))
           : 0;
+      const nextToxicTurns =
+        nextStatusCondition === "badPoison"
+          ? Math.max(1, Math.min(15, Math.round(patch.toxicTurns ?? existing.toxicTurns ?? 1)))
+          : 0;
       const nextTauntTurns = Math.max(0, Math.round(patch.tauntTurns ?? existing.tauntTurns));
       const nextEncoreTurns = Math.max(0, Math.round(patch.encoreTurns ?? existing.encoreTurns));
       const nextDisableTurns = Math.max(0, Math.round(patch.disableTurns ?? existing.disableTurns));
@@ -7784,6 +7856,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           speedStage: clampStatStage(patch.speedStage ?? existing.speedStage),
           statusCondition: nextStatusCondition,
           sleepTurns: nextSleepTurns,
+          toxicTurns: nextToxicTurns,
           tauntTurns: nextTauntTurns,
           encoreTurns: nextEncoreTurns,
           encoredMoveId: nextEncoreTurns > 0 ? patch.encoredMoveId ?? existing.encoredMoveId : null,
@@ -8008,6 +8081,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     if (Number.isNaN(capturedAt.getTime())) return "";
     return capturedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   }, [showdownBridgeSnapshot]);
+  const showdownEnemyImportCount = showdownBridgeImport?.input?.enemy.length ?? 0;
 
   const speciesMovesetByKey = useMemo(() => {
     const map = new Map<string, PersistedSpeciesMoveset>();
@@ -9472,6 +9546,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       stages: undefined,
       statusCondition: "none" as const,
       sleepTurns: 0,
+      toxicTurns: 0,
       tauntTurns: 0,
       encoreTurns: 0,
       encoredMoveId: null,
@@ -10035,6 +10110,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         speedStage: clampStatStage(combatant.stages.speed),
         statusCondition: combatant.statusCondition,
         sleepTurns: combatant.sleepTurns,
+        toxicTurns: combatant.toxicTurns,
         tauntTurns: combatant.tauntTurns,
         encoreTurns: combatant.encoreTurns,
         encoredMoveId: combatant.encoredMoveId,
@@ -10306,6 +10382,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       text.includes("fell asleep") ||
       text.includes("sleep") ||
       text.includes("asleep") ||
+      text.includes("poison") ||
       text.includes("poisoned")
     ) {
       kind = "status";
@@ -10901,6 +10978,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       speedStage: 0,
       statusCondition: "none",
       sleepTurns: 0,
+      toxicTurns: 0,
       tauntTurns: 0,
       encoreTurns: 0,
       encoredMoveId: null,
@@ -10939,6 +11017,99 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     setStorageMessage(`Loaded "${savedTeam.name}" into the enemy board.`);
     setStorageError(null);
   };
+
+  const applyShowdownEnemyTeamImport = (importResult: ShowdownBridgeImportResult | null) => {
+    const enemyMembers = importResult?.input?.enemy ?? [];
+
+    if (enemyMembers.length === 0) {
+      return false;
+    }
+
+    const importedMembers = enemyMembers.slice(0, MAX_OPPONENT_SCOUT_SLOTS);
+    const filledSlots = Array.from(
+      { length: MAX_OPPONENT_SCOUT_SLOTS },
+      (_, index) => importedMembers[index]?.pokemon.name ?? "",
+    );
+    const importedSlotIndices = importedMembers.map((_, index) => index);
+    const warningParts: string[] = [];
+
+    if (enemyMembers.length > MAX_OPPONENT_SCOUT_SLOTS) {
+      warningParts.push(`ignored ${enemyMembers.length - MAX_OPPONENT_SCOUT_SLOTS} extra Pokemon`);
+    }
+
+    if (importResult?.unresolvedSpecies.length) {
+      warningParts.push(`couldn't match Pokemon: ${formatImportIssueList(importResult.unresolvedSpecies)}`);
+    }
+
+    setOpponentQueries(filledSlots);
+    setAnalyzedOpponentEntries([]);
+    setKnownEnemyBringSlotIndices([]);
+    setDoublesEnemySelection(normalizeSparsePairSelection([0, 1], importedSlotIndices, 0));
+    setDamageDefenderSlotIndex(importedSlotIndices[0] ?? null);
+    resetBattleSimulatorState();
+    setBattleEngineRecommendation(null);
+    setBattleEngineAnalysisSignature("");
+    setPendingShowdownEnemyImport(false);
+    setStorageMessage(
+      `Imported ${importedMembers.length} enemy Pokemon from Showdown${
+        showdownBridgeCapturedLabel ? ` snapshot ${showdownBridgeCapturedLabel}` : ""
+      }${warningParts.length > 0 ? `; ${warningParts.join("; ")}.` : "."}`,
+    );
+    setStorageError(null);
+
+    return true;
+  };
+
+  const importShowdownEnemyTeam = () => {
+    if (!database || !battleData) {
+      setStorageError("The local Pokemon and move databases must finish loading before importing from Showdown.");
+      setStorageMessage(null);
+      return;
+    }
+
+    setPendingShowdownEnemyImport(true);
+    requestShowdownSnapshot();
+
+    if (showdownBridgeStatus === "error") {
+      setPendingShowdownEnemyImport(false);
+      setStorageError(showdownBridgeMessage || "Showdown bridge could not be reached.");
+      setStorageMessage(null);
+      return;
+    }
+
+    setStorageMessage("Requested a Showdown enemy snapshot. The enemy board will fill when the bridge responds.");
+    setStorageError(null);
+  };
+
+  useEffect(() => {
+    if (!pendingShowdownEnemyImport) {
+      return;
+    }
+
+    if (applyShowdownEnemyTeamImport(showdownBridgeImport)) {
+      return;
+    }
+
+    if (showdownBridgeImport) {
+      setPendingShowdownEnemyImport(false);
+      setStorageError(
+        showdownBridgeImport.unresolvedSpecies.length > 0
+          ? `No enemy Pokemon could be imported; couldn't match Pokemon: ${formatImportIssueList(showdownBridgeImport.unresolvedSpecies)}.`
+          : showdownBridgeImport.summary || "The latest Showdown snapshot did not include any enemy Pokemon to import.",
+      );
+      setStorageMessage(null);
+      return;
+    }
+
+    if (showdownBridgeStatus === "waiting" || showdownBridgeStatus === "idle") {
+      setStorageMessage("Waiting for a Showdown battle snapshot. Keep a battle tab open with the bridge extension enabled.");
+      setStorageError(null);
+    } else if (showdownBridgeStatus === "error") {
+      setPendingShowdownEnemyImport(false);
+      setStorageError(showdownBridgeMessage || "Showdown bridge could not be reached.");
+      setStorageMessage(null);
+    }
+  }, [pendingShowdownEnemyImport, showdownBridgeImport, showdownBridgeMessage, showdownBridgeStatus]);
 
   const runOpponentAnalysis = () => {
     if (!canRunOpponentAnalysis) {
@@ -11818,6 +11989,22 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           </div>
           <div className="opponent-scout-actions">
             <span className="lead-available-count">{opponentEntries.length} / 6 loaded</span>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={importShowdownEnemyTeam}
+              title={
+                showdownEnemyImportCount > 0
+                  ? `Import ${showdownEnemyImportCount} enemy Pokemon from the latest Showdown snapshot`
+                  : "Ask the bridge extension for the enemy side from the open Showdown battle"
+              }
+            >
+              {pendingShowdownEnemyImport
+                ? "Waiting for Showdown"
+                : showdownEnemyImportCount > 0
+                  ? `Import Showdown Enemy (${showdownEnemyImportCount})`
+                  : "Import Showdown Enemy"}
+            </button>
             <label className="opponent-scan-mode">
               <span>Load Saved Team</span>
               <select

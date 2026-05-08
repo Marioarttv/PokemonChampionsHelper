@@ -597,6 +597,23 @@ function classifyHp(percent: number) {
   return "healthy";
 }
 
+function formatArenaStatus(combatant: BattleCombatantState) {
+  switch (combatant.statusCondition) {
+    case "burn":
+      return "BRN";
+    case "paralysis":
+      return "PAR";
+    case "sleep":
+      return `SLP${combatant.sleepTurns > 0 ? ` ${combatant.sleepTurns}` : ""}`;
+    case "poison":
+      return "PSN";
+    case "badPoison":
+      return `TOX${combatant.toxicTurns > 0 ? ` ${combatant.toxicTurns}` : ""}`;
+    default:
+      return "";
+  }
+}
+
 function getMoveTypeColor(move: BattleMoveOption) {
   return move.type ? TYPE_META[move.type].color : "#a0aacb";
 }
@@ -1018,6 +1035,7 @@ function CombatantSlot({
   const eventClass = getEventClassForCombatant(combatant, event);
   const damage = event?.targetId === combatant.id ? getDamageFromEvent(event) : null;
   const status = combatant.statusCondition !== "none" ? combatant.statusCondition : null;
+  const statusLabel = formatArenaStatus(combatant);
 
   return (
     <article
@@ -1041,7 +1059,7 @@ function CombatantSlot({
     >
       <div className="arena-combatant-head">
         <strong>{combatant.pokemon.name}</strong>
-        {status ? <span className={`arena-status ${status}`}>{status}</span> : null}
+        {status ? <span className={`arena-status ${status}`}>{statusLabel}</span> : null}
       </div>
       <div className="arena-sprite-stage">
         <PokemonSprite pokemon={combatant.pokemon} className="arena-pokemon-sprite" />

@@ -8,6 +8,7 @@
     "https://play.pokemonshowdown.com/*",
     "http://localhost/*",
     "http://127.0.0.1/*",
+    "https://pokemon-champions-helper.vercel.app/*",
     "https://mariomanzocco.github.io/PokemonChampionsHelper/*"
   ],
   "background": {
@@ -23,6 +24,7 @@
       "matches": [
         "http://localhost/*",
         "http://127.0.0.1/*",
+        "https://pokemon-champions-helper.vercel.app/*",
         "https://mariomanzocco.github.io/PokemonChampionsHelper/*"
       ],
       "js": ["app-content.js"],

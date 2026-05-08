@@ -31,6 +31,14 @@ function blocksStatusByType(target: BattleCombatantState, statusCondition: Battl
     return true;
   }
 
+  if ((statusCondition === "poison" || statusCondition === "badPoison") && target.pokemon.types.includes("Poison")) {
+    return true;
+  }
+
+  if ((statusCondition === "poison" || statusCondition === "badPoison") && target.pokemon.types.includes("Steel")) {
+    return true;
+  }
+
   if (
     move?.effectData?.powderMove &&
     (normalizeMoveKey(target.abilityName ?? target.abilityId) === "overcoat" ||

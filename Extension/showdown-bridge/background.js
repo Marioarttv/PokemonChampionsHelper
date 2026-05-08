@@ -8,6 +8,7 @@ const SHOWDOWN_PAGE_STATUS = "PCH_SHOWDOWN_PAGE_STATUS";
 const APP_URL_PATTERNS = [
   "http://localhost/*",
   "http://127.0.0.1/*",
+  "https://pokemon-champions-helper.vercel.app/*",
   "https://mariomanzocco.github.io/PokemonChampionsHelper/*",
 ];
 

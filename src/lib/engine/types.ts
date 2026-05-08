@@ -10,7 +10,7 @@ import type { MechanicSupportReport, UnsupportedMechanicMarker } from "./mechani
 
 export type BattleSide = "ally" | "enemy";
 export type DamageRollMode = "min" | "average" | "max";
-export type BattleStatusCondition = "none" | "burn" | "paralysis" | "sleep";
+export type BattleStatusCondition = "none" | "burn" | "paralysis" | "sleep" | "poison" | "badPoison";
 export type BattleScreenKind = "reflect" | "lightScreen" | "auroraVeil";
 export type BattleGuardKind = "quickGuard" | "wideGuard";
 export type BattleStageDelta = Partial<Record<keyof BattleStatStages, number>>;
@@ -141,6 +141,7 @@ export type BattleCombatantState = {
   stages: BattleStatStages;
   statusCondition: BattleStatusCondition;
   sleepTurns: number;
+  toxicTurns: number;
   tauntTurns: number;
   encoreTurns: number;
   encoredMoveId: string | null;
@@ -343,6 +344,7 @@ export type BattleStateMemberInput = {
   stages?: Partial<BattleStatStages>;
   statusCondition?: BattleStatusCondition;
   sleepTurns?: number;
+  toxicTurns?: number;
   tauntTurns?: number;
   encoreTurns?: number;
   encoredMoveId?: string | null;
