@@ -1711,4 +1711,130 @@ Ability: Insomnia
 Item: Coba Berry
 Moves: Poltergeist / Trick Room / Trick-or-Treat / Will-O-Wisp
 Usage: 100.0 rating · 1 teams
+
+Forretress
+Types: Bug / Steel
+Usage: 1 uses
+Set #1
+Ability: Sturdy
+Item: Leftovers
+Moves: Body Press / Iron Defense / Protect / Volt Switch
+Usage: 100.0 rating · 1 teams
+
+Rampardos
+Types: Rock
+Usage: 6 uses
+Set #1
+Ability: Sheer Force
+Item: White Herb
+Moves: Hammer Arm / Iron Head / Protect / Rock Slide
+Usage: 100.0 rating · 1 teams
+
+Samurott
+Types: Water
+Usage: 1 uses
+Set #1
+Ability: Torrent
+Item: White Herb
+Moves: Hydro Pump / Ice Beam / Substitute / Vacuum Wave
+Usage: 100.0 rating · 1 teams
+
+Patrat
+Types: Normal
+Usage: 0 uses
+Set #1
+Ability: Analytic
+Item: Focus Sash
+Moves: Super Fang / Hypnosis / Crunch / Detect
+Usage: 0 rating · 0 teams
+
+Simisage
+Types: Grass
+Usage: 3 uses
+Set #1
+Ability: Overgrow
+Item: King's Rock
+Moves: Bullet Seed / Fake Out / Rock Slide / Taunt
+Usage: 100.0 rating · 1 teams
+
+Simipour
+Types: Water
+Usage: 6 uses
+Set #1
+Ability: Torrent
+Item: Mystic Water
+Moves: Fake Out / Flip Turn / Icy Wind / Scald
+Usage: 100.0 rating · 2 teams
+
+Garbodor
+Types: Poison
+Usage: 5 uses
+Set #1
+Ability: Stench
+Item: Leftovers
+Moves: Clear Smog / Explosion / Stockpile / Toxic Spikes
+Usage: 100.0 rating · 1 teams
+
+Stunfisk
+Types: Ground / Electric
+Usage: 3 uses
+Set #1
+Ability: Static
+Item: Sitrus Berry
+Moves: Earth Power / Protect / Thunder / Thunderbolt
+Usage: 100.0 rating · 1 teams
+
+Furfrou
+Types: Normal
+Usage: 1 uses
+Set #1
+Ability: Fur Coat
+Item: Leftovers
+Moves: Cotton Guard / Fire Fang / Protect / Sucker Punch
+Usage: 100.0 rating · 1 teams
+
+Slurpuff
+Types: Fairy
+Usage: 2 uses
+Set #1
+Ability: Unburden
+Item: Sitrus Berry
+Moves: Dazzling Gleam / Helping Hand / Protect / String Shot
+Usage: 100.0 rating · 1 teams
+
+Toucannon
+Types: Normal / Flying
+Usage: 10 uses
+Set #1
+Ability: Skill Link
+Item: Sharp Beak
+Moves: Beak Blast / Brave Bird / Bullet Seed / Protect
+Usage: 100.0 rating · 1 teams
+
+Appletun
+Types: Grass / Dragon
+Usage: 5 uses
+Set #1
+Ability: Thick Fat
+Item: Leftovers
+Moves: Apple Acid / Dragon Pulse / Leech Seed / Protect
+Usage: 100.0 rating · 1 teams
+
+Sandaconda
+Types: Ground
+Usage: 10 uses
+Set #1
+Ability: Sand Veil
+Item: Bright Powder
+Moves: Body Press / High Horsepower / Iron Defense / Minimize
+Usage: 100.0 rating · 1 teams
+
+Polteageist
+Types: Ghost
+Usage: 3 uses
+Set #1
+Ability: Cursed Body
+Item: Focus Sash
+Moves: Giga Drain / Protect / Shadow Ball / Trick Room
+Usage: 100.0 rating · 1 teams
 `;

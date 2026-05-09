@@ -1,6 +1,10 @@
 import { normalizePokemonNameKey } from "../data/championsLegalPokemon";
 import { getTypeFromLabel } from "../data/typeChart";
 import { isSpreadTarget, type MoveRecord } from "./battleData";
+import {
+  isChampionsPlayableBaseForm,
+  isChampionsSuppressedBaseForm,
+} from "./championsPlayableForms";
 import { isLowKickMove } from "./damage";
 import type { PokemonRecord } from "./pokemonDb";
 import type {
@@ -118,15 +122,18 @@ function buildPokemonLookup(pokemonEntries: PokemonRecord[]) {
       }
     }
 
-    if (!pokemon.forme) {
-      basePokemonBySpeciesKey.set(normalizePokemonNameKey(pokemon.baseSpecies || pokemon.name), pokemon);
+    const baseSpeciesKey = normalizePokemonNameKey(pokemon.baseSpecies || pokemon.name);
+    if (isChampionsPlayableBaseForm(pokemon)) {
+      basePokemonBySpeciesKey.set(baseSpeciesKey, pokemon);
+    } else if (!pokemon.forme && !isChampionsSuppressedBaseForm(pokemon) && !basePokemonBySpeciesKey.has(baseSpeciesKey)) {
+      basePokemonBySpeciesKey.set(baseSpeciesKey, pokemon);
     }
 
     if (pokemon.forme && /(mega|primal)/i.test(pokemon.forme)) {
-      const baseSpeciesKey = normalizePokemonNameKey(pokemon.baseSpecies);
-      const bucket = megaCandidatesByBaseSpeciesKey.get(baseSpeciesKey) ?? [];
+      const megaBaseSpeciesKey = normalizePokemonNameKey(pokemon.baseSpecies);
+      const bucket = megaCandidatesByBaseSpeciesKey.get(megaBaseSpeciesKey) ?? [];
       bucket.push(pokemon);
-      megaCandidatesByBaseSpeciesKey.set(baseSpeciesKey, bucket);
+      megaCandidatesByBaseSpeciesKey.set(megaBaseSpeciesKey, bucket);
     }
   }
 
@@ -187,10 +194,14 @@ function resolveImportedPokemon(
     return null;
   }
 
-  const pokemon = resolveMegaOrPrimalForm(exactMatch, parsedSet.itemName, lookup.megaCandidatesByBaseSpeciesKey);
+  const baseSpeciesKey = normalizePokemonNameKey(exactMatch.baseSpecies || exactMatch.name);
+  const playableExactMatch = isChampionsSuppressedBaseForm(exactMatch)
+    ? lookup.basePokemonBySpeciesKey.get(baseSpeciesKey) ?? exactMatch
+    : exactMatch;
+  const pokemon = resolveMegaOrPrimalForm(playableExactMatch, parsedSet.itemName, lookup.megaCandidatesByBaseSpeciesKey);
   const basePokemon =
     pokemon.forme && /(mega|primal)/i.test(pokemon.forme)
-      ? lookup.basePokemonBySpeciesKey.get(normalizePokemonNameKey(pokemon.baseSpecies)) ?? exactMatch
+      ? lookup.basePokemonBySpeciesKey.get(normalizePokemonNameKey(pokemon.baseSpecies)) ?? playableExactMatch
       : pokemon;
 
   return {

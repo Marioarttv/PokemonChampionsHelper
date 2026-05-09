@@ -47,6 +47,10 @@ const DISPLAY_NAME_KEY_OVERRIDES: Record<string, string> = {
   "Mr. Rime": "mrrime",
 };
 
+const DISPLAY_NAME_KEY_ALIASES: Record<string, readonly string[]> = {
+  "Floette [Eternal Flower]": ["floette", "floettemega"],
+};
+
 const MOVE_NAME_ALIASES: Record<string, string> = {
   waterball: "Weather Ball",
 };
@@ -212,12 +216,16 @@ function getPresetKeys(pokemon: PokemonRecord) {
 
 const PARSED_PRESET_SOURCE = parseOpponentPresetSource(CHAMPIONS_META_MOVESETS_RAW);
 const OPPONENT_PRESET_BY_KEY = new Map(
-  PARSED_PRESET_SOURCE.records.map((record) => [record.speciesKey, record] as const),
+  PARSED_PRESET_SOURCE.records.flatMap((record) =>
+    [record.speciesKey, ...(DISPLAY_NAME_KEY_ALIASES[record.displayName] ?? [])].map(
+      (speciesKey) => [speciesKey, record] as const,
+    ),
+  ),
 );
 
 export const OPPONENT_PRESET_META = PARSED_PRESET_SOURCE.meta;
 export const OPPONENT_PRESET_RECORDS = PARSED_PRESET_SOURCE.records;
-export const OPPONENT_MOVE_PRESET_KEY_SET = new Set(OPPONENT_PRESET_RECORDS.map((record) => record.speciesKey));
+export const OPPONENT_MOVE_PRESET_KEY_SET = new Set(OPPONENT_PRESET_BY_KEY.keys());
 
 export function getOpponentPreset(pokemon: PokemonRecord) {
   for (const key of getPresetKeys(pokemon)) {

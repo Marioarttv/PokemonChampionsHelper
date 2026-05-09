@@ -622,6 +622,54 @@ describe("engine regression coverage", () => {
     expect(getEffectiveSpeed(state, "ally-1")).toBeGreaterThan(getEffectiveSpeed(state, "enemy-0"));
   });
 
+  it("uses the selected mega form ability as an entry weather setter", () => {
+    const megaCharizardY = makePokemon("Charizard-Mega-Y", {
+      baseSpecies: "Charizard",
+      types: ["Fire", "Flying"],
+      baseStats: { spa: 159, spe: 100 },
+      abilities: { "0": "Drought" },
+    });
+    const steelTarget = makePokemon("Steel Target", {
+      types: ["Steel"],
+      baseStats: { hp: 100, spd: 100 },
+    });
+    const weatherBall = makeMove("Weather Ball", {
+      type: "Normal",
+      category: "Special",
+      basePower: 50,
+      target: "normal",
+    });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: megaCharizardY, moveNames: ["Weather Ball"] })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: steelTarget, moveNames: [] })],
+      moves: [weatherBall],
+      weather: "rain",
+    });
+    const preview = getDamagePreview(state, "ally-0", "enemy-0", state.combatants["ally-0"].knownMoves[0]!);
+
+    expect(state.field.weather).toBe("sun");
+    expect(state.combatants["ally-0"].abilityName).toBe("Drought");
+    expect(preview?.estimate.effectiveAttackType).toBe("fire");
+    expect(preview?.estimate.effectiveBasePower).toBe(100);
+  });
+
+  it("keeps default damage abilities when deriving an implicit ability name", () => {
+    const solarUser = makePokemon("Solar User", {
+      baseStats: { spa: 100 },
+      abilities: { "0": "Blaze", H: "Solar Power" },
+    });
+    const target = makePokemon("Target", { baseStats: { hp: 100, spd: 100 } });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 60, target: "normal" });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: solarUser, moveNames: ["Tackle"] })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: target, moveNames: [] })],
+      moves: [tackle],
+    });
+
+    expect(state.combatants["ally-0"].abilityName).toBe("Solar Power");
+    expect(state.combatants["ally-0"].abilityId).toBe("solarpower");
+  });
+
   it("applies switch-in weather before the rest of the turn is resolved", () => {
     const rainLead = makePokemon("Rain Lead", { baseStats: { spe: 80 } });
     const sunSetter = makePokemon("Sun Setter", { baseStats: { spe: 40 } });

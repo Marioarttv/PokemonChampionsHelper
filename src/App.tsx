@@ -61,6 +61,10 @@ import {
   type ChampionsLearnsetRecord,
 } from "./lib/championsLearnsets";
 import {
+  isChampionsPlayableBaseForm,
+  isChampionsSuppressedBaseForm,
+} from "./lib/championsPlayableForms";
+import {
   SPREAD_MOVE_MULTIPLIER,
   calculateRoughDamage,
   getEffectiveDamageBaseStats,
@@ -127,7 +131,6 @@ import {
   buildPreviewEnemyBattleStateMember,
   resolveStoredOrPresetMoveset,
 } from "./lib/engine/adapters/fromUiState";
-import { applyRuntimeToBattleStateMembers } from "./lib/engine/adapters/fromSimulatorState";
 import {
   calculateMatchupEloScore,
   compareMatchupEloSummaries,
@@ -759,6 +762,10 @@ function getBasePokemonForBattleForm(
   pokemon: PokemonRecord,
   basePokemonBySpeciesKey: ReadonlyMap<string, PokemonRecord>,
 ) {
+  if (isChampionsSuppressedBaseForm(pokemon)) {
+    return basePokemonBySpeciesKey.get(getPokemonBaseFormKey(pokemon)) ?? pokemon;
+  }
+
   if (!isChampionsMegaEntry(pokemon)) {
     return pokemon;
   }
@@ -815,6 +822,39 @@ function getTeamFormOptions(
   ];
 }
 
+function getBattleLabActivePokemon(
+  basePokemon: PokemonRecord | null,
+  activeFormPokemonId: string | null | undefined,
+  pokemonByKey: ReadonlyMap<string, PokemonRecord>,
+) {
+  if (!basePokemon) {
+    return null;
+  }
+
+  const activeFormPokemon = activeFormPokemonId ? pokemonByKey.get(activeFormPokemonId) ?? null : null;
+  return activeFormPokemon && isCompatibleBattleForm(basePokemon, activeFormPokemon) ? activeFormPokemon : basePokemon;
+}
+
+function getSavedMegaFormOptions(
+  basePokemon: PokemonRecord | null,
+  activeFormPokemonId: string | null | undefined,
+  pokemonByKey: ReadonlyMap<string, PokemonRecord>,
+  megaFormsByBaseSpeciesKey: ReadonlyMap<string, PokemonRecord[]>,
+) {
+  if (!basePokemon || !activeFormPokemonId) {
+    return [];
+  }
+
+  const savedMegaPokemon = pokemonByKey.get(activeFormPokemonId) ?? null;
+  if (!savedMegaPokemon || !isCompatibleBattleForm(basePokemon, savedMegaPokemon)) {
+    return [];
+  }
+
+  return getTeamFormOptions(basePokemon, megaFormsByBaseSpeciesKey).filter(
+    (option) => option.isBase || option.activeFormPokemonId === savedMegaPokemon.id,
+  );
+}
+
 function inferMegaEvolutionItemName(
   megaPokemon: PokemonRecord | null | undefined,
   itemOptions: readonly ItemRecord[] = [],
@@ -864,6 +904,46 @@ function inferMegaEvolutionItemName(
   const spacedSuffix =
     megaPokemon.forme === "Mega-X" ? " X" : megaPokemon.forme === "Mega-Y" ? " Y" : "";
   return `${baseSpecies}ite${spacedSuffix}`;
+}
+
+function isMegaEvolutionItemForBasePokemon(
+  itemName: string | null | undefined,
+  basePokemon: PokemonRecord | null | undefined,
+  megaFormsByBaseSpeciesKey: ReadonlyMap<string, PokemonRecord[]>,
+  itemOptions: readonly ItemRecord[] = [],
+) {
+  if (!itemName || !basePokemon) {
+    return false;
+  }
+
+  const itemKey = normalizePokemonNameKey(itemName);
+  const megaForms = megaFormsByBaseSpeciesKey.get(getPokemonBaseFormKey(basePokemon)) ?? [];
+  return megaForms.some((megaForm) => {
+    const megaItemName = inferMegaEvolutionItemName(megaForm, itemOptions);
+    return Boolean(megaItemName && normalizePokemonNameKey(megaItemName) === itemKey);
+  });
+}
+
+function getAllowedTeamSlotItemName(options: {
+  itemName: string | null | undefined;
+  basePokemon: PokemonRecord | null | undefined;
+  activeFormPokemonId: string | null | undefined;
+  megaFormsByBaseSpeciesKey: ReadonlyMap<string, PokemonRecord[]>;
+  itemOptions: readonly ItemRecord[];
+}) {
+  const itemName = getResolvedFieldValue(options.itemName);
+  if (!itemName || options.activeFormPokemonId) {
+    return itemName;
+  }
+
+  return isMegaEvolutionItemForBasePokemon(
+    itemName,
+    options.basePokemon,
+    options.megaFormsByBaseSpeciesKey,
+    options.itemOptions,
+  )
+    ? null
+    : itemName;
 }
 
 function getPokemonPrimaryAbilityName(pokemon: PokemonRecord | null | undefined) {
@@ -1267,6 +1347,7 @@ type DoublesMemberRuntime = {
 };
 
 type BattleSimulatorMemberState = {
+  activeFormPokemonId: string | null;
   hpPercent: number;
   attackStage: number;
   defenseStage: number;
@@ -1301,6 +1382,7 @@ const DEFAULT_DOUBLES_RUNTIME: DoublesMemberRuntime = {
 };
 
 const DEFAULT_BATTLE_SIMULATOR_MEMBER_STATE: BattleSimulatorMemberState = {
+  activeFormPokemonId: null,
   hpPercent: 100,
   attackStage: 0,
   defenseStage: 0,
@@ -2764,11 +2846,14 @@ function getEditablePokemonEntries(
 ) {
   return (database ?? [])
     .filter((pokemon) => {
+      if (isChampionsSuppressedBaseForm(pokemon)) {
+        return false;
+      }
+
       const movesetKey = getPokemonMovesetKey(pokemon);
-      const baseSpeciesKey = getPokemonBaseSpeciesKey(pokemon);
 
       return (
-        (pokemon.forme === null && POKEMON_CHAMPIONS_LEGAL_SPECIES_KEY_SET.has(baseSpeciesKey)) ||
+        isChampionsPlayableBaseForm(pokemon) ||
         isChampionsMegaEntry(pokemon) ||
         OPPONENT_MOVE_PRESET_KEY_SET.has(movesetKey) ||
         speciesMovesetByKey.has(movesetKey)
@@ -2792,37 +2877,38 @@ function getTeamBuilderFormatEntries(
   }
 
   return (database ?? []).filter((pokemon) => {
+    if (isChampionsSuppressedBaseForm(pokemon)) {
+      return false;
+    }
+
     const movesetKey = getPokemonMovesetKey(pokemon);
     const baseSpeciesKey = getPokemonBaseSpeciesKey(pokemon);
-    const isLegalBaseSpecies = pokemon.forme === null && POKEMON_CHAMPIONS_LEGAL_SPECIES_KEY_SET.has(baseSpeciesKey);
     const isSupportedLegalForm =
       pokemon.forme !== null &&
       POKEMON_CHAMPIONS_LEGAL_SPECIES_KEY_SET.has(baseSpeciesKey) &&
       (OPPONENT_MOVE_PRESET_KEY_SET.has(movesetKey) || speciesMovesetByKey.has(movesetKey));
 
-    return isLegalBaseSpecies || isChampionsMegaEntry(pokemon) || isSupportedLegalForm;
+    return isChampionsPlayableBaseForm(pokemon) || isChampionsMegaEntry(pokemon) || isSupportedLegalForm;
   });
 }
 
 function getChampionsSpeedTierEntries(database: PokemonRecord[] | null) {
   return (database ?? []).filter((pokemon) => {
-    const baseSpeciesKey = getPokemonBaseSpeciesKey(pokemon);
-
-    return (
-      (pokemon.forme === null && POKEMON_CHAMPIONS_LEGAL_SPECIES_KEY_SET.has(baseSpeciesKey)) ||
-      isChampionsMegaEntry(pokemon)
-    );
+    return isChampionsPlayableBaseForm(pokemon) || isChampionsMegaEntry(pokemon);
   });
 }
 
 function getCurrentRegulationMoveFinderEntries(database: PokemonRecord[] | null) {
   return (database ?? [])
     .filter((pokemon) => {
+      if (isChampionsSuppressedBaseForm(pokemon)) {
+        return false;
+      }
+
       const movesetKey = getPokemonMovesetKey(pokemon);
-      const baseSpeciesKey = getPokemonBaseSpeciesKey(pokemon);
 
       return (
-        (pokemon.forme === null && POKEMON_CHAMPIONS_LEGAL_SPECIES_KEY_SET.has(baseSpeciesKey)) ||
+        isChampionsPlayableBaseForm(pokemon) ||
         isChampionsMegaEntry(pokemon) ||
         OPPONENT_MOVE_PRESET_KEY_SET.has(movesetKey)
       );
@@ -5109,6 +5195,7 @@ function TeamSlotCard({
   }, [slot.activeFormPokemonId, slot.pokemonId]);
 
   const pokemon = slot.pokemon;
+  const pokemonQueryValue = slot.basePokemon?.name ?? slot.query;
   const coveredTypes = useMemo(
     () => getCoverageTypesFromSavedAttacks(slot.savedAttacks),
     [slot.savedAttacks],
@@ -5269,7 +5356,7 @@ function TeamSlotCard({
           className="team-pokemon-input"
           list="pokemon-options"
           placeholder={databaseLoaded ? "Start typing a legal Pokemon name" : "Loading local database..."}
-          value={slot.query}
+          value={pokemonQueryValue}
           onChange={(event) => onQueryChange(slotIndex, event.target.value)}
           disabled={!databaseLoaded}
         />
@@ -6803,6 +6890,11 @@ function BattleLabSlot({
       ["Spe", combatant.stages.speed],
     ] as const
   ).filter(([, v]) => v !== 0);
+  const currentFormOption = formOptions.find((option) => option.pokemon.id === combatant.pokemon.id) ?? null;
+  const quickFormOptions =
+    quickEditing && onBattleFormChange && formOptions.length > 1
+      ? formOptions.filter((option) => option.pokemon.id !== combatant.pokemon.id)
+      : [];
 
   return (
     <div
@@ -6839,6 +6931,26 @@ function BattleLabSlot({
           </button>
         </div>
       </div>
+
+      {quickFormOptions.length > 0 ? (
+        <div className="bl-slot-form-quick" aria-label={`${combatant.pokemon.name} battle form shortcuts`}>
+          {quickFormOptions.map((option) => {
+            const isBase = option.isBase;
+            return (
+              <button
+                key={`${combatant.id}-quick-form-${option.pokemon.id}`}
+                type="button"
+                className={isBase ? "normal" : "mega"}
+                onClick={() => onBattleFormChange?.(option.activeFormPokemonId)}
+                title={isBase ? "Switch this slot back to normal form" : `Mega evolve into ${option.pokemon.name}`}
+              >
+                {isBase ? "Normal" : option.label}
+              </button>
+            );
+          })}
+          {currentFormOption && !currentFormOption.isBase ? <span>{currentFormOption.label}</span> : null}
+        </div>
+      ) : null}
 
       <div className="bl-slot-sprite-wrap">
         <PokemonSprite pokemon={combatant.pokemon} className="bl-slot-sprite" />
@@ -7956,6 +8068,25 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     });
   };
 
+  const getBattleSimulatorMemberStateForPokemon = (
+    side: "ally" | "enemy",
+    slotIndex: number,
+    pokemon: PokemonRecord,
+  ) => {
+    const basePokemon = getBasePokemonForBattleForm(pokemon, basePokemonBySpeciesKey);
+    return getBattleSimulatorMemberState(side, slotIndex, basePokemon.id);
+  };
+
+  const updateBattleSimulatorMemberStateForPokemon = (
+    side: "ally" | "enemy",
+    slotIndex: number,
+    pokemon: PokemonRecord,
+    patch: Partial<BattleSimulatorMemberState>,
+  ) => {
+    const basePokemon = getBasePokemonForBattleForm(pokemon, basePokemonBySpeciesKey);
+    updateBattleSimulatorMemberState(side, slotIndex, basePokemon.id, patch);
+  };
+
   const resetBattleSimulatorState = () => {
     battleEngineWorkerRef.current?.terminate();
     battleEngineWorkerRef.current = null;
@@ -8086,11 +8217,16 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     const map = new Map<string, PokemonRecord>();
 
     for (const pokemon of database ?? []) {
-      if (pokemon.forme !== null) {
+      const baseSpeciesKey = getPokemonBaseFormKey(pokemon);
+
+      if (isChampionsPlayableBaseForm(pokemon)) {
+        map.set(baseSpeciesKey, pokemon);
         continue;
       }
 
-      map.set(getPokemonBaseFormKey(pokemon), pokemon);
+      if (pokemon.forme === null && !isChampionsSuppressedBaseForm(pokemon) && !map.has(baseSpeciesKey)) {
+        map.set(baseSpeciesKey, pokemon);
+      }
     }
 
     return map;
@@ -8220,6 +8356,16 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         const resolvedMoveset = pokemon
           ? getStoredOrPresetSavedAttacks(pokemon, speciesMovesetByKey, moveByKey, MAX_SPECIES_MOVESET_SIZE)
           : null;
+        const inferredMegaItemName = activeFormPokemon
+          ? inferMegaEvolutionItemName(activeFormPokemon, battleData?.items ?? [])
+          : null;
+        const itemName = getAllowedTeamSlotItemName({
+          itemName: slot.itemName ?? inferredMegaItemName,
+          basePokemon,
+          activeFormPokemonId,
+          megaFormsByBaseSpeciesKey,
+          itemOptions: battleData?.items ?? [],
+        });
         const defaultStatSpread = pokemon
           ? resolvedMoveset?.statSpread ?? getDefaultChampionsStatSpreadForPokemon(pokemon)
           : null;
@@ -8229,6 +8375,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
 
         return {
           ...slot,
+          itemName,
           pokemonId: basePokemon?.id ?? slot.pokemonId,
           activeFormPokemonId,
           pokemon,
@@ -8239,7 +8386,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           resolvedStatSpread,
         };
       }),
-    [basePokemonBySpeciesKey, megaFormsByBaseSpeciesKey, moveByKey, pokemonByKey, speciesMovesetByKey, teamSlots],
+    [basePokemonBySpeciesKey, battleData?.items, megaFormsByBaseSpeciesKey, moveByKey, pokemonByKey, speciesMovesetByKey, teamSlots],
   );
 
   const selectedPokemon = team
@@ -8363,7 +8510,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const enemySelectableSlotIndices = useMemo(
     () =>
       enemyBattleEntries
-        .filter((entry) => getBattleSimulatorMemberState("enemy", entry.slotIndex, entry.pokemon.id).hpPercent > 0)
+        .filter((entry) => getBattleSimulatorMemberStateForPokemon("enemy", entry.slotIndex, entry.pokemon).hpPercent > 0)
         .map((entry) => entry.slotIndex),
     [battleSimulatorState, enemyBattleEntries],
   );
@@ -8453,6 +8600,13 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     const inferredMegaItemName = activeFormPokemonId
       ? inferMegaEvolutionItemName(match, battleData?.items ?? [])
       : null;
+    const defaultItemName = getAllowedTeamSlotItemName({
+      itemName: inferredMegaItemName ?? resolvedMoveset?.itemName,
+      basePokemon: baseMatch,
+      activeFormPokemonId,
+      megaFormsByBaseSpeciesKey,
+      itemOptions: battleData?.items ?? [],
+    });
 
     setTeamSlots((current) =>
       current.map((slot, index) => {
@@ -8475,6 +8629,13 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
 
         const sameBase = slot.pokemonId === baseMatch.id;
         const activeFormChanged = (slot.activeFormPokemonId ?? null) !== activeFormPokemonId;
+        const retainedItemName = getAllowedTeamSlotItemName({
+          itemName: slot.itemName,
+          basePokemon: baseMatch,
+          activeFormPokemonId,
+          megaFormsByBaseSpeciesKey,
+          itemOptions: battleData?.items ?? [],
+        });
 
         return {
           ...slot,
@@ -8485,8 +8646,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           itemName: sameBase
             ? inferredMegaItemName && (!slot.itemName || activeFormChanged)
               ? inferredMegaItemName
-              : slot.itemName
-            : inferredMegaItemName ?? resolvedMoveset?.itemName ?? null,
+              : retainedItemName
+            : defaultItemName,
           knownMoves: sameBase ? slot.knownMoves : resolvedMoveset?.knownMoves ?? [],
           savedAttacks: sameBase ? slot.savedAttacks : resolvedMoveset?.savedAttacks ?? [],
         };
@@ -8563,6 +8724,14 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           return slot;
         }
 
+        const retainedItemName = getAllowedTeamSlotItemName({
+          itemName: slot.itemName,
+          basePokemon,
+          activeFormPokemonId: normalizedActiveFormPokemonId,
+          megaFormsByBaseSpeciesKey,
+          itemOptions: battleData?.items ?? [],
+        });
+
         return {
           ...slot,
           query: basePokemon.name,
@@ -8570,28 +8739,29 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           activeFormPokemonId: normalizedActiveFormPokemonId,
           itemName: inferredMegaItemName && (!slot.itemName || (slot.activeFormPokemonId ?? null) !== normalizedActiveFormPokemonId)
             ? inferredMegaItemName
-            : slot.itemName,
+            : retainedItemName,
         };
       }),
     );
 
     const currentPokemonId = currentPokemon?.id ?? basePokemon.id;
-    if (currentPokemonId !== nextPokemon.id) {
-      const oldKey = getBattleSimulatorStateKey("ally", slotIndex, currentPokemonId);
-      const nextKey = getBattleSimulatorStateKey("ally", slotIndex, nextPokemon.id);
-      setBattleSimulatorState((current) => {
-        const existing = current[oldKey];
-        if (!existing || current[nextKey]) {
-          return current;
-        }
+    const baseKey = getBattleSimulatorStateKey("ally", slotIndex, basePokemon.id);
+    const oldKey = getBattleSimulatorStateKey("ally", slotIndex, currentPokemonId);
+    setBattleSimulatorState((current) => {
+      const existing = current[baseKey] ?? current[oldKey];
+      if (!existing) {
+        return current;
+      }
 
-        const { [oldKey]: _discarded, ...rest } = current;
-        return {
-          ...rest,
-          [nextKey]: existing,
-        };
-      });
-    }
+      const { [oldKey]: _discarded, [baseKey]: _baseDiscarded, ...rest } = current;
+      return {
+        ...rest,
+        [baseKey]: {
+          ...existing,
+          activeFormPokemonId: null,
+        },
+      };
+    });
 
     setBattleEngineRecommendation(null);
     setBattleEngineAnalysisSignature("");
@@ -9028,16 +9198,25 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             return null;
           }
 
+          const basePokemon = slot.basePokemon ?? getBasePokemonForBattleForm(slot.pokemon, basePokemonBySpeciesKey);
+          const battleRuntime = getBattleSimulatorMemberState("ally", slotIndex, basePokemon.id);
+          const battlePokemon = getBattleLabActivePokemon(basePokemon, battleRuntime.activeFormPokemonId, pokemonByKey) ?? basePokemon;
+          const battleMoveset = getStoredOrPresetSavedAttacks(
+            battlePokemon,
+            speciesMovesetByKey,
+            moveByKey,
+            MAX_SPECIES_MOVESET_SIZE,
+          );
           const runtime = doublesRuntime[`ally-${slotIndex}`] ?? DEFAULT_DOUBLES_RUNTIME;
           const member: DoublesSelectedMember = {
             side: "ally" as const,
             slotIndex,
-            pokemon: slot.pokemon,
+            pokemon: battlePokemon,
             savedAttacks: slot.savedAttacks,
             statSpread: slot.resolvedStatSpread,
-            abilityName: slot.abilityName,
+            abilityName: battleMoveset.abilityName,
             movesetSourceLabel: "Saved",
-            speedStat: getChampionsComputedStats(slot.pokemon, { spread: slot.resolvedStatSpread }).spe,
+            speedStat: getChampionsComputedStats(battlePokemon, { spread: slot.resolvedStatSpread }).spe,
             hpPercent: runtime.hpPercent,
             protect: runtime.protect,
             priority: runtime.priority,
@@ -9045,7 +9224,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           return member;
         })
         .filter((entry): entry is DoublesSelectedMember => Boolean(entry)),
-    [doublesAllySelection, doublesRuntime, team],
+    [basePokemonBySpeciesKey, battleSimulatorState, doublesAllySelection, doublesRuntime, moveByKey, pokemonByKey, speciesMovesetByKey, team],
   );
   const doublesEnemyMembers = useMemo<DoublesSelectedMember[]>(
     () =>
@@ -9060,24 +9239,33 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             return null;
           }
 
+          const basePokemon = getBasePokemonForBattleForm(entry.pokemon, basePokemonBySpeciesKey);
+          const battleRuntime = getBattleSimulatorMemberState("enemy", slotIndex, basePokemon.id);
+          const battlePokemon = getBattleLabActivePokemon(basePokemon, battleRuntime.activeFormPokemonId, pokemonByKey) ?? basePokemon;
+          const battleMoveset = getStoredOrPresetSavedAttacks(
+            battlePokemon,
+            speciesMovesetByKey,
+            moveByKey,
+            MAX_SPECIES_MOVESET_SIZE,
+          );
           const savedAttacks =
-            entry.savedAttacks.length > 0 ? entry.savedAttacks : createStabProxySavedAttacks(entry.pokemon);
+            entry.savedAttacks.length > 0 ? entry.savedAttacks : createStabProxySavedAttacks(battlePokemon);
 
           const runtime = doublesRuntime[`enemy-${slotIndex}`] ?? DEFAULT_DOUBLES_RUNTIME;
           const member: DoublesSelectedMember = {
             side: "enemy" as const,
             slotIndex,
-            pokemon: entry.pokemon,
+            pokemon: battlePokemon,
             savedAttacks,
-            statSpread: entry.statSpread,
-            abilityName: entry.abilityName,
+            statSpread: entry.statSpread ?? battleMoveset.statSpread,
+            abilityName: battleMoveset.abilityName,
             movesetSourceLabel:
               entry.savedAttacks.length > 0
                 ? entry.movesetSource === "custom"
                   ? "Custom"
                   : "Preset"
                 : "STAB proxy",
-            speedStat: getChampionsComputedStats(entry.pokemon, { spread: entry.statSpread }).spe,
+            speedStat: getChampionsComputedStats(battlePokemon, { spread: entry.statSpread ?? battleMoveset.statSpread }).spe,
             hpPercent: runtime.hpPercent,
             protect: runtime.protect,
             priority: runtime.priority,
@@ -9085,7 +9273,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           return member;
         })
         .filter((entry): entry is DoublesSelectedMember => Boolean(entry)),
-    [doublesEnemySelection, doublesRuntime, opponentEntryBySlot],
+    [basePokemonBySpeciesKey, battleSimulatorState, doublesEnemySelection, doublesRuntime, moveByKey, opponentEntryBySlot, pokemonByKey, speciesMovesetByKey],
   );
   const selectedDoublesEnemyEntries = useMemo(
     () =>
@@ -9123,11 +9311,14 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             return null;
           }
 
+          const basePokemon = slot.basePokemon ?? getBasePokemonForBattleForm(slot.pokemon, basePokemonBySpeciesKey);
+          const state = getBattleSimulatorMemberState("ally", slotIndex, basePokemon.id);
+          const battlePokemon = getBattleLabActivePokemon(basePokemon, state.activeFormPokemonId, pokemonByKey) ?? basePokemon;
           return {
             rankLabel,
             slotIndex,
-            pokemon: slot.pokemon,
-            state: getBattleSimulatorMemberState("ally", slotIndex, slot.pokemon.id),
+            pokemon: battlePokemon,
+            state,
           };
         })
         .filter(
@@ -9140,7 +9331,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             state: BattleSimulatorMemberState;
           } => Boolean(entry),
         ),
-    [battleSimulatorState, doublesAllySelection, team],
+    [basePokemonBySpeciesKey, battleSimulatorState, doublesAllySelection, pokemonByKey, team],
   );
   const battleSimulatorActiveEnemies = useMemo(
     () =>
@@ -9156,11 +9347,14 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             return null;
           }
 
+          const basePokemon = getBasePokemonForBattleForm(entry.pokemon, basePokemonBySpeciesKey);
+          const state = getBattleSimulatorMemberState("enemy", slotIndex, basePokemon.id);
+          const battlePokemon = getBattleLabActivePokemon(basePokemon, state.activeFormPokemonId, pokemonByKey) ?? basePokemon;
           return {
             rankLabel,
             slotIndex,
-            pokemon: entry.pokemon,
-            state: getBattleSimulatorMemberState("enemy", slotIndex, entry.pokemon.id),
+            pokemon: battlePokemon,
+            state,
           };
         })
         .filter(
@@ -9173,7 +9367,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             state: BattleSimulatorMemberState;
           } => Boolean(entry),
         ),
-    [battleSimulatorState, doublesEnemySelection, opponentEntryBySlot],
+    [basePokemonBySpeciesKey, battleSimulatorState, doublesEnemySelection, opponentEntryBySlot, pokemonByKey],
   );
   const doublesTurnOrder = useMemo(
     () => [...doublesAllyMembers, ...doublesEnemyMembers].sort(compareDoublesTurnOrder),
@@ -9543,17 +9737,25 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const battleEngineEnemyMembers = useMemo<BattleStateMemberInput[]>(
     () =>
       enemyBattleEntries.map((entry) => {
-        const runtime = getBattleSimulatorMemberState("enemy", entry.slotIndex, entry.pokemon.id);
+        const basePokemon = getBasePokemonForBattleForm(entry.pokemon, basePokemonBySpeciesKey);
+        const runtime = getBattleSimulatorMemberState("enemy", entry.slotIndex, basePokemon.id);
+        const battlePokemon = getBattleLabActivePokemon(basePokemon, runtime.activeFormPokemonId, pokemonByKey) ?? basePokemon;
+        const battleMoveset = getStoredOrPresetSavedAttacks(
+          battlePokemon,
+          speciesMovesetByKey,
+          moveByKey,
+          MAX_SPECIES_MOVESET_SIZE,
+        );
         return buildEnemyBattleStateMember({
           slotIndex: entry.slotIndex,
-          pokemon: entry.pokemon,
+          pokemon: battlePokemon,
           resolvedMoveset: {
-            savedAttacks: entry.savedAttacks.length > 0 ? entry.savedAttacks : createStabProxySavedAttacks(entry.pokemon),
-            knownMoves: entry.knownMoves,
-            allMoveNames: entry.presetMoveNames,
-            abilityName: entry.abilityName,
-            itemName: entry.itemName,
-            statSpread: entry.statSpread,
+            savedAttacks: entry.savedAttacks.length > 0 ? entry.savedAttacks : battleMoveset.savedAttacks,
+            knownMoves: entry.knownMoves.length > 0 ? entry.knownMoves : battleMoveset.knownMoves,
+            allMoveNames: entry.presetMoveNames.length > 0 ? entry.presetMoveNames : battleMoveset.allMoveNames,
+            abilityName: battleMoveset.abilityName,
+            itemName: entry.itemName ?? battleMoveset.itemName,
+            statSpread: entry.statSpread ?? battleMoveset.statSpread,
             movesetSource: entry.movesetSource,
           },
           moveByKey,
@@ -9561,7 +9763,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           isActive: doublesEnemySelection.includes(entry.slotIndex),
         });
       }),
-    [battleSimulatorState, doublesEnemySelection, enemyBattleEntries, moveByKey],
+    [basePokemonBySpeciesKey, battleSimulatorState, doublesEnemySelection, enemyBattleEntries, moveByKey, pokemonByKey, speciesMovesetByKey],
   );
   const teamBuilderBattleLabReady = doublesAllyMembers.length >= 1 && doublesEnemyMembers.length >= 1;
   const doublesThreatReady = doublesAllyMembers.length === 2 && doublesEnemyMembers.length === 2;
@@ -9868,12 +10070,57 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   };
   const battleEngineAllyMembers = useMemo(
     () =>
-      applyRuntimeToBattleStateMembers(
-        previewBattleEngineAllyMembers.filter((member) => bringSelectedSlotSet.has(member.teamIndex)),
-        doublesAllySelection.filter((slotIndex): slotIndex is number => slotIndex !== null),
-        (member) => getBattleSimulatorMemberState("ally", member.teamIndex, member.pokemon.id),
-      ),
-    [battleSimulatorState, bringSelectedSlotSet, doublesAllySelection, previewBattleEngineAllyMembers],
+      team.flatMap((slot, slotIndex) => {
+        if (!bringSelectedSlotSet.has(slotIndex) || !slot.pokemon) {
+          return [];
+        }
+
+        const basePokemon = slot.basePokemon ?? getBasePokemonForBattleForm(slot.pokemon, basePokemonBySpeciesKey);
+        const runtime = getBattleSimulatorMemberState("ally", slotIndex, basePokemon.id);
+        const battlePokemon = getBattleLabActivePokemon(basePokemon, runtime.activeFormPokemonId, pokemonByKey) ?? basePokemon;
+        const battleMoveset = getStoredOrPresetSavedAttacks(
+          battlePokemon,
+          speciesMovesetByKey,
+          moveByKey,
+          MAX_SPECIES_MOVESET_SIZE,
+        );
+        const savedMegaPokemon = slot.activeFormPokemonId ? pokemonByKey.get(slot.activeFormPokemonId) ?? null : null;
+        const savedMegaItemName = inferMegaEvolutionItemName(savedMegaPokemon, battleData?.items ?? []);
+        const battleItemName = getAllowedTeamSlotItemName({
+          itemName: savedMegaItemName ?? slot.itemName ?? battleMoveset.itemName,
+          basePokemon,
+          activeFormPokemonId: slot.activeFormPokemonId,
+          megaFormsByBaseSpeciesKey,
+          itemOptions: battleData?.items ?? [],
+        });
+
+        return [
+          buildAllyBattleStateMember({
+            slotIndex,
+            pokemon: battlePokemon,
+            slotSavedAttacks: slot.savedAttacks,
+            resolvedMoveset: {
+              ...battleMoveset,
+              itemName: battleItemName,
+              statSpread: slot.resolvedStatSpread ?? battleMoveset.statSpread,
+            },
+            moveByKey,
+            runtime,
+            isActive: doublesAllySelection.includes(slotIndex),
+          }),
+        ];
+      }),
+    [
+      basePokemonBySpeciesKey,
+      battleData?.items,
+      battleSimulatorState,
+      bringSelectedSlotSet,
+      doublesAllySelection,
+      moveByKey,
+      pokemonByKey,
+      speciesMovesetByKey,
+      team,
+    ],
   );
   const showdownBridgeInput = showdownBridgeImport?.input ?? null;
   const battleEngineUsesShowdown = Boolean(showdownBridgeInput);
@@ -10186,7 +10433,9 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
 
     for (const combatant of Object.values(nextState.combatants)) {
       const hpPercent = combatant.maxHp > 0 ? clampPercent((combatant.currentHp / combatant.maxHp) * 100) : 0;
-      nextBattleSimulatorState[getBattleSimulatorStateKey(combatant.side, combatant.teamIndex, combatant.pokemon.id)] = {
+      const basePokemon = getBasePokemonForBattleForm(combatant.pokemon, basePokemonBySpeciesKey);
+      nextBattleSimulatorState[getBattleSimulatorStateKey(combatant.side, combatant.teamIndex, basePokemon.id)] = {
+        activeFormPokemonId: combatant.pokemon.id !== basePokemon.id ? combatant.pokemon.id : null,
         hpPercent,
         attackStage: clampStatStage(combatant.stages.attack),
         defenseStage: clampStatStage(combatant.stages.defense),
@@ -11056,7 +11305,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     });
   };
   const markBattleLabCombatantFainted = (combatant: BattleCombatantState) => {
-    updateBattleSimulatorMemberState(combatant.side, combatant.teamIndex, combatant.pokemon.id, {
+    updateBattleSimulatorMemberStateForPokemon(combatant.side, combatant.teamIndex, combatant.pokemon, {
       hpPercent: 0,
       attackStage: 0,
       defenseStage: 0,
@@ -11077,6 +11326,136 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       protectStreak: 0,
     });
   };
+  const changeBattleLabSlotBattleForm = (
+    side: BattleSide,
+    slotIndex: number,
+    basePokemon: PokemonRecord,
+    activeFormPokemonId: string | null,
+  ) => {
+    const nextPokemon = activeFormPokemonId ? pokemonByKey.get(activeFormPokemonId) ?? null : basePokemon;
+    if (nextPokemon && nextPokemon.id !== basePokemon.id && !isCompatibleBattleForm(basePokemon, nextPokemon)) {
+      return;
+    }
+
+    updateBattleSimulatorMemberState(side, slotIndex, basePokemon.id, {
+      activeFormPokemonId: nextPokemon && nextPokemon.id !== basePokemon.id ? nextPokemon.id : null,
+    });
+    setBattleEngineRecommendation(null);
+    setBattleEngineAnalysisSignature("");
+    setSimulationRun(null);
+    setSimViewMode("real");
+  };
+  const getThreatBoardAllyDisplay = (slotIndex: number | null | undefined) => {
+    if (slotIndex === null || slotIndex === undefined) {
+      return null;
+    }
+
+    const slot = team[slotIndex];
+    if (!slot?.pokemon) {
+      return null;
+    }
+
+    const basePokemon = slot.basePokemon ?? getBasePokemonForBattleForm(slot.pokemon, basePokemonBySpeciesKey);
+    const state = getBattleSimulatorMemberState("ally", slotIndex, basePokemon.id);
+    const pokemon = getBattleLabActivePokemon(basePokemon, state.activeFormPokemonId, pokemonByKey) ?? basePokemon;
+    const formOptions = getSavedMegaFormOptions(
+      basePokemon,
+      slot.activeFormPokemonId,
+      pokemonByKey,
+      megaFormsByBaseSpeciesKey,
+    );
+
+    return {
+      slot,
+      slotIndex,
+      basePokemon,
+      pokemon,
+      state,
+      formOptions,
+    };
+  };
+  const getThreatBoardEnemyDisplay = (slotIndex: number | null | undefined) => {
+    if (slotIndex === null || slotIndex === undefined) {
+      return null;
+    }
+
+    const entry = opponentEntryBySlot.get(slotIndex) ?? null;
+    if (!entry) {
+      return null;
+    }
+
+    const basePokemon = getBasePokemonForBattleForm(entry.pokemon, basePokemonBySpeciesKey);
+    const state = getBattleSimulatorMemberState("enemy", entry.slotIndex, basePokemon.id);
+    const pokemon = getBattleLabActivePokemon(basePokemon, state.activeFormPokemonId, pokemonByKey) ?? basePokemon;
+    const formOptions = getTeamFormOptions(basePokemon, megaFormsByBaseSpeciesKey);
+    const moveset = getStoredOrPresetSavedAttacks(
+      pokemon,
+      speciesMovesetByKey,
+      moveByKey,
+      MAX_SPECIES_MOVESET_SIZE,
+    );
+
+    return {
+      entry,
+      slotIndex,
+      basePokemon,
+      pokemon,
+      state,
+      formOptions,
+      moveset,
+    };
+  };
+  const renderThreatBoardFormControls = ({
+    side,
+    slotIndex,
+    basePokemon,
+    pokemon,
+    formOptions,
+    compact = false,
+  }: {
+    side: BattleSide;
+    slotIndex: number;
+    basePokemon: PokemonRecord;
+    pokemon: PokemonRecord;
+    formOptions: TeamFormOption[];
+    compact?: boolean;
+  }) => {
+    if (formOptions.length <= 1) {
+      return null;
+    }
+
+    const currentFormOption = formOptions.find((option) => option.pokemon.id === pokemon.id) ?? null;
+    const quickFormOptions = formOptions.filter((option) => option.pokemon.id !== pokemon.id);
+    if (quickFormOptions.length === 0) {
+      return null;
+    }
+
+    return (
+      <div
+        className={`doubles-lineup-form-toggle ${side} ${compact ? "compact" : ""}`}
+        aria-label={`${pokemon.name} battle form shortcuts`}
+      >
+        {quickFormOptions.map((option) => {
+          const isBase = option.isBase;
+          return (
+            <button
+              key={`threat-${side}-${slotIndex}-form-${option.pokemon.id}`}
+              type="button"
+              className={isBase ? "normal" : "mega"}
+              onClick={(event) => {
+                event.stopPropagation();
+                changeBattleLabSlotBattleForm(side, slotIndex, basePokemon, option.activeFormPokemonId);
+              }}
+              title={isBase ? "Switch this slot back to normal form" : `Mega evolve into ${option.pokemon.name}`}
+            >
+              {isBase ? "Normal" : option.label}
+            </button>
+          );
+        })}
+        {currentFormOption && !currentFormOption.isBase ? <span>{currentFormOption.label}</span> : null}
+      </div>
+    );
+  };
   const clearChosenActionForCombatant = (combatantId: string) => {
     setUserChosenActions((current) => {
       if (!(combatantId in current)) {
@@ -11091,6 +11470,46 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
 
   const updateOpponentQuery = (slotIndex: number, query: string) => {
     setOpponentQueries((current) => current.map((entry, index) => (index === slotIndex ? query : entry)));
+  };
+
+  const changeOpponentSlotBattleForm = (slotIndex: number, nextPokemon: PokemonRecord) => {
+    const currentEntry = opponentRoster[slotIndex];
+    const currentPokemon = currentEntry?.pokemon ?? null;
+    const basePokemon = currentPokemon ? getBasePokemonForBattleForm(currentPokemon, basePokemonBySpeciesKey) : null;
+
+    if (basePokemon && nextPokemon.id !== basePokemon.id && !isCompatibleBattleForm(basePokemon, nextPokemon)) {
+      return;
+    }
+
+    setOpponentQueries((current) => current.map((entry, index) => (index === slotIndex ? nextPokemon.name : entry)));
+
+    const nextBasePokemon = getBasePokemonForBattleForm(nextPokemon, basePokemonBySpeciesKey);
+    const currentPokemonId = currentPokemon?.id ?? null;
+    const nextBaseKey = getBattleSimulatorStateKey("enemy", slotIndex, nextBasePokemon.id);
+    if (currentPokemonId) {
+      const oldKey = getBattleSimulatorStateKey("enemy", slotIndex, currentPokemonId);
+      const oldBaseKey = basePokemon ? getBattleSimulatorStateKey("enemy", slotIndex, basePokemon.id) : oldKey;
+      setBattleSimulatorState((current) => {
+        const existing = current[nextBaseKey] ?? current[oldBaseKey] ?? current[oldKey];
+        if (!existing) {
+          return current;
+        }
+
+        const { [oldKey]: _discarded, [oldBaseKey]: _oldBaseDiscarded, [nextBaseKey]: _nextBaseDiscarded, ...rest } = current;
+        return {
+          ...rest,
+          [nextBaseKey]: {
+            ...existing,
+            activeFormPokemonId: null,
+          },
+        };
+      });
+    }
+
+    setBattleEngineRecommendation(null);
+    setBattleEngineAnalysisSignature("");
+    setSimulationRun(null);
+    setSimViewMode("real");
   };
 
   const loadSavedTeamAsOpponent = (savedTeam: PersistedTeam) => {
@@ -13478,7 +13897,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           basePokemonBySpeciesKey={basePokemonBySpeciesKey}
           megaFormsByBaseSpeciesKey={megaFormsByBaseSpeciesKey}
           onAttackerBattleFormChange={changeTeamSlotBattleForm}
-          onDefenderBattleFormChange={(slotIndex, pokemon) => updateOpponentQuery(slotIndex, pokemon.name)}
+          onDefenderBattleFormChange={changeOpponentSlotBattleForm}
           damageCalcMode={damageCalcMode}
           setDamageCalcMode={setDamageCalcMode}
           damageWeather={damageWeather}
@@ -13542,22 +13961,36 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                   <div className="selected-slots" aria-label="Selected allies">
                     {(["A", "B"] as const).map((rankLabel, rankIndex) => {
                       const slotIndex = doublesAllySelection[rankIndex];
-                      const pokemon =
-                        slotIndex !== null && slotIndex !== undefined ? team[slotIndex]?.pokemon ?? null : null;
+                      const display = getThreatBoardAllyDisplay(slotIndex);
+                      const pokemon = display?.pokemon ?? null;
                       return (
                         <div
                           key={`doubles-ally-selected-${rankLabel}`}
-                          className={`selected-slot doubles-lineup-selected ${pokemon ? "filled" : ""}`}
+                          className={`selected-slot doubles-lineup-selected ${pokemon ? "filled" : ""} ${
+                            display && display.formOptions.length > 1 ? "has-form-toggle" : ""
+                          }`}
                         >
-                          <span className="doubles-lineup-selected-rank">{rankLabel}</span>
-                          {pokemon ? (
-                            <>
-                              <PokemonSprite pokemon={pokemon} className="doubles-lineup-selected-sprite" />
-                              <span className="doubles-lineup-selected-name">{pokemon.name}</span>
-                            </>
-                          ) : (
-                            <span className="doubles-lineup-selected-empty">Empty</span>
-                          )}
+                          <div className="doubles-lineup-selected-main">
+                            <span className="doubles-lineup-selected-rank">{rankLabel}</span>
+                            {pokemon ? (
+                              <>
+                                <PokemonSprite pokemon={pokemon} className="doubles-lineup-selected-sprite" />
+                                <span className="doubles-lineup-selected-name">{pokemon.name}</span>
+                              </>
+                            ) : (
+                              <span className="doubles-lineup-selected-empty">Empty</span>
+                            )}
+                          </div>
+                          {display ? (
+                            renderThreatBoardFormControls({
+                              side: "ally",
+                              slotIndex: display.slotIndex,
+                              basePokemon: display.basePokemon,
+                              pokemon: display.pokemon,
+                              formOptions: display.formOptions,
+                              compact: true,
+                            })
+                          ) : null}
                         </div>
                       );
                     })}
@@ -13580,43 +14013,53 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                   const slot = team[slotIndex];
                   const selectionRank = doublesAllySelection.indexOf(slotIndex);
                   const isSelected = selectionRank !== -1;
-                  const pokemon = slot.pokemon;
+                  const display = getThreatBoardAllyDisplay(slotIndex);
+                  const pokemon = display?.pokemon ?? slot.pokemon;
 
                   return (
-                    <button
-                      key={`doubles-ally-${slotIndex}`}
-                      type="button"
-                      role="listitem"
-                      aria-pressed={isSelected}
-                      disabled={!pokemon}
-                      className={`doubles-lineup-token ally ${isSelected ? "selected" : ""} ${
-                        pokemon ? "" : "empty"
-                      }`}
-                      onClick={() => toggleDoublesAllySelection(slotIndex)}
-                      title={pokemon ? pokemon.name : `Slot ${slotIndex + 1} empty`}
-                    >
-                      <span className="doubles-lineup-token-slot">Slot {slotIndex + 1}</span>
-                      <div className="doubles-lineup-token-body">
-                        {pokemon ? (
-                          <PokemonSprite pokemon={pokemon} className="doubles-lineup-token-sprite" />
-                        ) : (
-                          <div className="doubles-lineup-token-placeholder">?</div>
-                        )}
-                        <div className="doubles-lineup-token-info">
-                          <strong>{pokemon ? pokemon.name : "Empty"}</strong>
-                          <span>
-                            {pokemon
-                              ? pokemon.types.join(" / ")
-                              : loadError
-                                ? "Unavailable"
-                                : "Add in Team Builder"}
-                          </span>
+                    <div key={`doubles-ally-entry-${slotIndex}`} className="doubles-lineup-entry" role="listitem">
+                      <button
+                        type="button"
+                        aria-pressed={isSelected}
+                        disabled={!pokemon}
+                        className={`doubles-lineup-token ally ${isSelected ? "selected" : ""} ${
+                          pokemon ? "" : "empty"
+                        }`}
+                        onClick={() => toggleDoublesAllySelection(slotIndex)}
+                        title={pokemon ? pokemon.name : `Slot ${slotIndex + 1} empty`}
+                      >
+                        <span className="doubles-lineup-token-slot">Slot {slotIndex + 1}</span>
+                        <div className="doubles-lineup-token-body">
+                          {pokemon ? (
+                            <PokemonSprite pokemon={pokemon} className="doubles-lineup-token-sprite" />
+                          ) : (
+                            <div className="doubles-lineup-token-placeholder">?</div>
+                          )}
+                          <div className="doubles-lineup-token-info">
+                            <strong>{pokemon ? pokemon.name : "Empty"}</strong>
+                            <span>
+                              {pokemon
+                                ? pokemon.types.join(" / ")
+                                : loadError
+                                  ? "Unavailable"
+                                  : "Add in Team Builder"}
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                      {isSelected ? (
-                        <span className="doubles-lineup-token-rank">{selectionRank === 0 ? "A" : "B"}</span>
+                        {isSelected ? (
+                          <span className="doubles-lineup-token-rank">{selectionRank === 0 ? "A" : "B"}</span>
+                        ) : null}
+                      </button>
+                      {display ? (
+                        renderThreatBoardFormControls({
+                          side: "ally",
+                          slotIndex: display.slotIndex,
+                          basePokemon: display.basePokemon,
+                          pokemon: display.pokemon,
+                          formOptions: display.formOptions,
+                        })
                       ) : null}
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -13644,25 +14087,36 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                   <div className="selected-slots" aria-label="Selected enemies">
                     {(["A", "B"] as const).map((rankLabel, rankIndex) => {
                       const slotIndex = doublesEnemySelection[rankIndex];
-                      const entry =
-                        slotIndex !== null && slotIndex !== undefined
-                          ? opponentEntryBySlot.get(slotIndex) ?? null
-                          : null;
-                      const pokemon = entry?.pokemon ?? null;
+                      const display = getThreatBoardEnemyDisplay(slotIndex);
+                      const pokemon = display?.pokemon ?? null;
                       return (
                         <div
                           key={`doubles-enemy-selected-${rankLabel}`}
-                          className={`selected-slot doubles-lineup-selected enemy ${pokemon ? "filled" : ""}`}
+                          className={`selected-slot doubles-lineup-selected enemy ${pokemon ? "filled" : ""} ${
+                            display && display.formOptions.length > 1 ? "has-form-toggle" : ""
+                          }`}
                         >
-                          <span className="doubles-lineup-selected-rank">{rankLabel}</span>
-                          {pokemon ? (
-                            <>
-                              <PokemonSprite pokemon={pokemon} className="doubles-lineup-selected-sprite" />
-                              <span className="doubles-lineup-selected-name">{pokemon.name}</span>
-                            </>
-                          ) : (
-                            <span className="doubles-lineup-selected-empty">Empty</span>
-                          )}
+                          <div className="doubles-lineup-selected-main">
+                            <span className="doubles-lineup-selected-rank">{rankLabel}</span>
+                            {pokemon ? (
+                              <>
+                                <PokemonSprite pokemon={pokemon} className="doubles-lineup-selected-sprite" />
+                                <span className="doubles-lineup-selected-name">{pokemon.name}</span>
+                              </>
+                            ) : (
+                              <span className="doubles-lineup-selected-empty">Empty</span>
+                            )}
+                          </div>
+                          {display ? (
+                            renderThreatBoardFormControls({
+                              side: "enemy",
+                              slotIndex: display.slotIndex,
+                              basePokemon: display.basePokemon,
+                              pokemon: display.pokemon,
+                              formOptions: display.formOptions,
+                              compact: true,
+                            })
+                          ) : null}
                         </div>
                       );
                     })}
@@ -13692,59 +14146,70 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                 {enemyBattleEntries.map((entry) => {
                   const selectionRank = doublesEnemySelection.indexOf(entry.slotIndex);
                   const isSelected = selectionRank !== -1;
-                  const pokemon = entry.pokemon;
-                  const runtimeState = getBattleSimulatorMemberState("enemy", entry.slotIndex, entry.pokemon.id);
+                  const display = getThreatBoardEnemyDisplay(entry.slotIndex);
+                  const pokemon = display?.pokemon ?? entry.pokemon;
+                  const runtimeState =
+                    display?.state ?? getBattleSimulatorMemberStateForPokemon("enemy", entry.slotIndex, entry.pokemon);
                   const isFainted = runtimeState.hpPercent <= 0;
                   const moveCount =
                     entry.movesetSource === "custom"
                       ? entry.savedAttacks.length
-                      : entry.presetMoveNames.length;
+                      : display?.moveset.allMoveNames.length ?? entry.presetMoveNames.length;
 
                   return (
-                    <button
-                      key={`doubles-enemy-${entry.slotIndex}`}
-                      type="button"
-                      role="listitem"
-                      aria-pressed={isSelected}
-                      disabled={!pokemon || isFainted}
-                      className={`doubles-lineup-token enemy ${isSelected ? "selected" : ""} ${
-                        pokemon ? "" : "empty"
-                      }`}
-                      onClick={() => toggleDoublesEnemySelection(entry.slotIndex)}
-                      title={
-                        pokemon
-                          ? isFainted
-                            ? `${pokemon.name} fainted`
-                            : pokemon.name
-                          : `Enemy ${entry.slotIndex + 1} empty`
-                      }
-                    >
-                      <span className="doubles-lineup-token-slot">Enemy {entry.slotIndex + 1}</span>
-                      <div className="doubles-lineup-token-body">
-                        {pokemon ? (
-                          <PokemonSprite pokemon={pokemon} className="doubles-lineup-token-sprite" />
-                        ) : (
-                          <div className="doubles-lineup-token-placeholder">?</div>
-                        )}
-                        <div className="doubles-lineup-token-info">
-                          <strong>{pokemon ? pokemon.name : "Empty"}</strong>
-                          <span>
-                            {pokemon
-                              ? isFainted
-                                ? "Fainted"
-                                : moveCount > 0
-                                ? `${pokemon.types.join(" / ")} · ${moveCount} ${
-                                    moveCount === 1 ? "move" : "moves"
-                                  }`
-                                : pokemon.types.join(" / ")
-                              : "Add above"}
-                          </span>
+                    <div key={`doubles-enemy-entry-${entry.slotIndex}`} className="doubles-lineup-entry" role="listitem">
+                      <button
+                        type="button"
+                        aria-pressed={isSelected}
+                        disabled={!pokemon || isFainted}
+                        className={`doubles-lineup-token enemy ${isSelected ? "selected" : ""} ${
+                          pokemon ? "" : "empty"
+                        }`}
+                        onClick={() => toggleDoublesEnemySelection(entry.slotIndex)}
+                        title={
+                          pokemon
+                            ? isFainted
+                              ? `${pokemon.name} fainted`
+                              : pokemon.name
+                            : `Enemy ${entry.slotIndex + 1} empty`
+                        }
+                      >
+                        <span className="doubles-lineup-token-slot">Enemy {entry.slotIndex + 1}</span>
+                        <div className="doubles-lineup-token-body">
+                          {pokemon ? (
+                            <PokemonSprite pokemon={pokemon} className="doubles-lineup-token-sprite" />
+                          ) : (
+                            <div className="doubles-lineup-token-placeholder">?</div>
+                          )}
+                          <div className="doubles-lineup-token-info">
+                            <strong>{pokemon ? pokemon.name : "Empty"}</strong>
+                            <span>
+                              {pokemon
+                                ? isFainted
+                                  ? "Fainted"
+                                  : moveCount > 0
+                                    ? `${pokemon.types.join(" / ")} · ${moveCount} ${
+                                        moveCount === 1 ? "move" : "moves"
+                                      }`
+                                    : pokemon.types.join(" / ")
+                                : "Add above"}
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                      {isSelected ? (
-                        <span className="doubles-lineup-token-rank">{selectionRank === 0 ? "A" : "B"}</span>
+                        {isSelected ? (
+                          <span className="doubles-lineup-token-rank">{selectionRank === 0 ? "A" : "B"}</span>
+                        ) : null}
+                      </button>
+                      {display && !isFainted ? (
+                        renderThreatBoardFormControls({
+                          side: "enemy",
+                          slotIndex: display.slotIndex,
+                          basePokemon: display.basePokemon,
+                          pokemon: display.pokemon,
+                          formOptions: display.formOptions,
+                        })
                       ) : null}
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -13760,6 +14225,11 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
 
               <div className="damage-doubles-scout-grid">
                 {selectedDoublesEnemyEntries.map((entry) => {
+                  const display = getThreatBoardEnemyDisplay(entry.slotIndex);
+                  const pokemon = display?.pokemon ?? entry.pokemon;
+                  const importedMoveNames = display?.moveset.allMoveNames ?? entry.presetMoveNames;
+                  const abilityName = display?.moveset.abilityName ?? entry.abilityName;
+                  const itemName = entry.itemName ?? display?.moveset.itemName ?? null;
                   const displayedMoveEntries =
                     entry.movesetSource === "custom" && entry.savedAttacks.length > 0
                       ? entry.savedAttacks.map((attack) => {
@@ -13769,7 +14239,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                             move: getMoveRecordByName(name, moveByKey),
                           };
                         })
-                      : entry.presetMoveNames.map((name) => ({
+                      : importedMoveNames.map((name) => ({
                           name,
                           move: getMoveRecordByName(name, moveByKey),
                         }));
@@ -13778,9 +14248,9 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                     <article key={`doubles-enemy-pool-${entry.slotIndex}`} className="damage-doubles-scout-card">
                       <div className="damage-doubles-scout-head">
                         <div className="damage-doubles-scout-identity">
-                          <PokemonSprite pokemon={entry.pokemon} className="damage-side-sprite" />
+                          <PokemonSprite pokemon={pokemon} className="damage-side-sprite" />
                           <div>
-                            <strong>{entry.pokemon.name}</strong>
+                            <strong>{pokemon.name}</strong>
                             <p>{entry.movesetSource === "custom" ? "Custom set" : "Imported set"}</p>
                           </div>
                         </div>
@@ -13789,9 +14259,19 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                         </span>
                       </div>
 
+                      {display ? (
+                        renderThreatBoardFormControls({
+                          side: "enemy",
+                          slotIndex: display.slotIndex,
+                          basePokemon: display.basePokemon,
+                          pokemon: display.pokemon,
+                          formOptions: display.formOptions,
+                        })
+                      ) : null}
+
                       <div className="damage-doubles-scout-meta">
-                        {entry.abilityName ? <span>Ability {entry.abilityName}</span> : null}
-                        {entry.itemName ? <span>Item {entry.itemName}</span> : null}
+                        {abilityName ? <span>Ability {abilityName}</span> : null}
+                        {itemName ? <span>Item {itemName}</span> : null}
                       </div>
 
                       <div className="coverage-chip-list">
@@ -14218,13 +14698,24 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                               const combatant = id ? displayState.combatants[id] : null;
                               const slotKey = id ? `enemy-${id}` : `enemy-empty-${rank}`;
                               const teamIndex = combatant?.teamIndex;
-                              const pokemonId = combatant?.pokemon.id ?? null;
+                              const basePokemon = combatant
+                                ? getBasePokemonForBattleForm(combatant.pokemon, basePokemonBySpeciesKey)
+                                : null;
                               const patchState =
-                                teamIndex != null && pokemonId
-                                  ? getBattleSimulatorMemberState("enemy", teamIndex, pokemonId)
+                                teamIndex != null && combatant
+                                  ? getBattleSimulatorMemberStateForPokemon("enemy", teamIndex, combatant.pokemon)
                                   : null;
                               const projectedCombatant =
                                 simViewMode === "real" && id ? battleLabDamageProjection?.state.combatants[id] ?? null : null;
+                              const formOptions =
+                                !battleEngineUsesShowdown && basePokemon
+                                  ? getTeamFormOptions(basePokemon, megaFormsByBaseSpeciesKey)
+                                  : [];
+                              const handleBattleFormChange =
+                                !battleEngineUsesShowdown && teamIndex != null && basePokemon
+                                  ? (nextFormPokemonId: string | null) =>
+                                      changeBattleLabSlotBattleForm("enemy", teamIndex, basePokemon, nextFormPokemonId)
+                                  : undefined;
                               return (
                                 <BattleLabSlot
                                   key={slotKey}
@@ -14256,11 +14747,13 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                                     setEditingSlotKey(editingSlotKey === slotKey ? null : slotKey);
                                   }}
                                   onEditPatch={(patch) => {
-                                    if (teamIndex != null && pokemonId) {
-                                      updateBattleSimulatorMemberState("enemy", teamIndex, pokemonId, patch);
+                                    if (teamIndex != null && combatant) {
+                                      updateBattleSimulatorMemberStateForPokemon("enemy", teamIndex, combatant.pokemon, patch);
                                     }
                                   }}
                                   simulatorPatch={patchState}
+                                  formOptions={formOptions}
+                                  onBattleFormChange={handleBattleFormChange}
                                 />
                               );
                             })}
@@ -14308,17 +14801,30 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                               const combatant = id ? displayState.combatants[id] : null;
                               const slotKey = id ? `ally-${id}` : `ally-empty-${rank}`;
                               const teamIndex = combatant?.teamIndex;
-                              const pokemonId = combatant?.pokemon.id ?? null;
+                              const teamSlot = teamIndex != null ? team[teamIndex] ?? null : null;
+                              const basePokemon =
+                                teamSlot?.basePokemon ??
+                                (combatant ? getBasePokemonForBattleForm(combatant.pokemon, basePokemonBySpeciesKey) : null);
                               const patchState =
-                                teamIndex != null && pokemonId
-                                  ? getBattleSimulatorMemberState("ally", teamIndex, pokemonId)
+                                teamIndex != null && combatant
+                                  ? getBattleSimulatorMemberStateForPokemon("ally", teamIndex, combatant.pokemon)
                                   : null;
                               const projectedCombatant =
                                 simViewMode === "real" && id ? battleLabDamageProjection?.state.combatants[id] ?? null : null;
                               const formOptions =
-                                !battleEngineUsesShowdown && teamIndex != null
-                                  ? team[teamIndex]?.formOptions ?? []
+                                !battleEngineUsesShowdown && basePokemon
+                                  ? getSavedMegaFormOptions(
+                                      basePokemon,
+                                      teamSlot?.activeFormPokemonId,
+                                      pokemonByKey,
+                                      megaFormsByBaseSpeciesKey,
+                                    )
                                   : [];
+                              const handleBattleFormChange =
+                                !battleEngineUsesShowdown && teamIndex != null && basePokemon
+                                  ? (nextFormPokemonId: string | null) =>
+                                      changeBattleLabSlotBattleForm("ally", teamIndex, basePokemon, nextFormPokemonId)
+                                  : undefined;
                               return (
                                 <BattleLabSlot
                                   key={slotKey}
@@ -14350,17 +14856,13 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                                     setEditingSlotKey(editingSlotKey === slotKey ? null : slotKey);
                                   }}
                                   onEditPatch={(patch) => {
-                                    if (teamIndex != null && pokemonId) {
-                                      updateBattleSimulatorMemberState("ally", teamIndex, pokemonId, patch);
+                                    if (teamIndex != null && combatant) {
+                                      updateBattleSimulatorMemberStateForPokemon("ally", teamIndex, combatant.pokemon, patch);
                                     }
                                   }}
                                   simulatorPatch={patchState}
                                   formOptions={formOptions}
-                                  onBattleFormChange={
-                                    !battleEngineUsesShowdown && teamIndex != null
-                                      ? (nextFormPokemonId) => changeTeamSlotBattleForm(teamIndex, nextFormPokemonId)
-                                      : undefined
-                                  }
+                                  onBattleFormChange={handleBattleFormChange}
                                 />
                               );
                             })}
@@ -14791,7 +15293,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                       );
                       const currentLastMoveId =
                         combatant.teamIndex != null
-                          ? getBattleSimulatorMemberState(slot.side, combatant.teamIndex, combatant.pokemon.id).lastMoveId
+                          ? getBattleSimulatorMemberStateForPokemon(slot.side, combatant.teamIndex, combatant.pokemon).lastMoveId
                           : null;
 
                       return (
@@ -14835,7 +15337,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                                       })
                                     }
                                     onSetLastMove={() => {
-                                      updateBattleSimulatorMemberState(slot.side, combatant.teamIndex, combatant.pokemon.id, {
+                                      updateBattleSimulatorMemberStateForPokemon(slot.side, combatant.teamIndex, combatant.pokemon, {
                                         lastMoveId: currentLastMoveId === move.id ? null : move.id,
                                       });
                                     }}

@@ -4,8 +4,8 @@ import type { MoveRecord } from "../battleData";
 import { calculateRoughDamage, getAttackerEffectiveWeather, isLowKickMove, resolveWeatherBallDamageInput } from "../damage";
 import { getChampionsComputedStats } from "../championsStats";
 import {
-  getDefaultDamageAbilityId,
   getDefaultDamageAbilityIdFromNames,
+  getPokemonAbilityNames,
   normalizeDamageAbilityId,
 } from "../damageAbilities";
 import { doesDefenderItemReduceDamage, isResistBerryItem, normalizeDamageItemId } from "../damageItems";
@@ -384,11 +384,21 @@ function createCombatantState(
       : currentHpPercent <= 0
         ? 0
         : Math.max(1, Math.min(maxHp, Math.round((maxHp * currentHpPercent) / 100)));
-  const explicitAbilityId = normalizeDamageAbilityId(member.abilityName);
+  const explicitAbilityName = member.abilityName?.trim() || null;
+  const pokemonAbilityNames = getPokemonAbilityNames(member.pokemon);
+  const explicitAbilityId = normalizeDamageAbilityId(explicitAbilityName);
   const defaultAbilityId =
-    member.abilityName && member.abilityName.trim()
-      ? getDefaultDamageAbilityIdFromNames([member.abilityName])
-      : getDefaultDamageAbilityId(member.pokemon);
+    explicitAbilityName
+      ? getDefaultDamageAbilityIdFromNames([explicitAbilityName])
+      : getDefaultDamageAbilityIdFromNames(pokemonAbilityNames);
+  const defaultAbilityName =
+    pokemonAbilityNames.find((abilityName) => WEATHER_ENTRY_ABILITIES[normalizeMoveKey(abilityName)] !== undefined) ??
+    (defaultAbilityId !== "none"
+      ? pokemonAbilityNames.find((abilityName) => normalizeDamageAbilityId(abilityName) === defaultAbilityId)
+      : undefined) ??
+    pokemonAbilityNames[0] ??
+    null;
+  const resolvedAbilityName = explicitAbilityName ?? defaultAbilityName;
   const itemId = normalizeDamageItemId(member.itemName) ?? "none";
   const statusCondition = member.statusCondition ?? "none";
   const sleepTurns =
@@ -438,7 +448,7 @@ function createCombatantState(
     currentHp,
     turnsActive: Math.max(0, Math.round(member.turnsActive ?? 0)),
     abilityId: explicitAbilityId ?? defaultAbilityId,
-    abilityName: member.abilityName?.trim() || null,
+    abilityName: resolvedAbilityName,
     itemId,
     itemName: member.itemName?.trim() || null,
     itemConsumed: false,

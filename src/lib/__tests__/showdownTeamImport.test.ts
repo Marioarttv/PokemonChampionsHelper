@@ -47,4 +47,44 @@ describe("importShowdownTeamText", () => {
     expect(result.importedPokemonCount).toBe(1);
     expect(result.unresolvedSpecies).toEqual([]);
   });
+
+  it("uses Eternal Flower Floette as the base for Floettite imports", () => {
+    const floette = makePokemon("Floette", {
+      id: "floette",
+      baseSpecies: "Floette",
+      abilities: { "0": "Flower Veil" },
+    });
+    const floetteEternal = {
+      ...makePokemon("Floette-Eternal", {
+        id: "floetteeternal",
+        baseSpecies: "Floette",
+        abilities: { "0": "Flower Veil" },
+      }),
+      forme: "Eternal",
+    };
+    const floetteMega = {
+      ...makePokemon("Floette-Mega", {
+        id: "floettemega",
+        baseSpecies: "Floette",
+        abilities: { "0": "Flower Veil" },
+      }),
+      forme: "Mega",
+    };
+
+    const result = importShowdownTeamText("Floette @ Floettite", {
+      pokemonEntries: [floette, floetteEternal, floetteMega],
+      moveByKey: createMoveLookup(),
+      maxTeamSize: 6,
+      maxMovesPerSlot: 4,
+    });
+
+    expect(result.slots[0]).toMatchObject({
+      query: "Floette-Eternal",
+      pokemonId: "floetteeternal",
+      activeFormPokemonId: "floettemega",
+      itemName: "Floettite",
+    });
+    expect(result.importedPokemonCount).toBe(1);
+    expect(result.unresolvedSpecies).toEqual([]);
+  });
 });
