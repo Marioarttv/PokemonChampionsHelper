@@ -299,6 +299,10 @@ type SingleDamageCalculatorPanelProps = {
   attackerSlot: LoadedTeamSlot | null;
   defenderSlotIndex: number | null;
   defenderEntry: LoadedOpponentEntry | null;
+  basePokemonBySpeciesKey: ReadonlyMap<string, PokemonRecord>;
+  megaFormsByBaseSpeciesKey: ReadonlyMap<string, PokemonRecord[]>;
+  onAttackerBattleFormChange: (slotIndex: number, activeFormPokemonId: string | null) => void;
+  onDefenderBattleFormChange: (slotIndex: number, pokemon: PokemonRecord) => void;
   damageCalcMode: DamageCalcMode;
   setDamageCalcMode: Dispatch<SetStateAction<DamageCalcMode>>;
   damageWeather: DamageWeather;
@@ -3611,6 +3615,10 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
   attackerSlot,
   defenderSlotIndex,
   defenderEntry,
+  basePokemonBySpeciesKey,
+  megaFormsByBaseSpeciesKey,
+  onAttackerBattleFormChange,
+  onDefenderBattleFormChange,
   damageCalcMode,
   setDamageCalcMode,
   damageWeather,
@@ -3652,6 +3660,22 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
   const selectedDamageDefenderPokemon = defenderEntry?.pokemon ?? null;
   const selectedDamageAttackerSpread = attackerSlot?.resolvedStatSpread ?? null;
   const selectedDamageDefenderSpread = defenderEntry?.statSpread ?? null;
+  const selectedDamageAttackerFormOptions = useMemo(() => {
+    if (!selectedDamageAttackerPokemon) {
+      return [];
+    }
+
+    const basePokemon = getBasePokemonForBattleForm(selectedDamageAttackerPokemon, basePokemonBySpeciesKey);
+    return getTeamFormOptions(basePokemon, megaFormsByBaseSpeciesKey);
+  }, [basePokemonBySpeciesKey, megaFormsByBaseSpeciesKey, selectedDamageAttackerPokemon]);
+  const selectedDamageDefenderFormOptions = useMemo(() => {
+    if (!selectedDamageDefenderPokemon) {
+      return [];
+    }
+
+    const basePokemon = getBasePokemonForBattleForm(selectedDamageDefenderPokemon, basePokemonBySpeciesKey);
+    return getTeamFormOptions(basePokemon, megaFormsByBaseSpeciesKey);
+  }, [basePokemonBySpeciesKey, megaFormsByBaseSpeciesKey, selectedDamageDefenderPokemon]);
   const currentDamageAttackerPokemon =
     damageCalcMode === "attack" ? selectedDamageAttackerPokemon : selectedDamageDefenderPokemon;
   const currentDamageDefenderPokemon =
@@ -4025,6 +4049,20 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
     const isAttacker = side === "attacker";
     const pokemon = isAttacker ? currentDamageAttackerPokemon : currentDamageDefenderPokemon;
     const stats = isAttacker ? currentDamageAttackerStats : currentDamageDefenderStats;
+    const sourceSide: "ally" | "enemy" = isAttacker
+      ? damageCalcMode === "attack"
+        ? "ally"
+        : "enemy"
+      : damageCalcMode === "attack"
+        ? "enemy"
+        : "ally";
+    const formOptions = sourceSide === "ally" ? selectedDamageAttackerFormOptions : selectedDamageDefenderFormOptions;
+    const selectedFormPokemonId =
+      sourceSide === "ally"
+        ? attackerSlot?.activeFormPokemonId ?? null
+        : isChampionsMegaEntry(pokemon)
+          ? pokemon.id
+          : null;
     const abilityValue = isAttacker ? attackerSideAbility : defenderSideAbility;
     const setAbilityValue = isAttacker ? setAttackerSideAbility : setDefenderSideAbility;
     const itemValue = isAttacker ? attackerSideItem : defenderSideItem;
@@ -4037,6 +4075,22 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
     const stageLabel = isAttacker ? "Atk Boost" : "Def Boost";
     const roleLabel = isAttacker ? "Attacker" : "Defender";
     const overviewSpeed = getDamageOverviewSpeedStat(stats?.spe ?? 0, itemValue);
+    const handleFormChange = (option: TeamFormOption) => {
+      if (sourceSide === "ally") {
+        if (attackerSlotIndex === null) {
+          return;
+        }
+
+        onAttackerBattleFormChange(attackerSlotIndex, option.activeFormPokemonId);
+        return;
+      }
+
+      if (defenderSlotIndex === null) {
+        return;
+      }
+
+      onDefenderBattleFormChange(defenderSlotIndex, option.pokemon);
+    };
 
     const statEntries = isAttacker
       ? [
@@ -4085,6 +4139,27 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
             <p className="damage-template-note">{stats ? formatChampionsTemplateSummary(stats.template) : ""}</p>
           </div>
         </div>
+
+        {formOptions.length > 1 ? (
+          <div className="damage-form-switcher" role="group" aria-label={`${pokemon.name} battle form`}>
+            {formOptions.map((option) => {
+              const isSelected = selectedFormPokemonId === option.activeFormPokemonId;
+              return (
+                <button
+                  key={`${side}-form-${option.pokemon.id}`}
+                  type="button"
+                  className={`damage-form-option${isSelected ? " is-selected" : ""}`}
+                  onClick={() => handleFormChange(option)}
+                  aria-pressed={isSelected}
+                  title={`Use ${option.pokemon.name} in this damage slot`}
+                >
+                  <PokemonSprite pokemon={option.pokemon} className="damage-form-option__sprite" />
+                  <span>{option.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
 
         <div className="damage-stat-strip">
           {statEntries.map(([label, value]) => (
@@ -13400,6 +13475,10 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           attackerSlot={selectedDamageAttacker}
           defenderSlotIndex={damageDefenderSlotIndex}
           defenderEntry={selectedDamageDefender}
+          basePokemonBySpeciesKey={basePokemonBySpeciesKey}
+          megaFormsByBaseSpeciesKey={megaFormsByBaseSpeciesKey}
+          onAttackerBattleFormChange={changeTeamSlotBattleForm}
+          onDefenderBattleFormChange={(slotIndex, pokemon) => updateOpponentQuery(slotIndex, pokemon.name)}
           damageCalcMode={damageCalcMode}
           setDamageCalcMode={setDamageCalcMode}
           damageWeather={damageWeather}
