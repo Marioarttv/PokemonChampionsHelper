@@ -1332,6 +1332,424 @@ img {
   font-weight: 700;
 }
 
+.training-optimizer-panel {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.training-optimizer-topbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, auto);
+  gap: 0.85rem;
+  align-items: end;
+}
+
+.training-optimizer-topbar h2 {
+  margin: 0;
+  color: var(--ink-strong);
+  font-family: var(--font-display);
+  letter-spacing: -0.03em;
+}
+
+.training-run-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.training-run-actions span {
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.training-optimizer-grid {
+  display: grid;
+  grid-template-columns: minmax(250px, 340px) minmax(0, 1fr);
+  gap: 0.7rem;
+  align-items: start;
+}
+
+.training-picker-card {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.78rem;
+  border-radius: 16px;
+}
+
+.training-search-stack {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.training-meta-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.training-selected-target {
+  display: grid;
+  gap: 0.42rem;
+  padding: 0.58rem;
+  border-radius: 14px;
+  border: 1px solid rgba(226, 232, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(30, 38, 66, 0.9), rgba(16, 22, 44, 0.82));
+}
+
+.training-meta-chip-list {
+  margin-top: 0;
+}
+
+.training-meta-chip {
+  min-height: 2rem;
+}
+
+.training-settings-controls {
+  grid-template-columns: repeat(auto-fit, minmax(142px, 1fr));
+}
+
+.training-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.training-summary-card {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-radius: 14px;
+  border: 1px solid rgba(226, 232, 255, 0.1);
+  background:
+    linear-gradient(180deg, rgba(28, 36, 62, 0.88), rgba(16, 22, 44, 0.76));
+}
+
+.training-summary-card.best {
+  border-color: rgba(61, 216, 184, 0.28);
+  background:
+    radial-gradient(120% 170% at 0% 0%, rgba(61, 216, 184, 0.13), transparent 58%),
+    linear-gradient(180deg, rgba(26, 46, 58, 0.94), rgba(14, 26, 36, 0.86));
+}
+
+.training-summary-card h3 {
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: 0.98rem;
+  line-height: 1.2;
+}
+
+.training-summary-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.38rem;
+}
+
+.training-summary-metrics span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(16, 22, 44, 0.78);
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+  font-weight: 850;
+}
+
+.training-summary-metrics em {
+  color: var(--accent-teal);
+  font-style: normal;
+}
+
+.training-result-list {
+  display: grid;
+  gap: 0.6rem;
+}
+
+@media (min-width: 1180px) {
+  .training-result-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.training-result-card {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.68rem 0.74rem;
+  border-radius: 14px;
+  border: 1px solid rgba(226, 232, 255, 0.09);
+  background:
+    linear-gradient(180deg, rgba(28, 36, 62, 0.88), rgba(16, 22, 44, 0.76));
+}
+
+.training-result-card.best {
+  border-color: rgba(255, 207, 92, 0.28);
+  box-shadow: inset 0 1px 0 rgba(255, 207, 92, 0.12);
+}
+
+.training-result-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: start;
+}
+
+.training-result-head strong,
+.training-result-head p {
+  margin: 0;
+}
+
+.training-result-head strong {
+  display: block;
+  color: var(--ink-strong);
+  font-size: 0.88rem;
+  line-height: 1.18;
+}
+
+.training-result-head p {
+  margin-top: 0.18rem;
+  color: var(--ink-soft);
+  font-size: 0.68rem;
+  font-weight: 750;
+}
+
+.training-breakpoint-lead {
+  margin: -0.1rem 0 0;
+  color: var(--ink-body);
+  font-size: 0.74rem;
+  font-weight: 760;
+  line-height: 1.35;
+}
+
+.training-spread-breakdown {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: 0.42rem;
+}
+
+.training-spread-breakdown span {
+  display: grid;
+  gap: 0.16rem;
+  padding: 0.46rem 0.5rem;
+  border-radius: 10px;
+  background: rgba(16, 22, 44, 0.72);
+  border: 1px solid rgba(226, 232, 255, 0.07);
+}
+
+.training-spread-breakdown small {
+  color: var(--ink-muted);
+  font-size: 0.58rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.training-spread-breakdown strong {
+  color: var(--ink-strong);
+  font-size: 0.78rem;
+  line-height: 1.2;
+}
+
+.training-result-rank {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  background: rgba(122, 160, 255, 0.12);
+  color: var(--accent-gold);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 950;
+}
+
+.training-result-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.42rem;
+}
+
+.training-result-metrics span {
+  display: grid;
+  gap: 0.14rem;
+  padding: 0.45rem;
+  border-radius: 10px;
+  background: rgba(16, 22, 44, 0.72);
+  color: var(--ink-muted);
+  font-size: 0.64rem;
+  font-weight: 800;
+}
+
+.training-result-metrics strong {
+  color: var(--ink-strong);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+}
+
+.training-breakpoint-list {
+  display: grid;
+  gap: 0.34rem;
+}
+
+.training-breakpoint-list > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.46rem 0.54rem;
+  border-radius: 10px;
+  background:
+    radial-gradient(120% 160% at 0% 0%, rgba(61, 216, 184, 0.14), transparent 62%),
+    rgba(16, 22, 44, 0.78);
+  border: 1px solid rgba(61, 216, 184, 0.18);
+}
+
+.training-breakpoint-list strong,
+.training-breakpoint-list span small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.training-breakpoint-list strong {
+  color: var(--ink-strong);
+  font-size: 0.74rem;
+}
+
+.training-breakpoint-list span small {
+  color: var(--ink-soft);
+  font-size: 0.62rem;
+  font-weight: 750;
+}
+
+.training-breakpoint-list em,
+.training-breakpoint-list > div > small {
+  color: var(--accent-teal);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.training-breakpoint-list > div > small {
+  color: var(--ink-soft);
+}
+
+.training-threat-details {
+  border-top: 1px dashed rgba(226, 232, 255, 0.1);
+  padding-top: 0.4rem;
+}
+
+.training-threat-details summary {
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.training-threat-list {
+  display: grid;
+  gap: 0.34rem;
+  margin-top: 0.42rem;
+}
+
+.training-threat-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.45rem;
+  align-items: center;
+  padding: 0.4rem 0.48rem;
+  border-radius: 10px;
+  border: 1px solid rgba(226, 232, 255, 0.08);
+  background: rgba(16, 22, 44, 0.74);
+}
+
+.training-threat-row strong,
+.training-threat-row small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.training-threat-row strong {
+  color: var(--ink-strong);
+  font-size: 0.74rem;
+}
+
+.training-threat-row small {
+  color: var(--ink-soft);
+  font-size: 0.62rem;
+  font-weight: 750;
+}
+
+.training-threat-row > span:nth-child(2),
+.training-threat-row em {
+  color: var(--ink-body);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.training-threat-row.good {
+  border-color: rgba(61, 216, 184, 0.22);
+}
+
+.training-threat-row.strong {
+  border-color: rgba(74, 222, 128, 0.26);
+}
+
+.training-threat-row.danger {
+  border-color: rgba(255, 85, 101, 0.22);
+}
+
+.training-empty-board {
+  min-height: 9rem;
+}
+
+.matchup-empty-board.compact {
+  min-height: auto;
+  padding: 0.65rem;
+}
+
+@media (max-width: 760px) {
+  .training-optimizer-topbar,
+  .training-optimizer-grid,
+  .training-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .training-run-actions {
+    justify-content: flex-start;
+  }
+
+  .training-meta-input-row,
+  .ohko-target-input-row {
+    grid-template-columns: 1fr;
+  }
+
+  .training-result-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .training-spread-breakdown,
+  .training-breakpoint-list > div {
+    grid-template-columns: 1fr;
+  }
+
+  .training-threat-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .survival-pill.good {
   background: rgba(74, 222, 128, 0.12);
   color: var(--status-good);

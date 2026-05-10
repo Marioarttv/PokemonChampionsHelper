@@ -45,6 +45,7 @@ import {
 import {
   getOpponentPreset,
   getOpponentPresetMoveNames,
+  OPPONENT_PRESET_RECORDS,
   OPPONENT_MOVE_PRESET_KEY_SET,
   type OpponentPresetRecord,
 } from "./lib/opponentMovePresets";
@@ -104,6 +105,19 @@ import {
   normalizeDamageItemId,
   type DamageItemId,
 } from "./lib/damageItems";
+import {
+  evaluateTrainingBaseline,
+  findOptimalTrainingSpreads,
+  getKoThresholdLabel,
+  getTrainingAttackBreakpointGains,
+  getTrainingBreakpointGains,
+  type TrainingOptimizerBreakpointGain,
+  type TrainingOptimizerAttack,
+  type TrainingOptimizerResult,
+  type TrainingOptimizerSummary,
+  type TrainingOptimizerThreatDetail,
+  type TrainingRemainderMode,
+} from "./lib/statOptimizer";
 import {
   createBattleState,
   getEffectiveSpeed,
@@ -181,7 +195,16 @@ import {
 import { exportShowdownTeamText } from "./lib/showdownTeamExport";
 import BattleArenaPage from "./BattleArenaPage";
 
-type SiteMode = "calculator" | "team" | "battle" | "movesets" | "moveFinder" | "speed" | "ohko" | "history";
+type SiteMode =
+  | "calculator"
+  | "team"
+  | "battle"
+  | "movesets"
+  | "moveFinder"
+  | "speed"
+  | "ohko"
+  | "training"
+  | "history";
 type CalculatorMode = "defense" | "attack";
 type MatchHistoryTeamSort = "latest" | "name" | "matches" | "winRate";
 type SpeedTierSort = "boosted" | "neutral" | "base" | "name";
@@ -284,6 +307,17 @@ type MoveLearnerRow = {
 };
 type OhkoSpeedFilter = "any" | "outspeeds" | "notSlower" | "slowerOrTie";
 type OhkoSurvivalFilter = "any" | "survivesBestHit";
+type TrainingMetaRow = {
+  pokemon: PokemonRecord;
+  moveset: ResolvedSpeciesMoveset;
+  damagingAttackCount: number;
+};
+type TrainingOptimizerScan = {
+  results: TrainingOptimizerResult[];
+  baseline: TrainingOptimizerResult | null;
+  candidateCount: number;
+  evaluatedThreatCount: number;
+};
 type DamagePickerCardProps = {
   label: string;
   isSelected: boolean;
@@ -2958,6 +2992,144 @@ function buildSpeedTierRow(pokemon: PokemonRecord): SpeedTierRow {
     maxSpeed: getChampionsComputedStats(pokemon, { spread: maxSpeedSpread }).spe,
     boostedSpeed: getChampionsComputedStats(pokemon, { spread: boostedSpeedSpread }).spe,
   };
+}
+
+function getTrainingOptimizerEntries(
+  database: PokemonRecord[] | null,
+  speciesMovesetByKey: ReadonlyMap<string, PersistedSpeciesMoveset>,
+) {
+  return getEditablePokemonEntries(database, speciesMovesetByKey);
+}
+
+function buildTrainingOptimizerAttacks(options: {
+  row: TrainingMetaRow;
+  includeAttackerItems: boolean;
+  includeAttackerAbilities: boolean;
+}) {
+  const { row, includeAttackerAbilities, includeAttackerItems } = options;
+  const attackerAbility = includeAttackerAbilities
+    ? getDefaultDamageAbilityIdFromNames(row.moveset.abilityName ? [row.moveset.abilityName] : getPokemonAbilityNames(row.pokemon))
+    : "none";
+  const attackerItem = includeAttackerItems
+    ? normalizeDamageItemId(row.moveset.itemName) ?? "none"
+    : "none";
+
+  return row.moveset.savedAttacks.flatMap<TrainingOptimizerAttack>((attack, index) => {
+    const basePower = getResolvedAttackBasePower(attack);
+
+    if (basePower === null) {
+      return [];
+    }
+
+    return [
+      {
+        id: `${row.pokemon.id}-${attack.id}-${index}`,
+        attacker: row.pokemon,
+        label: getAttackLabel(attack),
+        type: attack.type,
+        basePower,
+        category: getResolvedAttackCategory(attack, row.pokemon),
+        isSpreadMove: getResolvedAttackSpread(attack),
+        attackerAbility,
+        attackerAbilityName: row.moveset.abilityName,
+        attackerItem,
+        attackerStatSpread: row.moveset.statSpread,
+        attackerGrounded: isLikelyGrounded(row.pokemon),
+        movesetSource: row.moveset.movesetSource,
+      },
+    ];
+  });
+}
+
+function formatTrainingHits(value: number) {
+  if (!Number.isFinite(value)) {
+    return "Immune";
+  }
+
+  return `${value} hit${value === 1 ? "" : "s"}`;
+}
+
+function formatTrainingKoLabel(value: number) {
+  return getKoThresholdLabel(value).toUpperCase();
+}
+
+function formatTrainingStatAllocation(
+  spread: ChampionsStatSpread,
+  statIds: ChampionsStatId[],
+  includeZeroFallback = false,
+) {
+  const entries = statIds
+    .filter((statId) => spread.statPoints[statId] > 0)
+    .map((statId) => `${spread.statPoints[statId]} ${CHAMPIONS_STAT_LABELS[statId]}`);
+
+  if (entries.length > 0) {
+    return entries.join(" / ");
+  }
+
+  return includeZeroFallback
+    ? statIds.map((statId) => `0 ${CHAMPIONS_STAT_LABELS[statId]}`).join(" / ")
+    : "No extra points";
+}
+
+function formatTrainingDefensiveAllocation(spread: ChampionsStatSpread) {
+  return formatTrainingStatAllocation(spread, ["hp", "def", "spd"], true);
+}
+
+function formatTrainingRemainderAllocation(spread: ChampionsStatSpread) {
+  return formatTrainingStatAllocation(spread, ["atk", "spa", "spe"]);
+}
+
+function formatTrainingMetricDelta(value: number) {
+  if (!Number.isFinite(value) || value === 0) {
+    return "0";
+  }
+
+  return `${value > 0 ? "+" : ""}${value}`;
+}
+
+function getTrainingSummaryDelta(
+  result: TrainingOptimizerSummary,
+  baseline: TrainingOptimizerSummary | null | undefined,
+  key: keyof Pick<
+    TrainingOptimizerSummary,
+    "totalGuaranteedHits" | "survivesOneHitCount" | "survivesTwoHitCount" | "survivesThreeHitCount"
+  >,
+) {
+  return result[key] - (baseline?.[key] ?? 0);
+}
+
+function getTrainingBreakpointLead(
+  gains: readonly TrainingOptimizerBreakpointGain[],
+  result: TrainingOptimizerResult,
+  baseline: TrainingOptimizerResult | null | undefined,
+) {
+  if (gains.length > 0) {
+    const firstGain = gains[0];
+
+    return `${gains.length} breakpoint${gains.length === 1 ? "" : "s"} improved; ${firstGain.attackerName} ${firstGain.moveLabel} changes from ${firstGain.previousKoLabel} to ${firstGain.nextKoLabel}.`;
+  }
+
+  if (baseline) {
+    const worstReduction = baseline.summary.worstMaxPercent - result.summary.worstMaxPercent;
+
+    if (worstReduction > 0.05) {
+      return `No new hit-count breakpoint, but worst max damage drops by ${formatPercent(worstReduction)} percentage points.`;
+    }
+  }
+
+  return "Same hit-count breakpoints as baseline; ranked by lower worst-case damage and better fallback stats.";
+}
+
+function getTrainingThreatTone(detail: TrainingOptimizerThreatDetail) {
+  if (detail.guaranteedHitsSurvived >= 2) {
+    return "strong";
+  }
+
+  if (detail.guaranteedHitsSurvived >= 1) {
+    return "good";
+  }
+
+  return "danger";
 }
 
 function formatMatrixCell(multiplier: number | null, mode: TeamMatrixMode) {
@@ -16983,6 +17155,900 @@ function SpeedTiersView() {
   );
 }
 
+function TrainingOptimizerView() {
+  const [database, setDatabase] = useState<PokemonRecord[] | null>(null);
+  const [battleData, setBattleData] = useState<{ moves: MoveRecord[] } | null>(null);
+  const [speciesMovesets, setSpeciesMovesets] = useState<PersistedSpeciesMoveset[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [battleDataError, setBattleDataError] = useState<string | null>(null);
+  const [storageError, setStorageError] = useState<string | null>(null);
+  const [targetQuery, setTargetQuery] = useState("");
+  const [metaQuery, setMetaQuery] = useState("");
+  const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
+  const [selectedMetaIds, setSelectedMetaIds] = useState<string[]>([]);
+  const [damageWeather, setDamageWeather] = useState<DamageWeather>("none");
+  const [damageTerrain, setDamageTerrain] = useState<DamageTerrain>("none");
+  const [targetGrounded, setTargetGrounded] = useState(true);
+  const [damageAttackStage, setDamageAttackStage] = useState(0);
+  const [damageDefenseStage, setDamageDefenseStage] = useState(0);
+  const [includeAttackerItems, setIncludeAttackerItems] = useState(true);
+  const [includeAttackerAbilities, setIncludeAttackerAbilities] = useState(true);
+  const [damageReflect, setDamageReflect] = useState(false);
+  const [damageLightScreen, setDamageLightScreen] = useState(false);
+  const [damageAuroraVeil, setDamageAuroraVeil] = useState(false);
+  const [remainderMode, setRemainderMode] = useState<TrainingRemainderMode>("auto");
+  const [runSignature, setRunSignature] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    loadPokemonDatabase()
+      .then((db) => {
+        if (active) {
+          setDatabase(db.pokemon);
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setLoadError(error instanceof Error ? error.message : "Failed to load Pokemon database.");
+        }
+      });
+
+    loadBattleData()
+      .then((data) => {
+        if (active) {
+          setBattleData({ moves: data.moves });
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setBattleDataError(error instanceof Error ? error.message : "Failed to load move data.");
+        }
+      });
+
+    listSpeciesMovesets()
+      .then((entries) => {
+        if (active) {
+          setSpeciesMovesets(entries);
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setStorageError(error instanceof Error ? error.message : "Failed to load moveset database.");
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const moveByKey = useMemo(() => {
+    const map = new Map<string, MoveRecord>();
+
+    for (const move of battleData?.moves ?? []) {
+      map.set(move.id, move);
+      map.set(move.name.toLowerCase(), move);
+    }
+
+    return map;
+  }, [battleData]);
+
+  const speciesMovesetByKey = useMemo(() => {
+    const map = new Map<string, PersistedSpeciesMoveset>();
+
+    for (const entry of speciesMovesets) {
+      map.set(entry.speciesKey, entry);
+    }
+
+    return map;
+  }, [speciesMovesets]);
+
+  const trainingPokemon = useMemo(
+    () => getTrainingOptimizerEntries(database, speciesMovesetByKey),
+    [database, speciesMovesetByKey],
+  );
+
+  const pokemonByKey = useMemo(() => {
+    const map = new Map<string, PokemonRecord>();
+
+    for (const pokemon of trainingPokemon) {
+      map.set(pokemon.id, pokemon);
+      map.set(pokemon.name.toLowerCase(), pokemon);
+      map.set(normalizeTextKey(pokemon.name), pokemon);
+      map.set(String(pokemon.num), pokemon);
+    }
+
+    return map;
+  }, [trainingPokemon]);
+
+  const trainingRows = useMemo<TrainingMetaRow[]>(() => {
+    return trainingPokemon.map((pokemon) => {
+      const moveset = getStoredOrPresetSavedAttacks(
+        pokemon,
+        speciesMovesetByKey,
+        moveByKey,
+        MAX_SPECIES_MOVESET_SIZE,
+      );
+      const damagingAttackCount = moveset.savedAttacks.filter((attack) => getResolvedAttackBasePower(attack) !== null).length;
+
+      return {
+        pokemon,
+        moveset,
+        damagingAttackCount,
+      };
+    });
+  }, [moveByKey, speciesMovesetByKey, trainingPokemon]);
+
+  const trainingRowById = useMemo(() => {
+    const map = new Map<string, TrainingMetaRow>();
+
+    for (const row of trainingRows) {
+      map.set(row.pokemon.id, row);
+    }
+
+    return map;
+  }, [trainingRows]);
+
+  const selectableMetaRows = useMemo(
+    () => trainingRows.filter((row) => row.damagingAttackCount > 0),
+    [trainingRows],
+  );
+
+  const selectedTarget = selectedTargetId ? pokemonByKey.get(selectedTargetId) ?? null : null;
+  const matchedTarget = useMemo(() => {
+    const trimmed = targetQuery.trim();
+
+    if (!trimmed) {
+      return null;
+    }
+
+    return pokemonByKey.get(trimmed.toLowerCase()) ?? pokemonByKey.get(normalizeTextKey(trimmed)) ?? null;
+  }, [pokemonByKey, targetQuery]);
+  const matchedMetaRow = useMemo(() => {
+    const trimmed = metaQuery.trim();
+
+    if (!trimmed) {
+      return null;
+    }
+
+    const pokemon = pokemonByKey.get(trimmed.toLowerCase()) ?? pokemonByKey.get(normalizeTextKey(trimmed)) ?? null;
+    return pokemon ? trainingRowById.get(pokemon.id) ?? null : null;
+  }, [metaQuery, pokemonByKey, trainingRowById]);
+
+  useEffect(() => {
+    setTargetGrounded(selectedTarget ? isLikelyGrounded(selectedTarget) : true);
+  }, [selectedTarget]);
+
+  const selectedMetaRows = useMemo(
+    () =>
+      selectedMetaIds
+        .map((pokemonId) => trainingRowById.get(pokemonId) ?? null)
+        .filter((row): row is TrainingMetaRow => Boolean(row)),
+    [selectedMetaIds, trainingRowById],
+  );
+
+  const topMetaIds = useMemo(() => {
+    const rowByMovesetKey = new Map(
+      selectableMetaRows.map((row) => [getPokemonMovesetKey(row.pokemon), row.pokemon.id] as const),
+    );
+    const ids: string[] = [];
+    const sortedPresets = [...OPPONENT_PRESET_RECORDS].sort((left, right) => {
+      return (
+        right.usageCount - left.usageCount ||
+        right.rating - left.rating ||
+        right.teamCount - left.teamCount ||
+        left.displayName.localeCompare(right.displayName)
+      );
+    });
+
+    for (const preset of sortedPresets) {
+      const pokemonId = rowByMovesetKey.get(preset.speciesKey);
+
+      if (!pokemonId || ids.includes(pokemonId)) {
+        continue;
+      }
+
+      ids.push(pokemonId);
+
+      if (ids.length >= 8) {
+        break;
+      }
+    }
+
+    return ids;
+  }, [selectableMetaRows]);
+
+  const targetMoveset = selectedTarget
+    ? getStoredOrPresetSavedAttacks(selectedTarget, speciesMovesetByKey, moveByKey, MAX_SPECIES_MOVESET_SIZE)
+    : null;
+  const targetBaselineSpread = selectedTarget
+    ? targetMoveset?.statSpread ?? getDefaultChampionsStatSpreadForPokemon(selectedTarget)
+    : null;
+  const targetStats =
+    selectedTarget && targetBaselineSpread
+      ? getChampionsComputedStats(selectedTarget, { spread: targetBaselineSpread })
+      : null;
+  const trainingAttacks = useMemo(
+    () =>
+      selectedMetaRows.flatMap((row) =>
+        buildTrainingOptimizerAttacks({
+          row,
+          includeAttackerAbilities,
+          includeAttackerItems,
+        }),
+      ),
+    [includeAttackerAbilities, includeAttackerItems, selectedMetaRows],
+  );
+  const optimizerSettings = useMemo(
+    () => ({
+      weather: damageWeather,
+      terrain: damageTerrain,
+      defenderGrounded: targetGrounded,
+      attackerStatStage: damageAttackStage,
+      defenderStatStage: damageDefenseStage,
+      defenderAbility: selectedTarget ? getDefaultDamageAbilityId(selectedTarget) : "none",
+      defenderItem: "none" as DamageItemId,
+      reflect: damageReflect,
+      lightScreen: damageLightScreen,
+      auroraVeil: damageAuroraVeil,
+    }),
+    [
+      damageAttackStage,
+      damageAuroraVeil,
+      damageDefenseStage,
+      damageLightScreen,
+      damageReflect,
+      damageTerrain,
+      damageWeather,
+      selectedTarget,
+      targetGrounded,
+    ],
+  );
+  const currentRunSignature = useMemo(
+    () =>
+      JSON.stringify({
+        target: selectedTarget?.id ?? null,
+        meta: selectedMetaIds,
+        weather: damageWeather,
+        terrain: damageTerrain,
+        targetGrounded,
+        damageAttackStage,
+        damageDefenseStage,
+        includeAttackerItems,
+        includeAttackerAbilities,
+        damageReflect,
+        damageLightScreen,
+        damageAuroraVeil,
+        remainderMode,
+        attacks: trainingAttacks.map((attack) => `${attack.id}:${attack.attackerAbility}:${attack.attackerItem}`),
+      }),
+    [
+      damageAttackStage,
+      damageAuroraVeil,
+      damageDefenseStage,
+      damageLightScreen,
+      damageReflect,
+      damageTerrain,
+      damageWeather,
+      includeAttackerAbilities,
+      includeAttackerItems,
+      remainderMode,
+      selectedMetaIds,
+      selectedTarget,
+      targetGrounded,
+      trainingAttacks,
+    ],
+  );
+  const optimizerScan = useMemo<TrainingOptimizerScan | null>(() => {
+    if (
+      !selectedTarget ||
+      !targetBaselineSpread ||
+      trainingAttacks.length === 0 ||
+      runSignature !== currentRunSignature
+    ) {
+      return null;
+    }
+
+    const optimized = findOptimalTrainingSpreads({
+      defender: selectedTarget,
+      attacks: trainingAttacks,
+      settings: optimizerSettings,
+      resultLimit: 12,
+      remainderMode,
+    });
+    const baseline = evaluateTrainingBaseline({
+      defender: selectedTarget,
+      spread: targetBaselineSpread,
+      attacks: trainingAttacks,
+      settings: optimizerSettings,
+    });
+
+    return {
+      ...optimized,
+      baseline,
+    };
+  }, [
+    currentRunSignature,
+    optimizerSettings,
+    remainderMode,
+    runSignature,
+    selectedTarget,
+    targetBaselineSpread,
+    trainingAttacks,
+  ]);
+
+  const canRunScan = Boolean(selectedTarget && selectedMetaRows.length > 0 && trainingAttacks.length > 0);
+  const scanIsCurrent = canRunScan && runSignature === currentRunSignature && Boolean(optimizerScan);
+  const scanIsStale = canRunScan && runSignature !== null && runSignature !== currentRunSignature;
+  const matchedMetaAlreadyAdded = matchedMetaRow ? selectedMetaIds.includes(matchedMetaRow.pokemon.id) : false;
+  const bestResult = optimizerScan?.results[0] ?? null;
+
+  const setMatchedTarget = () => {
+    if (!matchedTarget) {
+      return;
+    }
+
+    setSelectedTargetId(matchedTarget.id);
+    setTargetQuery("");
+  };
+
+  const addMatchedMeta = () => {
+    if (!matchedMetaRow || matchedMetaRow.damagingAttackCount === 0) {
+      return;
+    }
+
+    setSelectedMetaIds((current) =>
+      current.includes(matchedMetaRow.pokemon.id) ? current : [...current, matchedMetaRow.pokemon.id],
+    );
+    setMetaQuery("");
+  };
+
+  const addTopMeta = () => {
+    setSelectedMetaIds((current) => Array.from(new Set([...current, ...topMetaIds])));
+  };
+
+  const removeMeta = (pokemonId: string) => {
+    setSelectedMetaIds((current) => current.filter((entry) => entry !== pokemonId));
+  };
+
+  return (
+    <>
+      <section className="team-builder-hero">
+        <div>
+          <p className="eyebrow">Training Optimizer</p>
+          <h2>Find defensive Champions spreads into selected meta threats</h2>
+          <p className="selector-note">
+            Optimizes worst-roll survival against each selected meta Pokemon&apos;s strongest configured damaging move.
+          </p>
+        </div>
+        <div className="team-builder-meta">
+          <span>{selectedMetaRows.length} meta selected</span>
+          <span>{trainingAttacks.length} damaging moves</span>
+          <span>{optimizerScan ? `${optimizerScan.candidateCount.toLocaleString()} spreads` : "Unique defensive outcomes"}</span>
+        </div>
+      </section>
+
+      <section className="board-panel training-optimizer-panel">
+        <div className="training-optimizer-topbar">
+          <div>
+            <p className="eyebrow">Spread Lab</p>
+            <h2>{selectedTarget ? selectedTarget.name : "Pick a Pokemon to train"}</h2>
+          </div>
+          <div className="training-run-actions">
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => setRunSignature(currentRunSignature)}
+              disabled={!canRunScan}
+            >
+              Run Optimization
+            </button>
+            <span>
+              {scanIsCurrent
+                ? "Scan current"
+                : scanIsStale
+                  ? "Selections changed"
+                  : canRunScan
+                    ? "Ready"
+                    : "Needs target and meta"}
+            </span>
+          </div>
+        </div>
+
+        {loadError || battleDataError || storageError ? (
+          <p className="storage-message error">{loadError ?? battleDataError ?? storageError}</p>
+        ) : (
+          <>
+            <div className="training-optimizer-grid">
+              <article className="damage-side-card training-picker-card">
+                <div className="damage-side-header">
+                  <p className="eyebrow">Target</p>
+                  {targetMoveset?.statSpread ? (
+                    <span className="damage-assumption-pill">Saved spread baseline</span>
+                  ) : (
+                    <span className="damage-assumption-pill">Template baseline</span>
+                  )}
+                </div>
+
+                <div className="training-search-stack">
+                  <label className="team-input-label" htmlFor="training-target-search">
+                    Pokemon
+                  </label>
+                  <div className="ohko-target-input-row">
+                    <input
+                      id="training-target-search"
+                      className="team-pokemon-input"
+                      list="training-target-options"
+                      placeholder={database ? "Search a legal Pokemon" : "Loading local database..."}
+                      value={targetQuery}
+                      onChange={(event) => setTargetQuery(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          setMatchedTarget();
+                        }
+                      }}
+                      disabled={!database}
+                    />
+                    <button
+                      type="button"
+                      className="primary-button"
+                      onClick={setMatchedTarget}
+                      disabled={!matchedTarget}
+                    >
+                      Set
+                    </button>
+                  </div>
+                </div>
+
+                {selectedTarget && targetStats && targetBaselineSpread ? (
+                  <article className="training-selected-target">
+                    <div className="ohko-selected-target-top">
+                      <PokemonSprite pokemon={selectedTarget} className="damage-side-sprite" />
+                      <div>
+                        <strong>{selectedTarget.name}</strong>
+                        <p>{getStatSpreadSummary(targetBaselineSpread)}</p>
+                      </div>
+                    </div>
+                    <div className="damage-stat-strip">
+                      <span>HP {targetStats.hp}</span>
+                      <span>Def {targetStats.def}</span>
+                      <span>SpD {targetStats.spd}</span>
+                      <span>Spe {targetStats.spe}</span>
+                    </div>
+                  </article>
+                ) : (
+                  <div className="matchup-empty-board compact">No target selected.</div>
+                )}
+              </article>
+
+              <article className="damage-center-panel training-picker-card">
+                <div className="damage-side-header">
+                  <p className="eyebrow">Meta Set</p>
+                  <span className="damage-assumption-pill">{selectableMetaRows.length} configured threats</span>
+                </div>
+
+                <div className="training-search-stack">
+                  <label className="team-input-label" htmlFor="training-meta-search">
+                    Meta Pokemon
+                  </label>
+                  <div className="training-meta-input-row">
+                    <input
+                      id="training-meta-search"
+                      className="team-pokemon-input"
+                      list="training-meta-options"
+                      placeholder={battleData ? "Search preset or custom threat" : "Loading move data..."}
+                      value={metaQuery}
+                      onChange={(event) => setMetaQuery(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          addMatchedMeta();
+                        }
+                      }}
+                      disabled={!battleData}
+                    />
+                    <button
+                      type="button"
+                      className="primary-button"
+                      onClick={addMatchedMeta}
+                      disabled={!matchedMetaRow || matchedMetaAlreadyAdded || matchedMetaRow.damagingAttackCount === 0}
+                    >
+                      Add
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={addTopMeta}
+                      disabled={topMetaIds.length === 0}
+                    >
+                      Top Meta
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => setSelectedMetaIds([])}
+                      disabled={selectedMetaIds.length === 0}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+
+                {selectedMetaRows.length > 0 ? (
+                  <div className="ohko-target-chip-list training-meta-chip-list">
+                    {selectedMetaRows.map((row) => (
+                      <button
+                        key={`training-meta-chip-${row.pokemon.id}`}
+                        type="button"
+                        className="ohko-target-chip training-meta-chip"
+                        onClick={() => removeMeta(row.pokemon.id)}
+                      >
+                        <PokemonSprite pokemon={row.pokemon} className="training-meta-chip-sprite" />
+                        <span>{row.pokemon.name}</span>
+                        <strong>{row.damagingAttackCount} moves</strong>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="matchup-empty-board compact">No meta Pokemon selected.</div>
+                )}
+
+                <div className="damage-global-controls training-settings-controls">
+                  <label className="damage-type-field">
+                    <span>Weather</span>
+                    <select
+                      value={damageWeather}
+                      onChange={(event) => setDamageWeather(event.target.value as DamageWeather)}
+                    >
+                      {WEATHER_OPTIONS.map((option) => (
+                        <option key={`training-weather-${option.value}`} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="damage-type-field">
+                    <span>Terrain</span>
+                    <select
+                      value={damageTerrain}
+                      onChange={(event) => setDamageTerrain(event.target.value as DamageTerrain)}
+                    >
+                      {TERRAIN_OPTIONS.map((option) => (
+                        <option key={`training-terrain-${option.value}`} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="damage-type-field">
+                    <span>Remainder</span>
+                    <select
+                      value={remainderMode}
+                      onChange={(event) => setRemainderMode(event.target.value as TrainingRemainderMode)}
+                    >
+                      <option value="auto">Auto Offense</option>
+                      <option value="attack">Attack</option>
+                      <option value="specialAttack">Special Attack</option>
+                      <option value="speed">Speed</option>
+                    </select>
+                  </label>
+
+                  <label className={`damage-spread-toggle ${targetGrounded ? "active" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={targetGrounded}
+                      onChange={(event) => setTargetGrounded(event.target.checked)}
+                    />
+                    <span>Target Grounded</span>
+                  </label>
+
+                  <label className={`damage-spread-toggle ${includeAttackerAbilities ? "active" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={includeAttackerAbilities}
+                      onChange={(event) => setIncludeAttackerAbilities(event.target.checked)}
+                    />
+                    <span>Meta Abilities</span>
+                  </label>
+
+                  <label className={`damage-spread-toggle ${includeAttackerItems ? "active" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={includeAttackerItems}
+                      onChange={(event) => setIncludeAttackerItems(event.target.checked)}
+                    />
+                    <span>Meta Items</span>
+                  </label>
+
+                  <label className={`damage-spread-toggle ${damageReflect ? "active" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={damageReflect}
+                      onChange={(event) => setDamageReflect(event.target.checked)}
+                    />
+                    <span>Reflect</span>
+                  </label>
+
+                  <label className={`damage-spread-toggle ${damageLightScreen ? "active" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={damageLightScreen}
+                      onChange={(event) => setDamageLightScreen(event.target.checked)}
+                    />
+                    <span>Light Screen</span>
+                  </label>
+
+                  <label className={`damage-spread-toggle ${damageAuroraVeil ? "active" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={damageAuroraVeil}
+                      onChange={(event) => setDamageAuroraVeil(event.target.checked)}
+                    />
+                    <span>Aurora Veil</span>
+                  </label>
+
+                  <div className="damage-stage-control">
+                    <span>Attack Boost</span>
+                    <div className="damage-stage-stepper">
+                      <button
+                        type="button"
+                        className="damage-stage-button"
+                        onClick={() => setDamageAttackStage((current) => clampStatStage(current - 1))}
+                      >
+                        -
+                      </button>
+                      <strong>{damageAttackStage >= 0 ? `+${damageAttackStage}` : damageAttackStage}</strong>
+                      <button
+                        type="button"
+                        className="damage-stage-button"
+                        onClick={() => setDamageAttackStage((current) => clampStatStage(current + 1))}
+                      >
+                        +
+                      </button>
+                    </div>
+                    <em>{formatFlatMultiplier(getStatStageMultiplier(damageAttackStage))}</em>
+                  </div>
+
+                  <div className="damage-stage-control">
+                    <span>Defense Boost</span>
+                    <div className="damage-stage-stepper">
+                      <button
+                        type="button"
+                        className="damage-stage-button"
+                        onClick={() => setDamageDefenseStage((current) => clampStatStage(current - 1))}
+                      >
+                        -
+                      </button>
+                      <strong>{damageDefenseStage >= 0 ? `+${damageDefenseStage}` : damageDefenseStage}</strong>
+                      <button
+                        type="button"
+                        className="damage-stage-button"
+                        onClick={() => setDamageDefenseStage((current) => clampStatStage(current + 1))}
+                      >
+                        +
+                      </button>
+                    </div>
+                    <em>{formatFlatMultiplier(getStatStageMultiplier(damageDefenseStage))}</em>
+                  </div>
+                </div>
+              </article>
+            </div>
+
+            {optimizerScan && bestResult ? (
+              <>
+                <div className="training-summary-grid">
+                  <article className="training-summary-card baseline">
+                    <p className="eyebrow">Baseline</p>
+                    <h3>{optimizerScan.baseline ? getStatSpreadSummary(optimizerScan.baseline.spread) : "No baseline"}</h3>
+                    {optimizerScan.baseline ? (
+                      <>
+                        <div className="training-summary-metrics">
+                          <span>{optimizerScan.baseline.summary.survivesTwoHitCount} live 2+</span>
+                          <span>{optimizerScan.baseline.summary.totalGuaranteedHits} total hits</span>
+                          <span>{formatPercent(optimizerScan.baseline.summary.worstMaxPercent)}% worst</span>
+                        </div>
+                        <div className="damage-stat-strip">
+                          <span>HP {optimizerScan.baseline.stats.hp}</span>
+                          <span>Def {optimizerScan.baseline.stats.def}</span>
+                          <span>SpD {optimizerScan.baseline.stats.spd}</span>
+                        </div>
+                      </>
+                    ) : null}
+                  </article>
+
+                  <article className="training-summary-card best">
+                    <p className="eyebrow">Best Spread</p>
+                    <h3>{getStatSpreadSummary(bestResult.spread)}</h3>
+                    <div className="training-summary-metrics">
+                      <span>
+                        {bestResult.summary.survivesTwoHitCount} live 2+{" "}
+                        <em>
+                          {formatTrainingMetricDelta(
+                            getTrainingSummaryDelta(
+                              bestResult.summary,
+                              optimizerScan.baseline?.summary,
+                              "survivesTwoHitCount",
+                            ),
+                          )}
+                        </em>
+                      </span>
+                      <span>
+                        {bestResult.summary.totalGuaranteedHits} total hits{" "}
+                        <em>
+                          {formatTrainingMetricDelta(
+                            getTrainingSummaryDelta(
+                              bestResult.summary,
+                              optimizerScan.baseline?.summary,
+                              "totalGuaranteedHits",
+                            ),
+                          )}
+                        </em>
+                      </span>
+                      <span>{formatPercent(bestResult.summary.worstMaxPercent)}% worst</span>
+                    </div>
+                    <div className="damage-stat-strip">
+                      <span>HP {bestResult.stats.hp}</span>
+                      <span>Def {bestResult.stats.def}</span>
+                      <span>SpD {bestResult.stats.spd}</span>
+                      <span>Spe {bestResult.stats.spe}</span>
+                    </div>
+                  </article>
+                </div>
+
+                <div className="scout-section-header">
+                  <p className="eyebrow">Optimal Spreads</p>
+                  <span>
+                    {optimizerScan.results.length} shown from {optimizerScan.candidateCount.toLocaleString()} candidates
+                  </span>
+                </div>
+
+                <div className="training-result-list">
+                  {optimizerScan.results.map((result, index) => {
+                    const breakpointGains =
+                      selectedTarget && targetBaselineSpread
+                        ? getTrainingAttackBreakpointGains({
+                            defender: selectedTarget,
+                            result,
+                            baselineSpread: targetBaselineSpread,
+                            attacks: trainingAttacks,
+                            settings: optimizerSettings,
+                          })
+                        : getTrainingBreakpointGains(result, optimizerScan.baseline);
+
+                    return (
+                      <article
+                        key={`training-result-${result.spread.nature}-${index}-${result.stats.hp}-${result.stats.def}-${result.stats.spd}`}
+                        className={`training-result-card ${index === 0 ? "best" : ""}`}
+                      >
+                        <div className="training-result-head">
+                          <span className="training-result-rank">#{index + 1}</span>
+                          <div>
+                            <strong>{getStatSpreadSummary(result.spread)}</strong>
+                            <p>
+                              Score {Math.round(result.summary.score)} · {result.summary.survivesOneHitCount}/
+                              {result.summary.evaluatedThreatCount} live one · {result.summary.survivesTwoHitCount}/
+                              {result.summary.evaluatedThreatCount} live two
+                            </p>
+                          </div>
+                        </div>
+
+                        <p className="training-breakpoint-lead">
+                          {getTrainingBreakpointLead(breakpointGains, result, optimizerScan.baseline)}
+                        </p>
+
+                        <div className="training-spread-breakdown">
+                          <span>
+                            <small>Defensive core</small>
+                            <strong>{formatTrainingDefensiveAllocation(result.spread)}</strong>
+                          </span>
+                          <span>
+                            <small>Remainder</small>
+                            <strong>{formatTrainingRemainderAllocation(result.spread)}</strong>
+                          </span>
+                        </div>
+
+                        <div className="damage-stat-strip">
+                          <span>HP {result.stats.hp}</span>
+                          <span>Def {result.stats.def}</span>
+                          <span>SpD {result.stats.spd}</span>
+                          <span>Atk {result.stats.atk}</span>
+                          <span>SpA {result.stats.spa}</span>
+                          <span>Spe {result.stats.spe}</span>
+                        </div>
+
+                        <div className="training-result-metrics">
+                          <span>
+                            2+ hits
+                            <strong>{result.summary.survivesTwoHitCount}</strong>
+                          </span>
+                          <span>
+                            3+ hits
+                            <strong>{result.summary.survivesThreeHitCount}</strong>
+                          </span>
+                          <span>
+                            Worst
+                            <strong>{formatPercent(result.summary.worstMaxPercent)}%</strong>
+                          </span>
+                          <span>
+                            Avg max
+                            <strong>{formatPercent(result.summary.averageMaxPercent)}%</strong>
+                          </span>
+                        </div>
+
+                        {breakpointGains.length > 0 ? (
+                          <div className="training-breakpoint-list" aria-label="Breakpoint gains">
+                            {breakpointGains.slice(0, 4).map((gain) => (
+                              <div key={`${result.spread.nature}-${gain.attackerId}-${gain.moveLabel}`}>
+                                <span>
+                                  <strong>{gain.attackerName}</strong>
+                                  <small>{gain.moveLabel}</small>
+                                </span>
+                                <em>
+                                  {gain.previousKoLabel} → {gain.nextKoLabel}
+                                </em>
+                                <small>
+                                  {formatPercent(gain.previousMaxPercent)}% → {formatPercent(gain.nextMaxPercent)}%
+                                </small>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        <details className="training-threat-details">
+                          <summary>Highest-damage checks</summary>
+                          <div className="training-threat-list">
+                            {result.threatDetails.slice(0, 6).map((detail) => (
+                              <div
+                                key={`${result.spread.nature}-${detail.attackerId}-${detail.attackId}`}
+                                className={`training-threat-row ${getTrainingThreatTone(detail)}`}
+                              >
+                                <span>
+                                  <strong>{detail.attackerName}</strong>
+                                  <small>{detail.moveLabel}</small>
+                                </span>
+                                <span>{formatPercent(detail.minPercent)}%-{formatPercent(detail.maxPercent)}%</span>
+                                <em>{formatTrainingKoLabel(detail.guaranteedHitsSurvived)}</em>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      </article>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <div className="matchup-empty-board training-empty-board">
+                {canRunScan
+                  ? scanIsStale
+                    ? "Run the optimizer to score the current target and meta set."
+                    : "Run the optimizer when ready."
+                  : "Choose a target Pokemon and at least one meta Pokemon with damaging moves."}
+              </div>
+            )}
+          </>
+        )}
+      </section>
+
+      <datalist id="training-target-options">
+        {trainingPokemon.map((pokemon) => (
+          <option key={`training-target-option-${pokemon.id}`} value={pokemon.name} />
+        ))}
+      </datalist>
+
+      <datalist id="training-meta-options">
+        {selectableMetaRows.map((row) => (
+          <option key={`training-meta-option-${row.pokemon.id}`} value={row.pokemon.name} />
+        ))}
+      </datalist>
+    </>
+  );
+}
+
 function OhkoFinderView() {
   const [database, setDatabase] = useState<PokemonRecord[] | null>(null);
   const [battleData, setBattleData] = useState<{ moves: MoveRecord[] } | null>(null);
@@ -18180,7 +19246,8 @@ const SITE_SECTIONS: Array<{ id: SiteMode; index: string; label: string }> = [
   { id: "moveFinder", index: "05", label: "Move Finder" },
   { id: "speed", index: "06", label: "Speed Tiers" },
   { id: "ohko", index: "07", label: "OHKO Finder" },
-  { id: "history", index: "08", label: "Match History" },
+  { id: "training", index: "08", label: "Training Optimizer" },
+  { id: "history", index: "09", label: "Match History" },
 ];
 
 function App() {
@@ -18255,6 +19322,8 @@ function App() {
           <SpeedTiersView />
         ) : siteMode === "ohko" ? (
           <OhkoFinderView />
+        ) : siteMode === "training" ? (
+          <TrainingOptimizerView />
         ) : (
           <MatchHistoryView />
         )}
