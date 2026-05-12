@@ -1,8 +1,7 @@
-name: Deploy to GitHub Pages
+# Archived because production hosting is handled by Vercel.
+name: Deploy to GitHub Pages (disabled)
 
 on:
-  push:
-    branches: ["main"]
   workflow_dispatch:
 
 permissions:
