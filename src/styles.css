@@ -10385,9 +10385,33 @@ textarea::placeholder {
 .saved-teams-list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 0 0.2rem 0 0;
   display: grid;
   gap: 0.3rem;
+  max-height: clamp(18rem, 48vh, 34rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(226, 232, 255, 0.28) rgba(12, 18, 32, 0.35);
+}
+
+.saved-teams-list::-webkit-scrollbar {
+  width: 0.5rem;
+}
+
+.saved-teams-list::-webkit-scrollbar-track {
+  background: rgba(12, 18, 32, 0.35);
+  border-radius: 999px;
+}
+
+.saved-teams-list::-webkit-scrollbar-thumb {
+  background: rgba(226, 232, 255, 0.26);
+  border-radius: 999px;
+}
+
+.saved-teams-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(226, 232, 255, 0.38);
 }
 
 .saved-team-row {
