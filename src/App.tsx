@@ -5818,7 +5818,7 @@ function TeamSlotCard({
 
                   return (
                     <article
-                      key={`${move.id}-${getKnownMoveName(move)}-${moveIndex}`}
+                      key={move.id}
                       className="saved-attack-chip"
                       style={moveType
                         ? (
@@ -5906,7 +5906,7 @@ function TeamSlotCard({
                       const isWeightBasedPowerMove = isLowKickMove(getKnownMoveName(move));
 
                       return (
-                        <article key={`${move.id}-${getKnownMoveName(move)}-${moveIndex}`} className="saved-attack-editor-card">
+                        <article key={move.id} className="saved-attack-editor-card">
                         <div className="saved-attack-editor-header">
                           {moveType ? (
                             <span
@@ -16538,7 +16538,7 @@ function MovesetDatabaseView() {
                         const isWeightBasedPowerMove = isLowKickMove(getKnownMoveName(move));
 
                         return (
-                          <article key={`${move.id}-${getKnownMoveName(move)}-${moveIndex}`} className="saved-attack-editor-card">
+                          <article key={move.id} className="saved-attack-editor-card">
                             <div className="saved-attack-editor-header">
                               {moveType ? (
                                 <span
