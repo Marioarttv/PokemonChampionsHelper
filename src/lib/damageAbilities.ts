@@ -325,6 +325,7 @@ const CONTACT_MOVE_KEYS = new Set([
   "flowertrick",
   "gigatonhammer",
   "icehammer",
+  "icefang",
   "jetpunch",
   "knockoff",
   "kowtowcleave",

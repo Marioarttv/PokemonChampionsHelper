@@ -118,6 +118,44 @@ describe("damage ability handling", () => {
     expect(toughClawsEstimate.attackerAbilityMultiplier).toBe(1.3);
     expect(toughClawsEstimate.maxDamage).toBeGreaterThan(noAbilityEstimate.maxDamage);
   });
+
+  it("applies Tough Claws to Ice Fang for Mega Aerodactyl", () => {
+    const megaAerodactyl = makePokemon("Aerodactyl-Mega", {
+      types: ["Rock", "Flying"],
+      baseStats: { atk: 135 },
+      abilities: { "0": "Tough Claws" },
+    });
+    const defender = makePokemon("Neutral Target", {
+      types: ["Normal"],
+      baseStats: { hp: 100, def: 100 },
+    });
+
+    const defaultAbility = getDefaultDamageAbilityId(megaAerodactyl);
+    const toughClawsEstimate = calculateRoughDamage({
+      attacker: megaAerodactyl,
+      defender,
+      attackType: "ice",
+      moveName: "Ice Fang",
+      basePower: 65,
+      category: "physical",
+      isSpreadMove: false,
+      attackerAbility: defaultAbility,
+    });
+    const noAbilityEstimate = calculateRoughDamage({
+      attacker: megaAerodactyl,
+      defender,
+      attackType: "ice",
+      moveName: "Ice Fang",
+      basePower: 65,
+      category: "physical",
+      isSpreadMove: false,
+      attackerAbility: "none",
+    });
+
+    expect(defaultAbility).toBe("toughclaws");
+    expect(toughClawsEstimate.attackerAbilityMultiplier).toBe(1.3);
+    expect(toughClawsEstimate.maxDamage).toBeGreaterThan(noAbilityEstimate.maxDamage);
+  });
 });
 
 describe("move-specific damage handling", () => {
