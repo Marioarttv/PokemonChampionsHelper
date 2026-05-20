@@ -3151,9 +3151,26 @@ img {
 
 .move-finder-toolbar {
   display: grid;
-  grid-template-columns: auto minmax(220px, 1fr) auto minmax(180px, 0.7fr);
-  gap: 0.55rem;
-  align-items: center;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.65rem;
+  align-items: end;
+}
+
+.move-finder-field {
+  display: grid;
+  gap: 0.32rem;
+  min-width: 0;
+}
+
+.move-finder-field--speed {
+  grid-column: span 2;
+}
+
+.move-finder-speed-controls {
+  display: grid;
+  grid-template-columns: minmax(88px, 0.78fr) minmax(132px, 1fr) minmax(70px, 0.62fr);
+  gap: 0.45rem;
+  min-width: 0;
 }
 
 .move-finder-selected-move,
@@ -3206,6 +3223,8 @@ img {
 }
 
 .move-finder-result-card {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 0.65rem;
   min-width: 0;
@@ -3252,6 +3271,13 @@ img {
   border-color: rgba(102, 211, 145, 0.24);
   background: rgba(102, 211, 145, 0.12);
   color: var(--accent-teal);
+}
+
+.move-finder-result-meta .move-finder-ability-pill {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .move-finder-suggestions {
@@ -3383,6 +3409,14 @@ img {
   .move-finder-toolbar {
     grid-template-columns: 1fr;
     align-items: stretch;
+  }
+
+  .move-finder-field--speed {
+    grid-column: auto;
+  }
+
+  .move-finder-speed-controls {
+    grid-template-columns: 1fr;
   }
 
   .move-finder-result-card,

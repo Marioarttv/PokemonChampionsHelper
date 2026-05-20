@@ -208,6 +208,8 @@ type SiteMode =
 type CalculatorMode = "defense" | "attack";
 type MatchHistoryTeamSort = "latest" | "name" | "matches" | "winRate";
 type SpeedTierSort = "boosted" | "neutral" | "base" | "name";
+type MoveFinderSpeedMetric = "base" | "neutral" | "boosted";
+type MoveFinderSpeedComparator = "any" | "atLeast" | "atMost";
 type ShowdownBridgeStatus = "idle" | "ready" | "installed" | "waiting" | "error";
 
 type TypePoolProps = {
@@ -302,6 +304,8 @@ type SpeedTierRow = {
 };
 type MoveLearnerRow = {
   pokemon: PokemonRecord;
+  abilityNames: string[];
+  speed: SpeedTierRow;
   learnsetMoveCount: number;
   presetHasMove: boolean;
 };
@@ -416,6 +420,16 @@ const BATTLE_STATUS_OPTIONS: Array<{ value: BattleStatusCondition; label: string
   { value: "poison", label: "Poison" },
   { value: "badPoison", label: "Badly Poisoned" },
   { value: "freeze", label: "Freeze" },
+];
+const MOVE_FINDER_SPEED_METRIC_OPTIONS: Array<{ value: MoveFinderSpeedMetric; label: string; shortLabel: string }> = [
+  { value: "base", label: "Base Speed", shortLabel: "Base Spe" },
+  { value: "neutral", label: "32 Spe", shortLabel: "32 Spe" },
+  { value: "boosted", label: "32 Spe + Nature", shortLabel: "32 Spe+Nature" },
+];
+const MOVE_FINDER_SPEED_COMPARATOR_OPTIONS: Array<{ value: MoveFinderSpeedComparator; label: string }> = [
+  { value: "any", label: "Any" },
+  { value: "atLeast", label: "At least" },
+  { value: "atMost", label: "At most" },
 ];
 const BATTLE_STAGE_OPTIONS = Array.from({ length: 13 }, (_, index) => index - 6);
 const LEGAL_ORDER_BY_KEY = new Map(
@@ -2992,6 +3006,30 @@ function buildSpeedTierRow(pokemon: PokemonRecord): SpeedTierRow {
     maxSpeed: getChampionsComputedStats(pokemon, { spread: maxSpeedSpread }).spe,
     boostedSpeed: getChampionsComputedStats(pokemon, { spread: boostedSpeedSpread }).spe,
   };
+}
+
+function getMoveFinderSpeedValue(row: SpeedTierRow, metric: MoveFinderSpeedMetric) {
+  if (metric === "base") {
+    return row.baseSpeed;
+  }
+
+  return metric === "neutral" ? row.maxSpeed : row.boostedSpeed;
+}
+
+function getMoveFinderSpeedMetricLabel(metric: MoveFinderSpeedMetric) {
+  return MOVE_FINDER_SPEED_METRIC_OPTIONS.find((option) => option.value === metric)?.shortLabel ?? "Speed";
+}
+
+function parseMoveFinderSpeedThreshold(value: string) {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const parsed = Number(trimmed);
+
+  return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : null;
 }
 
 function getTrainingOptimizerEntries(
@@ -16726,6 +16764,10 @@ function MoveFinderView() {
   const [battleDataError, setBattleDataError] = useState<string | null>(null);
   const [moveQuery, setMoveQuery] = useState("");
   const [pokemonQuery, setPokemonQuery] = useState("");
+  const [abilityQuery, setAbilityQuery] = useState("");
+  const [speedComparator, setSpeedComparator] = useState<MoveFinderSpeedComparator>("any");
+  const [speedMetric, setSpeedMetric] = useState<MoveFinderSpeedMetric>("base");
+  const [speedValue, setSpeedValue] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -16773,9 +16815,22 @@ function MoveFinderView() {
   }, [learnsets]);
 
   const legalPokemon = useMemo(() => getCurrentRegulationMoveFinderEntries(database), [database]);
+  const abilitySuggestions = useMemo(() => {
+    const abilities = new Set<string>();
+
+    for (const pokemon of legalPokemon) {
+      for (const abilityName of getPokemonAbilityNames(pokemon)) {
+        abilities.add(abilityName);
+      }
+    }
+
+    return Array.from(abilities).sort((left, right) => left.localeCompare(right));
+  }, [legalPokemon]);
   const selectedMove = useMemo(() => getMoveRecordByName(moveQuery, moveByKey), [moveByKey, moveQuery]);
   const selectedMoveType = selectedMove ? getTypeFromLabel(selectedMove.type) : null;
   const normalizedMoveQuery = normalizeTextKey(moveQuery);
+  const speedThreshold = useMemo(() => parseMoveFinderSpeedThreshold(speedValue), [speedValue]);
+  const selectedSpeedMetricLabel = getMoveFinderSpeedMetricLabel(speedMetric);
   const moveSuggestions = useMemo(() => {
     if (!normalizedMoveQuery || selectedMove) {
       return [];
@@ -16804,6 +16859,8 @@ function MoveFinderView() {
     }
 
     const pokemonFilter = normalizeTextKey(pokemonQuery);
+    const abilityFilter = normalizeTextKey(abilityQuery);
+    const hasSpeedFilter = speedComparator !== "any" && speedThreshold !== null;
     const rows: MoveLearnerRow[] = [];
 
     for (const pokemon of legalPokemon) {
@@ -16821,19 +16878,40 @@ function MoveFinderView() {
         continue;
       }
 
+      const abilityNames = getPokemonAbilityNames(pokemon);
+
+      if (abilityFilter && !abilityNames.some((abilityName) => normalizeTextKey(abilityName).includes(abilityFilter))) {
+        continue;
+      }
+
+      const speed = buildSpeedTierRow(pokemon);
+      const selectedSpeed = getMoveFinderSpeedValue(speed, speedMetric);
+
+      if (hasSpeedFilter) {
+        if (speedComparator === "atLeast" && selectedSpeed < speedThreshold) {
+          continue;
+        }
+
+        if (speedComparator === "atMost" && selectedSpeed > speedThreshold) {
+          continue;
+        }
+      }
+
       const presetHasMove = getOpponentPresetMoveNames(pokemon).some(
         (moveName) => normalizeTextKey(moveName) === selectedMove.id,
       );
 
       rows.push({
         pokemon,
+        abilityNames,
+        speed,
         learnsetMoveCount: learnsetMoveIds.size,
         presetHasMove,
       });
     }
 
     return rows;
-  }, [learnsetBySpeciesId, legalPokemon, pokemonQuery, selectedMove]);
+  }, [abilityQuery, learnsetBySpeciesId, legalPokemon, pokemonQuery, selectedMove, speedComparator, speedMetric, speedThreshold]);
 
   return (
     <>
@@ -16854,30 +16932,94 @@ function MoveFinderView() {
 
       <section className="board-panel move-finder-panel">
         <div className="move-finder-toolbar">
-          <label className="team-input-label" htmlFor="move-finder-move">
-            Move
-          </label>
-          <input
-            id="move-finder-move"
-            className="team-pokemon-input"
-            list="move-finder-options"
-            placeholder={battleData ? "Tailwind" : "Loading move data..."}
-            value={moveQuery}
-            onChange={(event) => setMoveQuery(event.target.value)}
-            disabled={!battleData || !learnsets}
-          />
+          <div className="move-finder-field">
+            <label className="team-input-label" htmlFor="move-finder-move">
+              Move
+            </label>
+            <input
+              id="move-finder-move"
+              className="team-pokemon-input"
+              list="move-finder-options"
+              placeholder={battleData ? "Tailwind" : "Loading move data..."}
+              value={moveQuery}
+              onChange={(event) => setMoveQuery(event.target.value)}
+              disabled={!battleData || !learnsets}
+            />
+          </div>
 
-          <label className="team-input-label" htmlFor="move-finder-pokemon-filter">
-            Filter
-          </label>
-          <input
-            id="move-finder-pokemon-filter"
-            className="team-pokemon-input"
-            placeholder="Pokémon or type"
-            value={pokemonQuery}
-            onChange={(event) => setPokemonQuery(event.target.value)}
-            disabled={!selectedMove}
-          />
+          <div className="move-finder-field">
+            <label className="team-input-label" htmlFor="move-finder-pokemon-filter">
+              Pokémon
+            </label>
+            <input
+              id="move-finder-pokemon-filter"
+              className="team-pokemon-input"
+              placeholder="Name or type"
+              value={pokemonQuery}
+              onChange={(event) => setPokemonQuery(event.target.value)}
+              disabled={!selectedMove}
+            />
+          </div>
+
+          <div className="move-finder-field">
+            <label className="team-input-label" htmlFor="move-finder-ability-filter">
+              Ability
+            </label>
+            <input
+              id="move-finder-ability-filter"
+              className="team-pokemon-input"
+              list="move-finder-ability-options"
+              placeholder="Prankster"
+              value={abilityQuery}
+              onChange={(event) => setAbilityQuery(event.target.value)}
+              disabled={!selectedMove}
+            />
+          </div>
+
+          <div className="move-finder-field move-finder-field--speed">
+            <label className="team-input-label" htmlFor="move-finder-speed-value">
+              Speed
+            </label>
+            <div className="move-finder-speed-controls">
+              <select
+                className="team-select"
+                aria-label="Speed comparison"
+                value={speedComparator}
+                onChange={(event) => setSpeedComparator(event.target.value as MoveFinderSpeedComparator)}
+                disabled={!selectedMove}
+              >
+                {MOVE_FINDER_SPEED_COMPARATOR_OPTIONS.map((option) => (
+                  <option key={`move-finder-speed-comparator-${option.value}`} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="team-select"
+                aria-label="Speed stat"
+                value={speedMetric}
+                onChange={(event) => setSpeedMetric(event.target.value as MoveFinderSpeedMetric)}
+                disabled={!selectedMove}
+              >
+                {MOVE_FINDER_SPEED_METRIC_OPTIONS.map((option) => (
+                  <option key={`move-finder-speed-metric-${option.value}`} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <input
+                id="move-finder-speed-value"
+                className="team-pokemon-input"
+                type="number"
+                min="0"
+                inputMode="numeric"
+                placeholder="100"
+                value={speedValue}
+                onChange={(event) => setSpeedValue(event.target.value)}
+                disabled={!selectedMove || speedComparator === "any"}
+              />
+            </div>
+          </div>
         </div>
 
         {loadError || battleDataError ? (
@@ -16948,6 +17090,12 @@ function MoveFinderView() {
 
                     <div className="move-finder-result-meta">
                       {row.presetHasMove ? <span className="move-finder-preset-pill">Preset Uses Move</span> : null}
+                      <span>{selectedSpeedMetricLabel} {getMoveFinderSpeedValue(row.speed, speedMetric)}</span>
+                      {row.abilityNames.length > 0 ? (
+                        <span className="move-finder-ability-pill" title={row.abilityNames.join(" / ")}>
+                          {row.abilityNames.join(" / ")}
+                        </span>
+                      ) : null}
                       <span>{row.learnsetMoveCount} learnable moves</span>
                     </div>
                   </article>
@@ -16967,12 +17115,12 @@ function MoveFinderView() {
               <span>{moveSuggestions.length} shown</span>
             </div>
             <div className="coverage-chip-list">
-              {moveSuggestions.map((move) => {
+              {moveSuggestions.map((move, index) => {
                 const moveType = getTypeFromLabel(move.type);
 
                 return (
                   <button
-                    key={`move-finder-suggestion-${move.id}`}
+                    key={`move-finder-suggestion-${move.id}-${index}`}
                     type="button"
                     className="move-finder-suggestion-chip"
                     onClick={() => setMoveQuery(move.name)}
@@ -16998,8 +17146,13 @@ function MoveFinderView() {
       </section>
 
       <datalist id="move-finder-options">
-        {(battleData?.moves ?? []).map((move) => (
-          <option key={`move-finder-option-${move.id}`} value={move.name} />
+        {(battleData?.moves ?? []).map((move, index) => (
+          <option key={`move-finder-option-${move.id}-${index}`} value={move.name} />
+        ))}
+      </datalist>
+      <datalist id="move-finder-ability-options">
+        {abilitySuggestions.map((abilityName, index) => (
+          <option key={`move-finder-ability-option-${normalizeTextKey(abilityName)}-${index}`} value={abilityName} />
         ))}
       </datalist>
     </>
