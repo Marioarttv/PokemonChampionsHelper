@@ -4837,6 +4837,37 @@ img {
   line-height: 1.25;
 }
 
+.damage-stat-edit-button {
+  justify-self: start;
+  margin-top: 0.25rem;
+  padding: 0.24rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid rgba(122, 160, 255, 0.24);
+  background: rgba(122, 160, 255, 0.1);
+  color: #cfd9ff;
+  font-size: 0.64rem;
+  font-weight: 850;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.damage-stat-edit-button:hover,
+.damage-stat-edit-button:focus-visible {
+  border-color: rgba(122, 160, 255, 0.48);
+  background: rgba(122, 160, 255, 0.18);
+  color: var(--ink-strong);
+  outline: none;
+}
+
+.damage-stat-edit-button.active {
+  border-color: rgba(255, 207, 92, 0.46);
+  background: rgba(255, 207, 92, 0.13);
+  color: #fff0bd;
+}
+
 .damage-form-switcher {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(4.9rem, 1fr));
@@ -9992,6 +10023,45 @@ textarea::placeholder {
 
 .match-save-modal__body {
   gap: 0.75rem;
+}
+
+.enemy-spread-modal__dialog {
+  width: min(820px, 100%);
+}
+
+.enemy-spread-modal__body {
+  gap: 0.75rem;
+}
+
+.enemy-spread-modal__summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 14px;
+  border: 1px solid rgba(122, 160, 255, 0.16);
+  background: rgba(16, 22, 44, 0.72);
+}
+
+.enemy-spread-modal__summary strong {
+  display: block;
+  color: var(--ink-strong);
+  font-size: 0.92rem;
+}
+
+.enemy-spread-modal__summary p {
+  margin: 0.12rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.enemy-spread-modal__sprite {
+  width: 3rem;
+  height: 3rem;
+  object-fit: contain;
+  image-rendering: pixelated;
 }
 
 .match-save-result-toggle {

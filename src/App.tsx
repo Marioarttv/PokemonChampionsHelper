@@ -271,6 +271,7 @@ type DamageMoveConfig = {
 type ManualDamageMoveConfig = DamageMoveConfig & {
   attackType: PokemonType;
 };
+type EnemyStatSpreadOverrideMap = Record<string, ChampionsStatSpread>;
 type OpponentRosterEntry = {
   slotIndex: number;
   query: string;
@@ -280,6 +281,7 @@ type OpponentRosterEntry = {
   presetMoveNames: string[];
   abilityName: string | null;
   itemName: string | null;
+  defaultStatSpread: ChampionsStatSpread | null;
   statSpread: ChampionsStatSpread | null;
   movesetSource: "custom" | "preset" | "none";
 };
@@ -344,6 +346,8 @@ type SingleDamageCalculatorPanelProps = {
   megaFormsByBaseSpeciesKey: ReadonlyMap<string, PokemonRecord[]>;
   onAttackerBattleFormChange: (slotIndex: number, activeFormPokemonId: string | null) => void;
   onDefenderBattleFormChange: (slotIndex: number, pokemon: PokemonRecord) => void;
+  onEditEnemyStatSpread: (slotIndex: number) => void;
+  enemyStatSpreadOverrides: EnemyStatSpreadOverrideMap;
   damageCalcMode: DamageCalcMode;
   setDamageCalcMode: Dispatch<SetStateAction<DamageCalcMode>>;
   damageWeather: DamageWeather;
@@ -534,6 +538,15 @@ function createKnownMove(
 
 function getDamageConfigKey(slotIndex: number, pokemonId: string | null) {
   return `${slotIndex}:${pokemonId ?? "empty"}`;
+}
+
+function getEnemyStatSpreadOverrideKey(
+  slotIndex: number,
+  pokemon: PokemonRecord,
+  basePokemonBySpeciesKey: ReadonlyMap<string, PokemonRecord>,
+) {
+  const basePokemon = getBasePokemonForBattleForm(pokemon, basePokemonBySpeciesKey);
+  return `${slotIndex}:${basePokemon.id}`;
 }
 
 function formatPercent(value: number) {
@@ -3915,6 +3928,8 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
   megaFormsByBaseSpeciesKey,
   onAttackerBattleFormChange,
   onDefenderBattleFormChange,
+  onEditEnemyStatSpread,
+  enemyStatSpreadOverrides,
   damageCalcMode,
   setDamageCalcMode,
   damageWeather,
@@ -4371,6 +4386,12 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
     const stageLabel = isAttacker ? "Atk Boost" : "Def Boost";
     const roleLabel = isAttacker ? "Attacker" : "Defender";
     const overviewSpeed = getDamageOverviewSpeedStat(stats?.spe ?? 0, itemValue);
+    const sourceSlotIndex = sourceSide === "ally" ? attackerSlotIndex : defenderSlotIndex;
+    const enemyOverrideKey =
+      sourceSide === "enemy" && sourceSlotIndex !== null
+        ? getEnemyStatSpreadOverrideKey(sourceSlotIndex, pokemon, basePokemonBySpeciesKey)
+        : null;
+    const hasEnemyStatSpreadOverride = Boolean(enemyOverrideKey && enemyStatSpreadOverrides[enemyOverrideKey]);
     const handleFormChange = (option: TeamFormOption) => {
       if (sourceSide === "ally") {
         if (attackerSlotIndex === null) {
@@ -4433,6 +4454,16 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
               })}
             </div>
             <p className="damage-template-note">{stats ? formatChampionsTemplateSummary(stats.template) : ""}</p>
+            {sourceSide === "enemy" && sourceSlotIndex !== null ? (
+              <button
+                type="button"
+                className={`damage-stat-edit-button ${hasEnemyStatSpreadOverride ? "active" : ""}`}
+                onClick={() => onEditEnemyStatSpread(sourceSlotIndex)}
+                aria-haspopup="dialog"
+              >
+                {hasEnemyStatSpreadOverride ? "Edit calc spread" : "Edit spread"}
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -8055,6 +8086,212 @@ function MatchSaveSelector({
   );
 }
 
+type EnemyStatSpreadEditorModalProps = {
+  entry: LoadedOpponentEntry;
+  basePokemonBySpeciesKey: ReadonlyMap<string, PokemonRecord>;
+  overrideSpread: ChampionsStatSpread | null;
+  onApply: (slotIndex: number, pokemon: PokemonRecord, statSpread: ChampionsStatSpread | null) => void;
+  onClose: () => void;
+};
+
+function EnemyStatSpreadEditorModal({
+  entry,
+  basePokemonBySpeciesKey,
+  overrideSpread,
+  onApply,
+  onClose,
+}: EnemyStatSpreadEditorModalProps) {
+  const pokemon = entry.pokemon;
+  const defaultStatSpread = useMemo(
+    () => entry.defaultStatSpread ?? getDefaultChampionsStatSpreadForPokemon(pokemon),
+    [entry.defaultStatSpread, pokemon],
+  );
+  const [draftStatSpread, setDraftStatSpread] = useState<ChampionsStatSpread>(() =>
+    normalizeChampionsStatSpread(overrideSpread ?? defaultStatSpread, defaultStatSpread),
+  );
+  const natureOptions = useMemo(() => getChampionsNatureOptions(), []);
+  const computedStats = useMemo(
+    () => getChampionsComputedStats(pokemon, { spread: draftStatSpread }),
+    [draftStatSpread, pokemon],
+  );
+  const totalPoints = getTotalChampionsStatPoints(draftStatSpread.statPoints);
+  const remainingPoints = CHAMPIONS_TOTAL_STAT_POINTS - totalPoints;
+
+  useEffect(() => {
+    setDraftStatSpread(normalizeChampionsStatSpread(overrideSpread ?? defaultStatSpread, defaultStatSpread));
+  }, [defaultStatSpread, overrideSpread, pokemon.id]);
+
+  const updateDraftNature = (nature: ChampionsNatureId) => {
+    setDraftStatSpread((current) =>
+      normalizeChampionsStatSpread(
+        {
+          ...current,
+          nature,
+        },
+        defaultStatSpread,
+      ),
+    );
+  };
+
+  const updateDraftStatPoints = (statId: ChampionsStatId, nextValue: number) => {
+    setDraftStatSpread((current) => {
+      const currentValue = current.statPoints[statId];
+      const sanitized = Math.max(0, Math.min(CHAMPIONS_MAX_STAT_POINTS_PER_STAT, Math.floor(nextValue)));
+      const totalWithoutCurrent = getTotalChampionsStatPoints(current.statPoints) - currentValue;
+      const clampedValue = Math.min(sanitized, CHAMPIONS_TOTAL_STAT_POINTS - totalWithoutCurrent);
+
+      return normalizeChampionsStatSpread(
+        {
+          nature: current.nature,
+          statPoints: {
+            ...current.statPoints,
+            [statId]: clampedValue,
+          },
+        },
+        defaultStatSpread,
+      );
+    });
+  };
+
+  const applyDraft = () => {
+    const normalizedDraft = normalizeChampionsStatSpread(draftStatSpread, defaultStatSpread);
+    onApply(
+      entry.slotIndex,
+      pokemon,
+      isStatSpreadEqual(normalizedDraft, defaultStatSpread) ? null : normalizedDraft,
+    );
+    onClose();
+  };
+
+  const clearOverride = () => {
+    onApply(entry.slotIndex, pokemon, null);
+    onClose();
+  };
+
+  const basePokemon = getBasePokemonForBattleForm(pokemon, basePokemonBySpeciesKey);
+
+  return createPortal(
+    <div
+      className="showdown-import-modal enemy-spread-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="enemy-spread-modal-title"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <div className="showdown-import-modal__dialog enemy-spread-modal__dialog" role="document">
+        <header className="showdown-import-modal__header">
+          <div className="showdown-import-modal__title">
+            <span className="eyebrow">Enemy {entry.slotIndex + 1} Calc Override</span>
+            <h3 id="enemy-spread-modal-title">Edit {pokemon.name} spread</h3>
+          </div>
+          <button
+            type="button"
+            className="showdown-import-modal__close"
+            onClick={onClose}
+            aria-label="Close enemy spread editor"
+            title="Close"
+          >
+            ×
+          </button>
+        </header>
+
+        <div className="showdown-import-modal__body enemy-spread-modal__body">
+          <div className="enemy-spread-modal__summary">
+            <PokemonSprite pokemon={pokemon} className="enemy-spread-modal__sprite" />
+            <div>
+              <strong>{pokemon.name}</strong>
+              <p>
+                {basePokemon.id !== pokemon.id ? `Base slot: ${basePokemon.name}. ` : ""}
+                This override affects damage calculations until Clear Enemy Team resets the board.
+              </p>
+            </div>
+            <span className="mini-type-pill neutral-pill">
+              {totalPoints} / {CHAMPIONS_TOTAL_STAT_POINTS} SP
+            </span>
+          </div>
+
+          <div className="moveset-stat-panel-toolbar">
+            <label className="saved-attack-field">
+              <span>Nature</span>
+              <select
+                value={draftStatSpread.nature}
+                onChange={(event) => updateDraftNature(event.target.value as ChampionsNatureId)}
+              >
+                {natureOptions.map((option) => (
+                  <option key={`enemy-spread-nature-${option.id}`} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="moveset-stat-panel-summary">
+              <span>{getStatSpreadSummary(draftStatSpread)}</span>
+              <span>{remainingPoints} SP left</span>
+            </div>
+          </div>
+
+          <p className="selector-note">
+            <strong>Default:</strong> {getStatSpreadSummary(defaultStatSpread)}
+          </p>
+
+          <div className="moveset-stat-slider-list">
+            {CHAMPIONS_STAT_ORDER.map((statId) => {
+              const points = draftStatSpread.statPoints[statId];
+              const finalValue = computedStats[statId];
+
+              return (
+                <label key={`${pokemon.id}-enemy-spread-${statId}`} className="moveset-stat-slider-card">
+                  <div className="moveset-stat-slider-top">
+                    <strong>{CHAMPIONS_STAT_LABELS[statId]}</strong>
+                    <span>{points} SP</span>
+                    <em>{finalValue}</em>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={CHAMPIONS_MAX_STAT_POINTS_PER_STAT}
+                    step={1}
+                    value={points}
+                    onChange={(event) => updateDraftStatPoints(statId, Number(event.target.value))}
+                    className="moveset-stat-slider"
+                    style={{ "--slider-fill": `${(points / CHAMPIONS_MAX_STAT_POINTS_PER_STAT) * 100}%` } as CSSProperties}
+                  />
+                  <div className="moveset-stat-slider-scale">
+                    <span>0</span>
+                    <span>{CHAMPIONS_MAX_STAT_POINTS_PER_STAT}</span>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+
+        <footer className="showdown-import-modal__footer">
+          <button type="button" className="secondary-button" onClick={clearOverride} disabled={!overrideSpread}>
+            Clear Override
+          </button>
+          <button type="button" className="secondary-button" onClick={() => setDraftStatSpread(defaultStatSpread)}>
+            Use Default
+          </button>
+          <div className="showdown-import-modal__footer-spacer" />
+          <button type="button" className="secondary-button" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="primary-button" onClick={applyDraft}>
+            Apply to Calc
+          </button>
+        </footer>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const [teamMatrixMode, setTeamMatrixMode] = useState<TeamMatrixMode>("defense");
   const [openerSelections, setOpenerSelections] = useState<[OpenerSelection, OpenerSelection]>([
@@ -8123,6 +8360,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     Record<string, Partial<Record<string, DamageMoveConfig>>>
   >({});
   const [defenseMoveConfigs, setDefenseMoveConfigs] = useState<Record<string, ManualDamageMoveConfig>>({});
+  const [enemyStatSpreadOverrides, setEnemyStatSpreadOverrides] = useState<EnemyStatSpreadOverrideMap>({});
+  const [editingEnemyStatSpreadSlotIndex, setEditingEnemyStatSpreadSlotIndex] = useState<number | null>(null);
   const [doublesAllySelection, setDoublesAllySelection] = useState<OpenerSelection>([null, null]);
   const [doublesEnemySelection, setDoublesEnemySelection] = useState<OpenerSelection>([null, null]);
   const [doublesAllyTailwind, setDoublesAllyTailwind] = useState(false);
@@ -8635,6 +8874,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             presetMoveNames: [],
             abilityName: null,
             itemName: null,
+            defaultStatSpread: null,
             statSpread: null,
             movesetSource: "none",
           };
@@ -8664,6 +8904,17 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
               statSpread: null,
               movesetSource: "none" as const,
             };
+        const overrideStatSpread =
+          pokemon
+            ? enemyStatSpreadOverrides[getEnemyStatSpreadOverrideKey(slotIndex, pokemon, basePokemonBySpeciesKey)] ?? null
+            : null;
+        const defaultStatSpread = pokemon
+          ? storedMoves.statSpread ?? getDefaultChampionsStatSpreadForPokemon(pokemon)
+          : null;
+        const statSpread =
+          pokemon && defaultStatSpread
+            ? normalizeChampionsStatSpread(overrideStatSpread ?? storedMoves.statSpread ?? undefined, defaultStatSpread)
+            : null;
 
         return {
           slotIndex,
@@ -8674,11 +8925,12 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           presetMoveNames: storedMoves.allMoveNames,
           abilityName: storedMoves.abilityName,
           itemName: storedMoves.itemName,
-          statSpread: storedMoves.statSpread,
+          defaultStatSpread,
+          statSpread,
           movesetSource: storedMoves.movesetSource,
         };
       }),
-    [moveByKey, opponentQueries, speciesMovesetByKey, teamBuilderPokemonByKey],
+    [basePokemonBySpeciesKey, enemyStatSpreadOverrides, moveByKey, opponentQueries, speciesMovesetByKey, teamBuilderPokemonByKey],
   );
 
   const opponentEntries = useMemo<LoadedOpponentEntry[]>(
@@ -9387,6 +9639,20 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     damageDefenderSlotIndex !== null
       ? scoutingOpponentEntries.find((entry) => entry.slotIndex === damageDefenderSlotIndex) ?? null
       : null;
+  const editingEnemyStatSpreadEntry =
+    editingEnemyStatSpreadSlotIndex !== null
+      ? opponentEntryBySlot.get(editingEnemyStatSpreadSlotIndex) ?? null
+      : null;
+  const editingEnemyStatSpreadOverride =
+    editingEnemyStatSpreadEntry
+      ? enemyStatSpreadOverrides[
+          getEnemyStatSpreadOverrideKey(
+            editingEnemyStatSpreadEntry.slotIndex,
+            editingEnemyStatSpreadEntry.pokemon,
+            basePokemonBySpeciesKey,
+          )
+        ] ?? null
+      : null;
   const selectedDamageAttackerPokemon = selectedDamageAttacker?.pokemon ?? null;
   const selectedDamageDefenderPokemon = selectedDamageDefender?.pokemon ?? null;
   const currentDamageAttackerPokemon =
@@ -9489,22 +9755,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     () =>
       doublesEnemySelection
         .map((slotIndex) => (slotIndex === null ? null : opponentEntryBySlot.get(slotIndex) ?? null))
-        .filter(
-          (
-            entry,
-          ): entry is {
-            slotIndex: number;
-            query: string;
-            pokemon: PokemonRecord;
-            savedAttacks: PersistedSavedAttack[];
-            knownMoves: PersistedKnownMove[];
-            presetMoveNames: string[];
-            abilityName: string | null;
-            itemName: string | null;
-            statSpread: ChampionsStatSpread | null;
-            movesetSource: "custom" | "preset" | "none";
-          } => Boolean(entry),
-        ),
+        .filter((entry): entry is LoadedOpponentEntry => Boolean(entry)),
     [doublesEnemySelection, opponentEntryBySlot],
   );
   const battleSimulatorActiveAllies = useMemo(
@@ -11969,12 +12220,30 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
     }));
   };
 
+  const applyEnemyStatSpreadOverride = (
+    slotIndex: number,
+    pokemon: PokemonRecord,
+    statSpread: ChampionsStatSpread | null,
+  ) => {
+    const overrideKey = getEnemyStatSpreadOverrideKey(slotIndex, pokemon, basePokemonBySpeciesKey);
+
+    setEnemyStatSpreadOverrides((current) => {
+      const { [overrideKey]: _discarded, ...rest } = current;
+      return statSpread ? { ...rest, [overrideKey]: statSpread } : rest;
+    });
+    setAnalyzedOpponentEntries([]);
+    setBattleEngineRecommendation(null);
+    setBattleEngineAnalysisSignature("");
+  };
+
   const clearOpponentTeam = () => {
     battleEngineWorkerRef.current?.terminate();
     battleEngineWorkerRef.current = null;
     setBattleEngineSearching(false);
     setBattleEngineError(null);
     setOpponentQueries(createEmptyOpponentSlots());
+    setEnemyStatSpreadOverrides({});
+    setEditingEnemyStatSpreadSlotIndex(null);
     setAnalyzedOpponentEntries([]);
     setKnownEnemyBringSlotIndices([]);
     resetBattleSimulatorState();
@@ -11984,6 +12253,16 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
 
   return (
     <>
+      {editingEnemyStatSpreadEntry && typeof document !== "undefined" ? (
+        <EnemyStatSpreadEditorModal
+          entry={editingEnemyStatSpreadEntry}
+          basePokemonBySpeciesKey={basePokemonBySpeciesKey}
+          overrideSpread={editingEnemyStatSpreadOverride}
+          onApply={applyEnemyStatSpreadOverride}
+          onClose={() => setEditingEnemyStatSpreadSlotIndex(null)}
+        />
+      ) : null}
+
       <section className="team-builder-hero">
         <div>
           <p className="eyebrow">Team Coverage</p>
@@ -14108,6 +14387,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           megaFormsByBaseSpeciesKey={megaFormsByBaseSpeciesKey}
           onAttackerBattleFormChange={changeTeamSlotBattleForm}
           onDefenderBattleFormChange={changeOpponentSlotBattleForm}
+          onEditEnemyStatSpread={setEditingEnemyStatSpreadSlotIndex}
+          enemyStatSpreadOverrides={enemyStatSpreadOverrides}
           damageCalcMode={damageCalcMode}
           setDamageCalcMode={setDamageCalcMode}
           damageWeather={damageWeather}
