@@ -8340,6 +8340,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
   const [damageCalcMode, setDamageCalcMode] = useState<DamageCalcMode>("attack");
   const [doublesEnemyScoutDetailsOpen, setDoublesEnemyScoutDetailsOpen] = useState(false);
   const [perSlotMatchupEloOpen, setPerSlotMatchupEloOpen] = useState(false);
+  const [teamDetailViewsOpen, setTeamDetailViewsOpen] = useState(false);
   const [damageAttackerSlotIndex, setDamageAttackerSlotIndex] = useState<number | null>(null);
   const [damageDefenderSlotIndex, setDamageDefenderSlotIndex] = useState<number | null>(null);
   const [damageWeather, setDamageWeather] = useState<DamageWeather>("none");
@@ -13773,12 +13774,37 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           </section>
         ) : null}
 
-        {scoutingOpponentEntries.length === 0 ? (
-          <div className="matchup-empty-board">
-            Add up to six opposing Pokemon to see their stats and your selected bring four’s super-effective answers.
+        <div
+          className={`scout-section-header collapsible-section-header team-detail-views-header${
+            teamDetailViewsOpen ? " is-open" : ""
+          }`}
+        >
+          <div className="collapsible-section-title">
+            <p className="eyebrow">Team Detail Views</p>
+            <span>
+              {scoutingOpponentEntries.length} enemies · {bringSelectedPokemon.length} allies
+            </span>
           </div>
-        ) : (
-          <>
+          <button
+            type="button"
+            className="collapsible-section-toggle"
+            onClick={() => setTeamDetailViewsOpen((prev) => !prev)}
+            aria-expanded={teamDetailViewsOpen}
+          >
+            <span>{teamDetailViewsOpen ? "Hide Teams" : "Show Teams"}</span>
+            <span className="collapsible-section-toggle-chevron" aria-hidden="true">
+              {teamDetailViewsOpen ? "−" : "+"}
+            </span>
+          </button>
+        </div>
+
+        {teamDetailViewsOpen ? (
+          scoutingOpponentEntries.length === 0 ? (
+            <div className="matchup-empty-board">
+              Add up to six opposing Pokemon to see their stats and your selected bring four’s super-effective answers.
+            </div>
+          ) : (
+            <>
             <div className="scout-section-header">
               <p className="eyebrow">Enemy Team</p>
               <span>{scoutingOpponentEntries.length} cards</span>
@@ -14305,7 +14331,8 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
               </div>
             )}
           </>
-        )}
+          )
+        ) : null}
       </section>
 
       <section className="board-panel damage-calculator-panel">

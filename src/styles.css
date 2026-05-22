@@ -4403,9 +4403,10 @@ img {
   border-radius: 999px;
   padding: 0.28rem 0.5rem;
   background: color-mix(in srgb, var(--type-color, #ece2d6) 24%, var(--mix-base));
-  color: var(--type-accent, var(--ink-strong));
+  color: var(--ink-strong);
   font-size: 0.72rem;
   font-weight: 800;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.42);
 }
 
 .damage-type-shortcut img {
