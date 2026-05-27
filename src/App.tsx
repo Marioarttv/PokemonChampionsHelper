@@ -599,6 +599,25 @@ function formatPercent(value: number) {
   return value.toFixed(value >= 100 ? 0 : 1);
 }
 
+function formatMultihitSummary(estimate: {
+  hits: number;
+  hitRange: { min: number; max: number };
+  perHitAverageDamage: number;
+  defenderHp: number;
+}) {
+  const { hits, hitRange, perHitAverageDamage, defenderHp } = estimate;
+  const perHitPercent = defenderHp > 0 ? (perHitAverageDamage / defenderHp) * 100 : 0;
+  const hitsLabel =
+    hitRange.min === hitRange.max
+      ? `${hitRange.min}`
+      : `${hitRange.min}-${hitRange.max}`;
+  const avgTail =
+    hitRange.min === hitRange.max
+      ? ""
+      : ` (avg ${Number.isInteger(hits) ? hits : hits.toFixed(2)})`;
+  return `${formatPercent(perHitPercent)}% × ${hitsLabel}${avgTail}`;
+}
+
 function formatSignedScore(value: number) {
   const rounded = Math.round(value);
   return `${rounded >= 0 ? "+" : ""}${rounded}`;
@@ -4654,6 +4673,7 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
     }
 
     const chips = buildDamageModChips(estimate, category);
+    const isMultihit = estimate.hits > 1 || estimate.hitRange.max > 1;
 
     return (
       <div className="damage-result-card ready">
@@ -4667,6 +4687,9 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
           Avg {estimate.averageDamage} HP {hpLabel === "taken" ? "taken" : ""}
           {estimate.typeMultiplier === 0 ? " · no effect" : ""}
         </p>
+        {isMultihit ? (
+          <p className="damage-multihit-note">{formatMultihitSummary(estimate)}</p>
+        ) : null}
         {chips.length > 0 ? (
           <div className="damage-modifier-row compact">
             {chips.map((chip) => (
@@ -13033,6 +13056,14 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewP
                     <span>Priority {quickMove.priority >= 0 ? `+${quickMove.priority}` : quickMove.priority}</span>
                     <span>{formatMoveTarget(quickMove.target)}</span>
                     {isSpreadTarget(quickMove.target) ? <span>Spread Penalty</span> : null}
+                    {(() => {
+                      const moveMultihit = getMoveMultihit(quickMove);
+                      if (!moveMultihit) return null;
+                      const range = typeof moveMultihit === "number"
+                        ? `${moveMultihit}`
+                        : `${moveMultihit[0]}-${moveMultihit[1]}`;
+                      return <span>Multihit ×{range}</span>;
+                    })()}
                   </div>
 
                   <div className="lead-section">
@@ -13056,6 +13087,9 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewP
                         <p>
                           {currentDamageAttackerPokemon?.name} into {currentDamageDefenderPokemon?.name}
                         </p>
+                        {quickMoveEstimate.hits > 1 || quickMoveEstimate.hitRange.max > 1 ? (
+                          <p className="damage-multihit-note">{formatMultihitSummary(quickMoveEstimate)}</p>
+                        ) : null}
                         <div className="damage-modifier-row">
                           <span>STAB {formatFlatMultiplier(quickMoveEstimate.stabMultiplier)}</span>
                           <span>Type {formatFlatMultiplier(quickMoveEstimate.typeMultiplier)}</span>
