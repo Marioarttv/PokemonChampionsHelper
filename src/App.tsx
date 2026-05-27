@@ -194,6 +194,7 @@ import {
 } from "./lib/showdownBridge";
 import { exportShowdownTeamText } from "./lib/showdownTeamExport";
 import BattleArenaPage from "./BattleArenaPage";
+import BattleIntelPage, { type BattleIntelSlotInput } from "./BattleIntelPage";
 
 type SiteMode =
   | "calculator"
@@ -204,13 +205,34 @@ type SiteMode =
   | "speed"
   | "ohko"
   | "training"
-  | "history";
+  | "history"
+  | "settings";
 type CalculatorMode = "defense" | "attack";
 type MatchHistoryTeamSort = "latest" | "name" | "matches" | "winRate";
 type SpeedTierSort = "boosted" | "neutral" | "base" | "name";
 type MoveFinderSpeedMetric = "base" | "neutral" | "boosted";
 type MoveFinderSpeedComparator = "any" | "atLeast" | "atMost";
 type ShowdownBridgeStatus = "idle" | "ready" | "installed" | "waiting" | "error";
+type HiddenFeatureId =
+  | "typeCalculator"
+  | "teamBuilder"
+  | "battleArena"
+  | "battleIntel"
+  | "movesets"
+  | "moveFinder"
+  | "speedTiers"
+  | "ohkoFinder"
+  | "trainingOptimizer"
+  | "matchHistory"
+  | "teamPreview"
+  | "battleEngine";
+type FeatureVisibilitySettings = Record<HiddenFeatureId, boolean>;
+type FeatureDefinition = {
+  id: HiddenFeatureId;
+  label: string;
+  description: string;
+  group: "Main pages" | "Team Builder tools";
+};
 
 type TypePoolProps = {
   selectedTypes: PokemonType[];
@@ -8018,6 +8040,7 @@ function CalculatorView() {
 
 type TeamBuilderViewProps = {
   onStartNewTeam: () => void;
+  featureVisibility: FeatureVisibilitySettings;
 };
 
 type MatchSaveSelectorProps = {
@@ -8292,7 +8315,10 @@ function EnemyStatSpreadEditorModal({
   );
 }
 
-function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
+function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewProps) {
+  const showTeamPreviewFeature = isFeatureVisible(featureVisibility, "teamPreview");
+  const showBattleEngineFeature = isFeatureVisible(featureVisibility, "battleEngine");
+  const showBattleIntelFeature = isFeatureVisible(featureVisibility, "battleIntel");
   const [teamMatrixMode, setTeamMatrixMode] = useState<TeamMatrixMode>("defense");
   const [openerSelections, setOpenerSelections] = useState<[OpenerSelection, OpenerSelection]>([
     [null, null],
@@ -8936,6 +8962,33 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
 
   const opponentEntries = useMemo<LoadedOpponentEntry[]>(
     () => getLoadedOpponentEntries(opponentRoster),
+    [opponentRoster],
+  );
+  const battleIntelAllySlots = useMemo<BattleIntelSlotInput[]>(
+    () =>
+      team.map((slot, slotIndex) => ({
+        slotIndex,
+        pokemon: slot.pokemon,
+        savedAttacks: slot.savedAttacks,
+        knownMoves: slot.knownMoves,
+        abilityName: slot.abilityName,
+        itemName: slot.itemName,
+        statSpread: slot.resolvedStatSpread ?? slot.statSpread ?? slot.defaultStatSpread,
+      })),
+    [team],
+  );
+  const battleIntelEnemySlots = useMemo<BattleIntelSlotInput[]>(
+    () =>
+      opponentRoster.map((entry) => ({
+        slotIndex: entry.slotIndex,
+        pokemon: entry.pokemon,
+        savedAttacks: entry.savedAttacks,
+        knownMoves: entry.knownMoves,
+        presetMoveNames: entry.presetMoveNames,
+        abilityName: entry.abilityName,
+        itemName: entry.itemName,
+        statSpread: entry.statSpread ?? entry.defaultStatSpread,
+      })),
     [opponentRoster],
   );
   const scoutingOpponentEntries = useDeferredValue(opponentEntries);
@@ -10468,9 +10521,20 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         ),
     [bringSelection.bringSlotIndices, effectiveTeam],
   );
-  const bringSelectedPokemon = useMemo(
-    () => bringSelectedTeam.map(({ pokemon }) => pokemon),
-    [bringSelectedTeam],
+  const teamPreviewDetailTeam = useMemo(
+    () =>
+      effectiveTeam
+        .map((slot, slotIndex) => {
+          return slot.pokemon ? { slotIndex, slot, pokemon: slot.pokemon } : null;
+        })
+        .filter(
+          (entry): entry is { slotIndex: number; slot: LoadedTeamSlot; pokemon: PokemonRecord } => Boolean(entry),
+        ),
+    [effectiveTeam],
+  );
+  const teamPreviewDetailPokemon = useMemo(
+    () => teamPreviewDetailTeam.map(({ pokemon }) => pokemon),
+    [teamPreviewDetailTeam],
   );
   useEffect(() => {
     setManualBringSlotIndices((current) =>
@@ -11316,7 +11380,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       new Map(
         scoutingOpponentEntries.map((entry) => [
           entry.slotIndex,
-          bringSelectedTeam
+          teamPreviewDetailTeam
             .map(({ pokemon, slot, slotIndex }) => {
               const coverage = getBestSavedAttacksAgainstPokemon(slot.savedAttacks, entry.pokemon);
 
@@ -11333,12 +11397,12 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             .sort((left, right) => (right.multiplier ?? 0) - (left.multiplier ?? 0)),
         ]),
       ),
-    [bringSelectedTeam, scoutingOpponentEntries],
+    [scoutingOpponentEntries, teamPreviewDetailTeam],
   );
   const enemyThreatMap = useMemo(
     () =>
       new Map(
-        bringSelectedTeam.map(({ pokemon, slot, slotIndex }) => {
+        teamPreviewDetailTeam.map(({ pokemon, slot, slotIndex }) => {
           return [
             slotIndex,
             scoutingOpponentEntries
@@ -11362,7 +11426,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           ] as const;
         }),
       ),
-    [bringSelectedTeam, scoutingOpponentEntries],
+    [scoutingOpponentEntries, teamPreviewDetailTeam],
   );
   const incomingThreatCards = useMemo(() => {
     if (!doublesThreatReady) {
@@ -11464,7 +11528,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       new Map(
         scoutingOpponentEntries.map((entry) => [
           entry.slotIndex,
-          bringSelectedTeam
+          teamPreviewDetailTeam
             .flatMap(({ pokemon: attackerPokemon, slot, slotIndex }) => {
 
               return slot.savedAttacks
@@ -11537,7 +11601,6 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
         ]),
       ),
     [
-      bringSelectedTeam,
       damageAttackStage,
       damageDefenseStage,
       damageReflect,
@@ -11546,6 +11609,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
       damageTerrain,
       damageWeather,
       scoutingOpponentEntries,
+      teamPreviewDetailTeam,
     ],
   );
 
@@ -13028,14 +13092,16 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                 ))}
               </select>
             </label>
-            <button
-              type="button"
-              className="primary-button"
-              onClick={runOpponentAnalysis}
-              disabled={!canRunOpponentAnalysis}
-            >
-              {analyzedOpponentEntries.length > 0 ? "Recalculate Bring Picks" : "Calculate Bring Picks"}
-            </button>
+            {showTeamPreviewFeature ? (
+              <button
+                type="button"
+                className="primary-button"
+                onClick={runOpponentAnalysis}
+                disabled={!canRunOpponentAnalysis}
+              >
+                {analyzedOpponentEntries.length > 0 ? "Recalculate Bring Picks" : "Calculate Bring Picks"}
+              </button>
+            ) : null}
             <button
               type="button"
               className="secondary-button"
@@ -13176,21 +13242,23 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
           ))}
         </div>
 
-        <p className="selector-note team-elo-note" style={{ marginTop: "1rem" }}>
-          Bring-four analysis only runs on demand.
-          {analyzedOpponentEntries.length > 0
-            ? opponentAnalysisIsStale
-              ? " Current inputs changed after the last run, so the results below are stale until you recalculate."
-              : " Results below match the current enemy board."
-            : opponentEntries.length >= 4
-              ? " You have enough enemy slots loaded for a preview recommendation."
-              : opponentEntries.length > 0
-                ? " You can analyze partial scouting now, but the bring-four preview needs at least four loaded enemies."
-                : " Add at least one enemy slot to enable the calculation button."}
-        </p>
+        {showTeamPreviewFeature ? (
+          <>
+            <p className="selector-note team-elo-note" style={{ marginTop: "1rem" }}>
+              Bring-four analysis only runs on demand.
+              {analyzedOpponentEntries.length > 0
+                ? opponentAnalysisIsStale
+                  ? " Current inputs changed after the last run, so the results below are stale until you recalculate."
+                  : " Results below match the current enemy board."
+                : opponentEntries.length >= 4
+                  ? " You have enough enemy slots loaded for a preview recommendation."
+                  : opponentEntries.length > 0
+                    ? " You can analyze partial scouting now, but the bring-four preview needs at least four loaded enemies."
+                    : " Add at least one enemy slot to enable the calculation button."}
+            </p>
 
-        {scoutingOpponentEntries.length > 0 ? (
-          <section className="team-elo-panel">
+            {scoutingOpponentEntries.length > 0 ? (
+              <section className="team-elo-panel">
             <div className="scout-section-header">
               <p className="eyebrow">Bring Four Preview</p>
               <span>{bringSelection.bringSlotIndices.length} allies scored</span>
@@ -13771,45 +13839,49 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                 Add Pokemon to your team to rank your selected bring four into the full enemy six.
               </div>
             )}
-          </section>
+              </section>
+            ) : null}
+          </>
         ) : null}
 
-        <div
-          className={`scout-section-header collapsible-section-header team-detail-views-header${
-            teamDetailViewsOpen ? " is-open" : ""
-          }`}
-        >
-          <div className="collapsible-section-title">
-            <p className="eyebrow">Team Detail Views</p>
-            <span>
-              {scoutingOpponentEntries.length} enemies · {bringSelectedPokemon.length} allies
-            </span>
-          </div>
-          <button
-            type="button"
-            className="collapsible-section-toggle"
-            onClick={() => setTeamDetailViewsOpen((prev) => !prev)}
-            aria-expanded={teamDetailViewsOpen}
-          >
-            <span>{teamDetailViewsOpen ? "Hide Teams" : "Show Teams"}</span>
-            <span className="collapsible-section-toggle-chevron" aria-hidden="true">
-              {teamDetailViewsOpen ? "−" : "+"}
-            </span>
-          </button>
-        </div>
+        {showTeamPreviewFeature ? (
+          <section className="team-preview-detail-panel">
+            <div
+              className={`scout-section-header collapsible-section-header team-detail-views-header${
+                teamDetailViewsOpen ? " is-open" : ""
+              }`}
+            >
+              <div className="collapsible-section-title">
+                <p className="eyebrow">Team Preview 6v6</p>
+                <span>
+                  {teamPreviewDetailPokemon.length} allies · {scoutingOpponentEntries.length} enemies
+                </span>
+              </div>
+              <button
+                type="button"
+                className="collapsible-section-toggle"
+                onClick={() => setTeamDetailViewsOpen((prev) => !prev)}
+                aria-expanded={teamDetailViewsOpen}
+              >
+                <span>{teamDetailViewsOpen ? "Hide Teams" : "Show Teams"}</span>
+                <span className="collapsible-section-toggle-chevron" aria-hidden="true">
+                  {teamDetailViewsOpen ? "−" : "+"}
+                </span>
+              </button>
+            </div>
 
-        {teamDetailViewsOpen ? (
-          scoutingOpponentEntries.length === 0 ? (
-            <div className="matchup-empty-board">
-              Add up to six opposing Pokemon to see their stats and your selected bring four’s super-effective answers.
-            </div>
-          ) : (
-            <>
-            <div className="scout-section-header">
-              <p className="eyebrow">Enemy Team</p>
-              <span>{scoutingOpponentEntries.length} cards</span>
-            </div>
-            <div className="enemy-grid">
+            {teamDetailViewsOpen ? (
+              <>
+                <div className="scout-section-header">
+                  <p className="eyebrow">Enemy Team</p>
+                  <span>{scoutingOpponentEntries.length} cards</span>
+                </div>
+                {scoutingOpponentEntries.length === 0 ? (
+                  <div className="matchup-empty-board">
+                    Add up to six opposing Pokemon to see full-team stats and super-effective answers.
+                  </div>
+                ) : (
+                  <div className="enemy-grid">
               {scoutingOpponentEntries.map((opponentEntry) => {
                 const opponentCoverage = opponentCoverageMap.get(opponentEntry.slotIndex) ?? [];
                 const ohkoEntries = opponentOhkoMap.get(opponentEntry.slotIndex) ?? [];
@@ -13996,7 +14068,7 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                       <div className="coverage-preview-header">
                         <p className="eyebrow">{seEntries.length > 0 ? "SE Hitters" : "Best Available Hits"}</p>
                         <span>
-                          {seEntries.length > 0 ? `${seEntries.length} bring members` : `${fallbackEntries.length} shown`}
+                          {seEntries.length > 0 ? `${seEntries.length} team members` : `${fallbackEntries.length} shown`}
                         </span>
                       </div>
 
@@ -14136,19 +14208,20 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                   </article>
                 );
               })}
-            </div>
+                  </div>
+                )}
 
             <div className="scout-section-header allied">
-              <p className="eyebrow">Scored Bring</p>
-              <span>{bringSelectedPokemon.length} cards</span>
+              <p className="eyebrow">Your Team</p>
+              <span>{teamPreviewDetailPokemon.length} cards</span>
             </div>
-            {bringSelectedPokemon.length === 0 ? (
+            {teamPreviewDetailPokemon.length === 0 ? (
               <div className="matchup-empty-board">
-                Add Pokemon to your team to see enemy STAB pressure into the selected bring four.
+                Add Pokemon to your team to see enemy STAB pressure into your full team.
               </div>
             ) : (
               <div className="enemy-grid allied-grid">
-                {bringSelectedTeam.map(({ pokemon, slotIndex }) => {
+                {teamPreviewDetailTeam.map(({ pokemon, slotIndex }) => {
                   const threats = enemyThreatMap.get(slotIndex) ?? [];
                   const seThreats = threats.filter((entry) => (entry.multiplier ?? 0) > 1);
                   const fallbackThreats = threats.filter((entry) => (entry.multiplier ?? 0) <= 1).slice(0, 3);
@@ -14330,10 +14403,24 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                 })}
               </div>
             )}
-          </>
-          )
+              </>
+            ) : null}
+          </section>
         ) : null}
       </section>
+
+      {showBattleIntelFeature ? (
+        <BattleIntelPage
+          embedded
+          allyName={teamName.trim() || "Current team"}
+          enemyName="Enemy board"
+          allySlots={battleIntelAllySlots}
+          enemySlots={battleIntelEnemySlots}
+          moveByKey={moveByKey}
+          initialWeather={damageWeather}
+          initialTerrain={damageTerrain}
+        />
+      ) : null}
 
       <section className="board-panel damage-calculator-panel">
         <div className="board-header">
@@ -14889,29 +14976,31 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
             </section>
           ) : null}
 
-          <section className={`damage-doubles-block bl-showdown-bridge ${battleEngineUsesShowdown ? "connected" : showdownBridgeStatus}`}>
-            <div>
-              <p className="eyebrow">Showdown Live</p>
-              <strong>{battleEngineUsesShowdown ? showdownBridgeImport?.summary : showdownBridgeMessage}</strong>
-              <span>
-                {battleEngineUsesShowdown && showdownBridgeCapturedLabel
-                  ? `Snapshot ${showdownBridgeCapturedLabel}`
-                  : "Open a Showdown battle tab with the bridge extension enabled."}
-              </span>
-            </div>
-            <button type="button" className="secondary-button" onClick={requestShowdownSnapshot}>
-              Refresh
-            </button>
-            {showdownBridgeImport?.unresolvedSpecies.length ? (
-              <p>Unmatched: {showdownBridgeImport.unresolvedSpecies.slice(0, 4).join(", ")}</p>
-            ) : null}
-            {showdownBridgeImport?.warnings.length ? (
-              <p>{showdownBridgeImport.warnings.slice(0, 2).join(" ")}</p>
-            ) : null}
-          </section>
-
-          {battleLabReady && battleLabDisplayState ? (
+          {showBattleEngineFeature ? (
             <>
+              <section className={`damage-doubles-block bl-showdown-bridge ${battleEngineUsesShowdown ? "connected" : showdownBridgeStatus}`}>
+                <div>
+                  <p className="eyebrow">Showdown Live</p>
+                  <strong>{battleEngineUsesShowdown ? showdownBridgeImport?.summary : showdownBridgeMessage}</strong>
+                  <span>
+                    {battleEngineUsesShowdown && showdownBridgeCapturedLabel
+                      ? `Snapshot ${showdownBridgeCapturedLabel}`
+                      : "Open a Showdown battle tab with the bridge extension enabled."}
+                  </span>
+                </div>
+                <button type="button" className="secondary-button" onClick={requestShowdownSnapshot}>
+                  Refresh
+                </button>
+                {showdownBridgeImport?.unresolvedSpecies.length ? (
+                  <p>Unmatched: {showdownBridgeImport.unresolvedSpecies.slice(0, 4).join(", ")}</p>
+                ) : null}
+                {showdownBridgeImport?.warnings.length ? (
+                  <p>{showdownBridgeImport.warnings.slice(0, 2).join(" ")}</p>
+                ) : null}
+              </section>
+
+              {battleLabReady && battleLabDisplayState ? (
+                <>
               {(() => {
               const displayState = battleLabDisplayState;
               const realState = battleEngineCurrentState!;
@@ -16027,13 +16116,15 @@ function TeamBuilderView({ onStartNewTeam }: TeamBuilderViewProps) {
                 </section>
               );
               })()}
+                </>
+              ) : (
+                <div className="matchup-empty-board">
+                  Pick at least one filled ally and one loaded enemy to open Battle Lab. The full threat grid expands
+                  automatically once both sides have two active mons.
+                </div>
+              )}
             </>
-          ) : (
-            <div className="matchup-empty-board">
-              Pick at least one filled ally and one loaded enemy to open Battle Lab. The full threat grid expands
-              automatically once both sides have two active mons.
-            </div>
-          )}
+          ) : null}
         </section>
       </section>
 
@@ -19699,21 +19790,262 @@ function MatchHistoryEditSelector({
   );
 }
 
-const SITE_SECTIONS: Array<{ id: SiteMode; index: string; label: string }> = [
-  { id: "calculator", index: "01", label: "Type Calculator" },
-  { id: "team", index: "02", label: "Team Builder" },
-  { id: "battle", index: "03", label: "Battle Arena" },
-  { id: "movesets", index: "04", label: "Movesets DB" },
-  { id: "moveFinder", index: "05", label: "Move Finder" },
-  { id: "speed", index: "06", label: "Speed Tiers" },
-  { id: "ohko", index: "07", label: "OHKO Finder" },
-  { id: "training", index: "08", label: "Training Optimizer" },
-  { id: "history", index: "09", label: "Match History" },
+const FEATURE_VISIBILITY_STORAGE_KEY = "pokemon-champions-helper-feature-visibility-v1";
+
+const CUSTOMIZABLE_FEATURES: FeatureDefinition[] = [
+  {
+    id: "typeCalculator",
+    label: "Type Calculator / Type Chart",
+    description: "Main type chart, defensive matchup, and attack coverage page.",
+    group: "Main pages",
+  },
+  {
+    id: "teamBuilder",
+    label: "Team Builder",
+    description: "Team construction, saved teams, opponent scouting, and damage board.",
+    group: "Main pages",
+  },
+  {
+    id: "battleArena",
+    label: "Battle Arena",
+    description: "Trainer battle simulator page.",
+    group: "Main pages",
+  },
+  {
+    id: "battleIntel",
+    label: "Battle Intel",
+    description: "Non-predictive battle canvas, turn order, and stacked damage board.",
+    group: "Team Builder tools",
+  },
+  {
+    id: "movesets",
+    label: "Movesets DB",
+    description: "Saved species moveset database.",
+    group: "Main pages",
+  },
+  {
+    id: "moveFinder",
+    label: "Move Finder",
+    description: "Regulation-scoped move lookup page.",
+    group: "Main pages",
+  },
+  {
+    id: "speedTiers",
+    label: "Speed Tiers",
+    description: "Champions speed benchmark table.",
+    group: "Main pages",
+  },
+  {
+    id: "ohkoFinder",
+    label: "OHKO Finder",
+    description: "Targeted knockout scanner page.",
+    group: "Main pages",
+  },
+  {
+    id: "trainingOptimizer",
+    label: "Training Optimizer",
+    description: "Stat spread optimizer and breakpoint planner.",
+    group: "Main pages",
+  },
+  {
+    id: "matchHistory",
+    label: "Match History",
+    description: "Saved opponent teams and result history.",
+    group: "Main pages",
+  },
+  {
+    id: "teamPreview",
+    label: "Team Preview",
+    description: "Bring-four recommendation, team preview cards, and full-team scouting detail.",
+    group: "Team Builder tools",
+  },
+  {
+    id: "battleEngine",
+    label: "Battle Engine",
+    description: "Showdown bridge, Battle Lab, turn planner, and engine recommendations.",
+    group: "Team Builder tools",
+  },
 ];
+
+const DEFAULT_FEATURE_VISIBILITY: FeatureVisibilitySettings = {
+  typeCalculator: true,
+  teamBuilder: true,
+  battleArena: true,
+  battleIntel: true,
+  movesets: true,
+  moveFinder: true,
+  speedTiers: true,
+  ohkoFinder: true,
+  trainingOptimizer: true,
+  matchHistory: true,
+  teamPreview: true,
+  battleEngine: true,
+};
+
+const SITE_SECTIONS: Array<{ id: SiteMode; index: string; label: string; featureId?: HiddenFeatureId }> = [
+  { id: "calculator", index: "01", label: "Type Calculator", featureId: "typeCalculator" },
+  { id: "team", index: "02", label: "Team Builder", featureId: "teamBuilder" },
+  { id: "battle", index: "03", label: "Battle Arena", featureId: "battleArena" },
+  { id: "movesets", index: "04", label: "Movesets DB", featureId: "movesets" },
+  { id: "moveFinder", index: "05", label: "Move Finder", featureId: "moveFinder" },
+  { id: "speed", index: "06", label: "Speed Tiers", featureId: "speedTiers" },
+  { id: "ohko", index: "07", label: "OHKO Finder", featureId: "ohkoFinder" },
+  { id: "training", index: "08", label: "Training Optimizer", featureId: "trainingOptimizer" },
+  { id: "history", index: "09", label: "Match History", featureId: "matchHistory" },
+  { id: "settings", index: "10", label: "Settings" },
+];
+
+function createDefaultFeatureVisibility(): FeatureVisibilitySettings {
+  return { ...DEFAULT_FEATURE_VISIBILITY };
+}
+
+function isFeatureVisible(featureVisibility: FeatureVisibilitySettings, featureId: HiddenFeatureId) {
+  return featureVisibility[featureId] !== false;
+}
+
+function sanitizeFeatureVisibility(value: unknown): FeatureVisibilitySettings {
+  const next = createDefaultFeatureVisibility();
+
+  if (!value || typeof value !== "object") {
+    return next;
+  }
+
+  for (const feature of CUSTOMIZABLE_FEATURES) {
+    const storedValue = (value as Partial<Record<HiddenFeatureId, unknown>>)[feature.id];
+    if (typeof storedValue === "boolean") {
+      next[feature.id] = storedValue;
+    }
+  }
+
+  return next;
+}
+
+function loadFeatureVisibilitySettings(): FeatureVisibilitySettings {
+  if (typeof window === "undefined") {
+    return createDefaultFeatureVisibility();
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(FEATURE_VISIBILITY_STORAGE_KEY);
+    return storedValue ? sanitizeFeatureVisibility(JSON.parse(storedValue)) : createDefaultFeatureVisibility();
+  } catch {
+    return createDefaultFeatureVisibility();
+  }
+}
+
+function saveFeatureVisibilitySettings(featureVisibility: FeatureVisibilitySettings) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(FEATURE_VISIBILITY_STORAGE_KEY, JSON.stringify(featureVisibility));
+  } catch {
+    // Settings are optional UI preferences; blocked storage should not break the app.
+  }
+}
+
+type SettingsViewProps = {
+  featureVisibility: FeatureVisibilitySettings;
+  onToggleFeature: (featureId: HiddenFeatureId, visible: boolean) => void;
+  onResetFeatures: () => void;
+};
+
+function SettingsView({ featureVisibility, onToggleFeature, onResetFeatures }: SettingsViewProps) {
+  const hiddenCount = CUSTOMIZABLE_FEATURES.filter((feature) => !isFeatureVisible(featureVisibility, feature.id)).length;
+  const groups: Array<FeatureDefinition["group"]> = ["Main pages", "Team Builder tools"];
+
+  return (
+    <section className="settings-page" aria-labelledby="settings-title">
+      <div className="board-panel settings-hero-panel">
+        <div className="board-header settings-hero-header">
+          <div>
+            <p className="eyebrow">Site Settings</p>
+            <h2 id="settings-title">Customize visible features</h2>
+            <p className="selector-note">
+              Hide tools you do not use. Settings are saved in this browser and can be restored at any time.
+            </p>
+          </div>
+          <div className="settings-summary-card" aria-label="Hidden feature summary">
+            <span>Hidden</span>
+            <strong>{hiddenCount}</strong>
+            <button type="button" className="secondary-button" onClick={onResetFeatures} disabled={hiddenCount === 0}>
+              Show All
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {groups.map((group) => (
+        <section key={group} className="board-panel settings-feature-panel" aria-labelledby={`settings-${group}`}>
+          <div className="scout-section-header">
+            <p className="eyebrow" id={`settings-${group}`}>
+              {group}
+            </p>
+            <span>
+              {CUSTOMIZABLE_FEATURES.filter((feature) => feature.group === group).length} toggles
+            </span>
+          </div>
+
+          <div className="settings-toggle-grid">
+            {CUSTOMIZABLE_FEATURES.filter((feature) => feature.group === group).map((feature) => {
+              const visible = isFeatureVisible(featureVisibility, feature.id);
+
+              return (
+                <label key={feature.id} className={`settings-toggle-card ${visible ? "visible" : "hidden"}`}>
+                  <input
+                    type="checkbox"
+                    checked={visible}
+                    onChange={(event) => onToggleFeature(feature.id, event.target.checked)}
+                  />
+                  <span className="settings-toggle-switch" aria-hidden="true" />
+                  <span className="settings-toggle-copy">
+                    <strong>{feature.label}</strong>
+                    <small>{feature.description}</small>
+                  </span>
+                  <span className="settings-toggle-state">{visible ? "Shown" : "Hidden"}</span>
+                </label>
+              );
+            })}
+          </div>
+        </section>
+      ))}
+    </section>
+  );
+}
 
 function App() {
   const [siteMode, setSiteMode] = useState<SiteMode>("calculator");
   const [teamBuilderResetKey, setTeamBuilderResetKey] = useState(0);
+  const [featureVisibility, setFeatureVisibility] = useState<FeatureVisibilitySettings>(loadFeatureVisibilitySettings);
+  const visibleSiteSections = useMemo(
+    () =>
+      SITE_SECTIONS.filter(
+        (section) => !section.featureId || isFeatureVisible(featureVisibility, section.featureId),
+      ),
+    [featureVisibility],
+  );
+
+  useEffect(() => {
+    if (!visibleSiteSections.some((section) => section.id === siteMode)) {
+      setSiteMode("settings");
+    }
+  }, [siteMode, visibleSiteSections]);
+
+  useEffect(() => {
+    saveFeatureVisibilitySettings(featureVisibility);
+  }, [featureVisibility]);
+
+  const updateFeatureVisibility = (featureId: HiddenFeatureId, visible: boolean) => {
+    setFeatureVisibility((current) => ({
+      ...current,
+      [featureId]: visible,
+    }));
+  };
+
+  const resetFeatureVisibility = () => {
+    setFeatureVisibility(createDefaultFeatureVisibility());
+  };
 
   return (
     <div className="app-shell">
@@ -19752,7 +20084,7 @@ function App() {
         </header>
 
         <nav className="site-tabs" aria-label="Site sections">
-          {SITE_SECTIONS.map((section) => (
+          {visibleSiteSections.map((section) => (
             <button
               key={section.id}
               type="button"
@@ -19771,6 +20103,7 @@ function App() {
         ) : siteMode === "team" ? (
           <TeamBuilderView
             key={teamBuilderResetKey}
+            featureVisibility={featureVisibility}
             onStartNewTeam={() => setTeamBuilderResetKey((value) => value + 1)}
           />
         ) : siteMode === "battle" ? (
@@ -19785,6 +20118,12 @@ function App() {
           <OhkoFinderView />
         ) : siteMode === "training" ? (
           <TrainingOptimizerView />
+        ) : siteMode === "settings" ? (
+          <SettingsView
+            featureVisibility={featureVisibility}
+            onToggleFeature={updateFeatureVisibility}
+            onResetFeatures={resetFeatureVisibility}
+          />
         ) : (
           <MatchHistoryView />
         )}
