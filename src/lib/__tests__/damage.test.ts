@@ -358,3 +358,85 @@ describe("screen damage handling", () => {
     expect(estimate.screenMultiplier).toBeCloseTo(2 / 3);
   });
 });
+
+describe("multi-hit damage handling", () => {
+  const attacker = makePokemon("Multihit Attacker", {
+    types: ["Flying"],
+    baseStats: { atk: 120 },
+  });
+  const defender = makePokemon("Multihit Target", {
+    types: ["Normal"],
+    baseStats: { hp: 100, def: 100 },
+  });
+
+  const baseInput = {
+    attacker,
+    defender,
+    attackType: "flying" as const,
+    moveName: "Dual Wingbeat",
+    basePower: 40,
+    category: "physical" as const,
+    isSpreadMove: false,
+  };
+
+  it("treats moves with no multihit as a single hit", () => {
+    const estimate = calculateRoughDamage(baseInput);
+    expect(estimate.hits).toBe(1);
+    expect(estimate.hitRange).toEqual({ min: 1, max: 1 });
+    expect(estimate.minDamage).toBe(estimate.perHitMinDamage);
+    expect(estimate.maxDamage).toBe(estimate.perHitMaxDamage);
+  });
+
+  it("doubles damage for Dual Wingbeat (fixed 2-hit)", () => {
+    const single = calculateRoughDamage(baseInput);
+    const dual = calculateRoughDamage({ ...baseInput, multihit: 2 });
+
+    expect(dual.hits).toBe(2);
+    expect(dual.hitRange).toEqual({ min: 2, max: 2 });
+    expect(dual.perHitMaxDamage).toBe(single.maxDamage);
+    expect(dual.maxDamage).toBe(Math.floor(single.maxDamage * 2));
+    expect(dual.averagePercent).toBeCloseTo(single.averagePercent * 2);
+  });
+
+  it("uses the showdown 2-5 weighted average by default", () => {
+    const estimate = calculateRoughDamage({
+      ...baseInput,
+      moveName: "Bullet Seed",
+      multihit: [2, 5],
+    });
+    expect(estimate.hits).toBeCloseTo(3.1);
+    expect(estimate.hitRange).toEqual({ min: 2, max: 5 });
+  });
+
+  it("forces max hits when Skill Link is active", () => {
+    const standard = calculateRoughDamage({ ...baseInput, multihit: [2, 5] });
+    const skillLink = calculateRoughDamage({
+      ...baseInput,
+      multihit: [2, 5],
+      attackerAbility: "skilllink",
+    });
+
+    expect(skillLink.hits).toBe(5);
+    expect(skillLink.averageDamage).toBeGreaterThan(standard.averageDamage);
+  });
+
+  it("forces 4-5 hits when Loaded Dice is held", () => {
+    const standard = calculateRoughDamage({ ...baseInput, multihit: [2, 5] });
+    const loaded = calculateRoughDamage({
+      ...baseInput,
+      multihit: [2, 5],
+      attackerItem: "loadeddice",
+    });
+
+    expect(loaded.hits).toBeCloseTo(4.5);
+    expect(loaded.averageDamage).toBeGreaterThan(standard.averageDamage);
+  });
+
+  it("ignores invalid multihit shapes", () => {
+    const estimate = calculateRoughDamage({
+      ...baseInput,
+      multihit: [0, 0],
+    });
+    expect(estimate.hits).toBe(1);
+  });
+});

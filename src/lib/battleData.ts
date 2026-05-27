@@ -14,6 +14,8 @@ export type ItemRecord = {
   desc: string;
 };
 
+export type MoveMultihit = number | [number, number];
+
 export type MoveRecord = {
   id: string;
   name: string;
@@ -24,9 +26,27 @@ export type MoveRecord = {
   pp: number;
   priority: number;
   target: string;
+  multihit?: MoveMultihit | null;
   shortDesc: string;
   desc: string;
 };
+
+export function getMoveMultihit(move: Pick<MoveRecord, "multihit">): MoveMultihit | null {
+  const value = move.multihit;
+
+  if (typeof value === "number" && Number.isFinite(value) && value > 1) {
+    return value;
+  }
+
+  if (Array.isArray(value) && value.length === 2) {
+    const [min, max] = value;
+    if (Number.isFinite(min) && Number.isFinite(max) && max > 1 && max >= min) {
+      return min === max ? max : [min, max];
+    }
+  }
+
+  return null;
+}
 
 export type BattleData = {
   meta: {

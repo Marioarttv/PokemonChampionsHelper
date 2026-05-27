@@ -204,23 +204,51 @@ const items = Dex.items
     desc: item.desc || "",
   }));
 
+const PER_HIT_BASE_POWER_OVERRIDES = {
+  tripleaxel: 40,
+  triplekick: 20,
+};
+
+function normalizeMultihit(raw) {
+  if (typeof raw === "number" && Number.isFinite(raw) && raw > 1) {
+    return raw;
+  }
+
+  if (Array.isArray(raw) && raw.length === 2) {
+    const min = Number(raw[0]);
+    const max = Number(raw[1]);
+
+    if (Number.isFinite(min) && Number.isFinite(max) && max > 1 && max >= min) {
+      return min === max ? max : [min, max];
+    }
+  }
+
+  return null;
+}
+
 const moves = Dex.moves
   .all()
   .filter((move) => move.exists)
   .sort((a, b) => a.name.localeCompare(b.name))
-  .map((move) => ({
-    id: move.id,
-    name: move.name,
-    type: move.type,
-    category: move.category,
-    basePower: move.basePower,
-    accuracy: move.accuracy,
-    pp: move.pp,
-    priority: move.priority,
-    target: move.target,
-    shortDesc: move.shortDesc || "",
-    desc: move.desc || "",
-  }));
+  .map((move) => {
+    const multihit = normalizeMultihit(move.multihit);
+    const basePowerOverride = PER_HIT_BASE_POWER_OVERRIDES[move.id];
+
+    return {
+      id: move.id,
+      name: move.name,
+      type: move.type,
+      category: move.category,
+      basePower: basePowerOverride ?? move.basePower,
+      accuracy: move.accuracy,
+      pp: move.pp,
+      priority: move.priority,
+      target: move.target,
+      multihit,
+      shortDesc: move.shortDesc || "",
+      desc: move.desc || "",
+    };
+  });
 
 const championsLearnsetSpecies = species
   .filter((pokemon) => championsLegalSpeciesKeySet.has(toDexId(pokemon.baseSpecies || pokemon.name)))

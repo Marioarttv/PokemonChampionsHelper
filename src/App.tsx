@@ -50,6 +50,7 @@ import {
   type OpponentPresetRecord,
 } from "./lib/opponentMovePresets";
 import {
+  getMoveMultihit,
   getMovePokemonType,
   isSpreadTarget,
   loadBattleData,
@@ -167,6 +168,7 @@ import {
   listSavedTeams,
   saveTeam,
   type PersistedKnownMove,
+  type PersistedMoveMultihit,
   type PersistedOpenerSelection,
   type PersistedSavedAttack,
   type PersistedTeam,
@@ -404,6 +406,7 @@ type SingleDamageCalculatorPanelProps = {
   setDamageMoveConfigs: Dispatch<SetStateAction<Record<string, Partial<Record<string, DamageMoveConfig>>>>>;
   defenseMoveConfigs: Record<string, ManualDamageMoveConfig>;
   setDefenseMoveConfigs: Dispatch<SetStateAction<Record<string, ManualDamageMoveConfig>>>;
+  moveByKey: ReadonlyMap<string, MoveRecord>;
 };
 type OpenerSummary = {
   label: string;
@@ -521,6 +524,21 @@ function createSavedAttackId() {
   return `attack-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function normalizePersistedMultihit(
+  value: PersistedMoveMultihit | null | undefined,
+): PersistedMoveMultihit | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 1) {
+    return value;
+  }
+  if (Array.isArray(value) && value.length === 2) {
+    const [min, max] = value;
+    if (Number.isFinite(min) && Number.isFinite(max) && max > 1 && max >= min) {
+      return min === max ? max : [min, max];
+    }
+  }
+  return null;
+}
+
 function createSavedAttack(
   pokemon?: PokemonRecord | null,
   overrides: Partial<PersistedSavedAttack> = {},
@@ -534,6 +552,7 @@ function createSavedAttack(
     basePower: normalizeSavedMoveBasePower(overrides.basePower, label) ?? 80,
     category: overrides.category ?? getPreferredDamageCategory(pokemon),
     isSpreadMove: overrides.isSpreadMove ?? false,
+    multihit: normalizePersistedMultihit(overrides.multihit),
   };
 }
 
@@ -555,6 +574,7 @@ function createKnownMove(
     basePower: normalizeSavedMoveBasePower(overrides.basePower, name),
     category,
     isSpreadMove: Boolean(overrides.isSpreadMove),
+    multihit: normalizePersistedMultihit(overrides.multihit),
   };
 }
 
@@ -738,6 +758,8 @@ function sanitizeKnownMoves(
       continue;
     }
 
+    const resolvedMultihit = matchedMove ? getMoveMultihit(matchedMove) : normalizePersistedMultihit(move.multihit);
+
     deduped.set(
       normalizedKey,
       createKnownMove({
@@ -748,6 +770,7 @@ function sanitizeKnownMoves(
         basePower: resolvedCategory === "status" ? undefined : resolvedBasePower,
         category: resolvedCategory,
         isSpreadMove: matchedMove ? isSpreadTarget(matchedMove.target) : Boolean(move.isSpreadMove),
+        multihit: resolvedMultihit,
       }),
     );
   }
@@ -1089,6 +1112,7 @@ function sanitizeSavedAttacks(
         basePower,
         category,
         isSpreadMove: Boolean(attack.isSpreadMove),
+        multihit: normalizePersistedMultihit(attack.multihit),
       });
     })
     .filter((attack): attack is PersistedSavedAttack => attack !== null)
@@ -1114,6 +1138,7 @@ function sanitizeKnownMovesToSavedAttacks(
         basePower: move.basePower,
         category: move.category === "status" ? undefined : move.category,
         isSpreadMove: move.isSpreadMove,
+        multihit: move.multihit ?? null,
       })),
     pokemon,
     limit,
@@ -1169,6 +1194,7 @@ function buildPersistedKnownMovesFromDraftAttacks(
           ? (matchedMove.category.toLowerCase() as PersistedKnownMove["category"])
           : attack.category,
       isSpreadMove: matchedMove ? isSpreadTarget(matchedMove.target) : attack.isSpreadMove,
+      multihit: matchedMove ? getMoveMultihit(matchedMove) : normalizePersistedMultihit(attack.multihit),
     });
   }
 
@@ -1236,6 +1262,21 @@ function getResolvedAttackSpread(attack: PersistedSavedAttack) {
 
 function getResolvedAttackBasePower(attack: PersistedSavedAttack) {
   return normalizeSavedMoveBasePower(attack.basePower, attack.label) ?? (isLowKickMove(attack.label) ? 0 : null);
+}
+
+function getResolvedAttackMultihit(
+  attack: PersistedSavedAttack,
+  moveByKey?: ReadonlyMap<string, MoveRecord>,
+): PersistedMoveMultihit | null {
+  const stored = normalizePersistedMultihit(attack.multihit);
+  if (stored != null) {
+    return stored;
+  }
+  if (!moveByKey) {
+    return null;
+  }
+  const matched = getMoveRecordByName(attack.label, moveByKey);
+  return matched ? getMoveMultihit(matched) : null;
 }
 
 function formatMoveAccuracy(accuracy: number | true) {
@@ -1361,6 +1402,7 @@ function getBestDamageEstimateAgainstPokemon(
       basePower,
       category: getResolvedAttackCategory(attack, attackerPokemon),
       isSpreadMove: getResolvedAttackSpread(attack),
+      multihit: getResolvedAttackMultihit(attack) ?? null,
       weather: options.weather,
       terrain: options.terrain,
       attackerGrounded: options.attackerGrounded,
@@ -1715,6 +1757,7 @@ function getAutomaticDamageRows(options: {
       basePower,
       category,
       isSpreadMove,
+      multihit: getResolvedAttackMultihit(attack) ?? null,
       weather,
       terrain,
       attackerGrounded,
@@ -3103,6 +3146,7 @@ function buildTrainingOptimizerAttacks(options: {
         basePower,
         category: getResolvedAttackCategory(attack, row.pokemon),
         isSpreadMove: getResolvedAttackSpread(attack),
+        multihit: getResolvedAttackMultihit(attack) ?? null,
         attackerAbility,
         attackerAbilityName: row.moveset.abilityName,
         attackerItem,
@@ -3986,6 +4030,7 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
   setDamageMoveConfigs,
   defenseMoveConfigs,
   setDefenseMoveConfigs,
+  moveByKey,
 }: SingleDamageCalculatorPanelProps) {
   const selectedDamageSavedAttacks = attackerSlot?.savedAttacks ?? [];
   const selectedDamageEnemySavedAttacks = defenderEntry?.savedAttacks ?? [];
@@ -4130,6 +4175,7 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
                 basePower,
                 category: config.category,
                 isSpreadMove: config.isSpreadMove,
+                multihit: getResolvedAttackMultihit(attack, moveByKey) ?? null,
                 weather: damageWeather,
                 terrain: damageTerrain,
                 attackerGrounded: damageAttackerGrounded,
@@ -4244,6 +4290,7 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
               basePower,
               category,
               isSpreadMove,
+              multihit: getResolvedAttackMultihit(attack, moveByKey) ?? null,
               weather: damageWeather,
               terrain: damageTerrain,
               attackerGrounded: damageDefenderGrounded,
@@ -11547,6 +11594,7 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewP
                     basePower,
                     category: getResolvedAttackCategory(attack, attackerPokemon),
                     isSpreadMove: getResolvedAttackSpread(attack),
+                    multihit: getResolvedAttackMultihit(attack, moveByKey) ?? null,
                     weather: damageWeather,
                     terrain: damageTerrain,
                     attackerGrounded: isLikelyGrounded(attackerPokemon),
@@ -11735,6 +11783,7 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewP
       basePower: quickMoveBasePower,
       category: quickMove.category.toLowerCase() as DamageCategory,
       isSpreadMove: isSpreadTarget(quickMove.target),
+      multihit: getMoveMultihit(quickMove) ?? null,
       weather: damageWeather,
       terrain: damageTerrain,
       attackerGrounded: damageCalcMode === "attack" ? damageAttackerGrounded : damageDefenderGrounded,
@@ -14537,6 +14586,7 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewP
           setDamageMoveConfigs={setDamageMoveConfigs}
           defenseMoveConfigs={defenseMoveConfigs}
           setDefenseMoveConfigs={setDefenseMoveConfigs}
+          moveByKey={moveByKey}
         />
 
         <section className="damage-doubles-panel">
@@ -19791,6 +19841,32 @@ function MatchHistoryEditSelector({
 }
 
 const FEATURE_VISIBILITY_STORAGE_KEY = "pokemon-champions-helper-feature-visibility-v1";
+const HIDE_BRING_4_STORAGE_KEY = "pokemon-champions-helper-hide-bring-4-v1";
+
+function loadHideBring4Setting(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(HIDE_BRING_4_STORAGE_KEY);
+    return storedValue === "true";
+  } catch {
+    return false;
+  }
+}
+
+function saveHideBring4Setting(value: boolean) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(HIDE_BRING_4_STORAGE_KEY, value ? "true" : "false");
+  } catch {
+    // Settings are optional UI preferences; blocked storage should not break the app.
+  }
+}
 
 const CUSTOMIZABLE_FEATURES: FeatureDefinition[] = [
   {
@@ -19949,9 +20025,718 @@ type SettingsViewProps = {
   featureVisibility: FeatureVisibilitySettings;
   onToggleFeature: (featureId: HiddenFeatureId, visible: boolean) => void;
   onResetFeatures: () => void;
+  hideBring4: boolean;
+  onToggleHideBring4: (value: boolean) => void;
 };
 
-function SettingsView({ featureVisibility, onToggleFeature, onResetFeatures }: SettingsViewProps) {
+type SimpleEnemySlot = {
+  query: string;
+  pokemonId: string | null;
+  abilityName: string | null;
+  itemName: string | null;
+  moveNames: string[];
+  statSpread: ChampionsStatSpread | null;
+};
+
+function createEmptySimpleEnemySlot(): SimpleEnemySlot {
+  return {
+    query: "",
+    pokemonId: null,
+    abilityName: null,
+    itemName: null,
+    moveNames: [],
+    statSpread: null,
+  };
+}
+
+function createEmptySimpleEnemySlots(): SimpleEnemySlot[] {
+  return Array.from({ length: MAX_OPPONENT_SCOUT_SLOTS }, createEmptySimpleEnemySlot);
+}
+
+function SimpleEnemyTeamView() {
+  const [database, setDatabase] = useState<PokemonRecord[] | null>(null);
+  const [battleData, setBattleData] = useState<{
+    abilities: AbilityRecord[];
+    items: ItemRecord[];
+    moves: MoveRecord[];
+  } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [battleDataError, setBattleDataError] = useState<string | null>(null);
+
+  const [enemySlots, setEnemySlots] = useState<SimpleEnemySlot[]>(createEmptySimpleEnemySlots);
+  const [storageMessage, setStorageMessage] = useState<string | null>(null);
+  const [storageError, setStorageError] = useState<string | null>(null);
+
+  const [showdownImportText, setShowdownImportText] = useState("");
+  const [showdownImportOpen, setShowdownImportOpen] = useState(false);
+
+  const [showdownBridgeSnapshot, setShowdownBridgeSnapshot] = useState<ShowdownBridgeSnapshot | null>(null);
+  const [showdownBridgeStatus, setShowdownBridgeStatus] = useState<ShowdownBridgeStatus>("idle");
+  const [showdownBridgeMessage, setShowdownBridgeMessage] = useState("Extension not detected");
+  const [pendingShowdownEnemyImport, setPendingShowdownEnemyImport] = useState(false);
+
+  const requestShowdownSnapshot = () => {
+    if (typeof window === "undefined") return;
+    window.postMessage({ type: "PCH_REQUEST_SHOWDOWN_SNAPSHOT" }, window.location.origin);
+  };
+
+  useEffect(() => {
+    const handleShowdownBridgeMessage = (event: MessageEvent) => {
+      if (event.source !== window) return;
+      const data = event.data as {
+        type?: string;
+        snapshot?: ShowdownBridgeSnapshot;
+        status?: ShowdownBridgeStatus;
+        message?: string;
+      };
+
+      if (data?.type === "PCH_SHOWDOWN_SNAPSHOT" && data.snapshot?.source === "pokemon-showdown") {
+        setShowdownBridgeSnapshot(data.snapshot);
+        setShowdownBridgeStatus("ready");
+        setShowdownBridgeMessage("Live Showdown battle connected");
+        return;
+      }
+
+      if (data?.type === "PCH_SHOWDOWN_BRIDGE_STATUS") {
+        setShowdownBridgeStatus(data.status ?? "ready");
+        setShowdownBridgeMessage(data.message ?? "Showdown bridge status updated");
+      }
+    };
+
+    window.addEventListener("message", handleShowdownBridgeMessage);
+    requestShowdownSnapshot();
+    return () => window.removeEventListener("message", handleShowdownBridgeMessage);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    loadPokemonDatabase()
+      .then((db) => {
+        if (active) {
+          setDatabase(db.pokemon);
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setLoadError(error instanceof Error ? error.message : "Failed to load Pokemon database.");
+        }
+      });
+
+    loadBattleData()
+      .then((data) => {
+        if (active) {
+          setBattleData({
+            abilities: data.abilities,
+            items: data.items,
+            moves: data.moves,
+          });
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setBattleDataError(error instanceof Error ? error.message : "Failed to load move data.");
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const pokemonPool = useMemo(() => {
+    if (!database) return [] as PokemonRecord[];
+    return database.filter(
+      (pokemon) =>
+        isChampionsPlayableBaseForm(pokemon) ||
+        isChampionsMegaEntry(pokemon) ||
+        (pokemon.forme === null && !isChampionsSuppressedBaseForm(pokemon)),
+    );
+  }, [database]);
+
+  const pokemonByKey = useMemo(() => {
+    const map = new Map<string, PokemonRecord>();
+    for (const pokemon of pokemonPool) {
+      map.set(pokemon.id, pokemon);
+      map.set(pokemon.name.toLowerCase(), pokemon);
+      map.set(normalizePokemonNameKey(pokemon.name), pokemon);
+    }
+    return map;
+  }, [pokemonPool]);
+
+  const moveByKey = useMemo(() => {
+    const map = new Map<string, MoveRecord>();
+    for (const move of battleData?.moves ?? []) {
+      map.set(move.id, move);
+      map.set(move.name.toLowerCase(), move);
+    }
+    return map;
+  }, [battleData]);
+
+  const resolveSlotPokemon = (slot: SimpleEnemySlot): PokemonRecord | null => {
+    if (slot.pokemonId) {
+      const direct = pokemonByKey.get(slot.pokemonId);
+      if (direct) return direct;
+    }
+    const trimmed = slot.query.trim();
+    if (!trimmed) return null;
+    return (
+      pokemonByKey.get(trimmed) ??
+      pokemonByKey.get(trimmed.toLowerCase()) ??
+      pokemonByKey.get(normalizePokemonNameKey(trimmed)) ??
+      null
+    );
+  };
+
+  const updateEnemyQuery = (slotIndex: number, query: string) => {
+    setEnemySlots((current) =>
+      current.map((slot, index) => {
+        if (index !== slotIndex) return slot;
+        const trimmed = query.trim();
+        const matched =
+          pokemonByKey.get(trimmed) ??
+          pokemonByKey.get(trimmed.toLowerCase()) ??
+          pokemonByKey.get(normalizePokemonNameKey(trimmed)) ??
+          null;
+        const previousPokemonId = slot.pokemonId;
+        const nextPokemonId = matched ? matched.id : null;
+
+        if (previousPokemonId && previousPokemonId !== nextPokemonId) {
+          return {
+            query,
+            pokemonId: nextPokemonId,
+            abilityName: null,
+            itemName: null,
+            moveNames: [],
+            statSpread: null,
+          };
+        }
+
+        return {
+          ...slot,
+          query,
+          pokemonId: nextPokemonId,
+        };
+      }),
+    );
+  };
+
+  const clearEnemyTeam = () => {
+    setEnemySlots(createEmptySimpleEnemySlots());
+    setStorageMessage(null);
+    setStorageError(null);
+  };
+
+  const showdownBridgeImport = useMemo<ShowdownBridgeImportResult | null>(() => {
+    if (!showdownBridgeSnapshot || !database || !battleData) {
+      return null;
+    }
+    return showdownSnapshotToBattleInput(showdownBridgeSnapshot, {
+      pokemonEntries: database,
+      moveByKey,
+    });
+  }, [battleData, database, moveByKey, showdownBridgeSnapshot]);
+
+  const showdownEnemyImportCount = showdownBridgeImport?.input?.enemy.length ?? 0;
+
+  const showdownBridgeCapturedLabel = useMemo(() => {
+    if (!showdownBridgeSnapshot?.capturedAt) return "";
+    const capturedAt = new Date(showdownBridgeSnapshot.capturedAt);
+    if (Number.isNaN(capturedAt.getTime())) return "";
+    return capturedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }, [showdownBridgeSnapshot]);
+
+  const applyShowdownEnemyTeamImport = (importResult: ShowdownBridgeImportResult | null) => {
+    const enemyMembers = importResult?.input?.enemy ?? [];
+
+    if (enemyMembers.length === 0) {
+      return false;
+    }
+
+    const importedMembers = enemyMembers.slice(0, MAX_OPPONENT_SCOUT_SLOTS);
+    const filledSlots: SimpleEnemySlot[] = Array.from({ length: MAX_OPPONENT_SCOUT_SLOTS }, (_, index) => {
+      const member = importedMembers[index];
+      if (!member) return createEmptySimpleEnemySlot();
+      const pokemon = member.pokemon;
+      const moveNames = (member.moveNames ?? member.knownMoves?.map((move) => move.name ?? move.label) ?? []).filter(
+        (name): name is string => Boolean(name),
+      );
+      return {
+        query: pokemon.name,
+        pokemonId: pokemon.id,
+        abilityName: getResolvedFieldValue(member.abilityName ?? null),
+        itemName: getResolvedFieldValue(member.itemName ?? null),
+        moveNames,
+        statSpread: member.statSpread ?? null,
+      };
+    });
+
+    const warningParts: string[] = [];
+    if (enemyMembers.length > MAX_OPPONENT_SCOUT_SLOTS) {
+      warningParts.push(`ignored ${enemyMembers.length - MAX_OPPONENT_SCOUT_SLOTS} extra Pokemon`);
+    }
+    if (importResult?.unresolvedSpecies.length) {
+      warningParts.push(`couldn't match Pokemon: ${formatImportIssueList(importResult.unresolvedSpecies)}`);
+    }
+
+    setEnemySlots(filledSlots);
+    setPendingShowdownEnemyImport(false);
+    setStorageMessage(
+      `Imported ${importedMembers.length} enemy Pokemon from Showdown${
+        showdownBridgeCapturedLabel ? ` snapshot ${showdownBridgeCapturedLabel}` : ""
+      }${warningParts.length > 0 ? `; ${warningParts.join("; ")}.` : "."}`,
+    );
+    setStorageError(null);
+
+    return true;
+  };
+
+  const importShowdownEnemyTeam = () => {
+    if (!database || !battleData) {
+      setStorageError("The local Pokemon and move databases must finish loading before importing from Showdown.");
+      setStorageMessage(null);
+      return;
+    }
+
+    setPendingShowdownEnemyImport(true);
+    requestShowdownSnapshot();
+
+    if (showdownBridgeStatus === "error") {
+      setPendingShowdownEnemyImport(false);
+      setStorageError(showdownBridgeMessage || "Showdown bridge could not be reached.");
+      setStorageMessage(null);
+      return;
+    }
+
+    setStorageMessage("Requested a Showdown enemy snapshot. The enemy board will fill when the bridge responds.");
+    setStorageError(null);
+  };
+
+  useEffect(() => {
+    if (!pendingShowdownEnemyImport) return;
+
+    if (applyShowdownEnemyTeamImport(showdownBridgeImport)) {
+      return;
+    }
+
+    if (showdownBridgeImport) {
+      setPendingShowdownEnemyImport(false);
+      setStorageError(
+        showdownBridgeImport.unresolvedSpecies.length > 0
+          ? `No enemy Pokemon could be imported; couldn't match Pokemon: ${formatImportIssueList(
+              showdownBridgeImport.unresolvedSpecies,
+            )}.`
+          : showdownBridgeImport.summary || "The latest Showdown snapshot did not include any enemy Pokemon to import.",
+      );
+      setStorageMessage(null);
+      return;
+    }
+
+    if (showdownBridgeStatus === "waiting" || showdownBridgeStatus === "idle") {
+      setStorageMessage(
+        "Waiting for a Showdown battle snapshot. Keep a battle tab open with the bridge extension enabled.",
+      );
+      setStorageError(null);
+    } else if (showdownBridgeStatus === "error") {
+      setPendingShowdownEnemyImport(false);
+      setStorageError(showdownBridgeMessage || "Showdown bridge could not be reached.");
+      setStorageMessage(null);
+    }
+  }, [pendingShowdownEnemyImport, showdownBridgeImport, showdownBridgeMessage, showdownBridgeStatus]);
+
+  const importEnemyTeamFromShowdownText = () => {
+    const trimmed = showdownImportText.trim();
+    if (!trimmed) {
+      setStorageError("Paste a Pokemon Showdown export first.");
+      return;
+    }
+    if (!database || !battleData) {
+      setStorageError("The local Pokemon and move databases must finish loading before importing.");
+      return;
+    }
+
+    try {
+      const imported = importShowdownTeamText(trimmed, {
+        pokemonEntries: database,
+        moveByKey,
+        maxTeamSize: MAX_OPPONENT_SCOUT_SLOTS,
+        maxMovesPerSlot: 4,
+      });
+
+      if (imported.slots.length === 0) {
+        throw new Error("No Pokemon sets were found in the pasted Showdown text.");
+      }
+
+      const filledSlots: SimpleEnemySlot[] = Array.from({ length: MAX_OPPONENT_SCOUT_SLOTS }, (_, index) => {
+        const slot = imported.slots[index];
+        if (!slot || !slot.pokemonId) return createEmptySimpleEnemySlot();
+        const pokemon = pokemonByKey.get(slot.pokemonId);
+        if (!pokemon) return createEmptySimpleEnemySlot();
+        const moveNames = [
+          ...(slot.knownMoves ?? []).map((move) => move.name ?? move.label),
+          ...(slot.savedAttacks ?? []).map((attack) => attack.label),
+        ].filter((name, position, list) => Boolean(name) && list.indexOf(name) === position) as string[];
+        return {
+          query: pokemon.name,
+          pokemonId: pokemon.id,
+          abilityName: null,
+          itemName: getResolvedFieldValue(slot.itemName ?? null),
+          moveNames,
+          statSpread: slot.statSpread ?? null,
+        };
+      });
+
+      const warningParts: string[] = [];
+      if (imported.extraPokemonCount > 0) {
+        warningParts.push(`ignored ${imported.extraPokemonCount} extra Pokemon beyond the first ${MAX_OPPONENT_SCOUT_SLOTS}`);
+      }
+      if (imported.unknownMoves.length > 0) {
+        warningParts.push(`couldn't match moves: ${formatImportIssueList(imported.unknownMoves)}`);
+      }
+      if (imported.unresolvedSpecies.length > 0) {
+        warningParts.push(`couldn't match Pokemon: ${formatImportIssueList(imported.unresolvedSpecies)}`);
+      }
+
+      setEnemySlots(filledSlots);
+      setShowdownImportText("");
+      setShowdownImportOpen(false);
+      setStorageMessage(
+        `Imported ${imported.importedPokemonCount} enemy Pokemon from Showdown text${
+          warningParts.length > 0 ? `; ${warningParts.join("; ")}.` : "."
+        }`,
+      );
+      setStorageError(null);
+    } catch (error) {
+      setStorageError(error instanceof Error ? error.message : "Failed to import Showdown text.");
+    }
+  };
+
+  useEffect(() => {
+    if (!showdownImportOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setShowdownImportOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+
+    return () => {
+      window.removeEventListener("keydown", handleKey);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [showdownImportOpen]);
+
+  const loadedSlotCount = enemySlots.filter((slot) => resolveSlotPokemon(slot)).length;
+
+  return (
+    <>
+      <section className="team-builder-hero">
+        <div>
+          <p className="eyebrow">Enemy Scout · Simplified</p>
+          <h2>Log the opposing six</h2>
+          <p className="selector-note">
+            A streamlined version of the Team Builder with no bring-four logic or prediction. Type or import the six
+            Pokemon you are facing to keep a quick reference of their species, moves, abilities, and items.
+          </p>
+        </div>
+        <div className="team-builder-hero-side">
+          <div className="team-builder-meta">
+            <span>{loadedSlotCount} / {MAX_OPPONENT_SCOUT_SLOTS} loaded</span>
+            <span>{pokemonPool.length} available picks</span>
+          </div>
+        </div>
+      </section>
+
+      <section className="team-storage-panel">
+        <div className="team-storage-controls">
+          <div className="storage-button-row">
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={importShowdownEnemyTeam}
+              disabled={!database || !battleData}
+              title={
+                showdownEnemyImportCount > 0
+                  ? `Import ${showdownEnemyImportCount} enemy Pokemon from the latest Showdown snapshot`
+                  : "Ask the bridge extension for the enemy side from the open Showdown battle"
+              }
+            >
+              {pendingShowdownEnemyImport
+                ? "Waiting for Showdown"
+                : showdownEnemyImportCount > 0
+                  ? `Import Showdown Enemy (${showdownEnemyImportCount})`
+                  : "Import Showdown Enemy"}
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={clearEnemyTeam}
+              disabled={loadedSlotCount === 0}
+            >
+              Clear Enemy Team
+            </button>
+          </div>
+          <div className="showdown-transfer-grid">
+            <button
+              type="button"
+              className="showdown-import-trigger"
+              onClick={() => setShowdownImportOpen(true)}
+              aria-haspopup="dialog"
+              aria-expanded={showdownImportOpen}
+            >
+              <span className="showdown-import-trigger__text">
+                <span className="showdown-import-trigger__title">Pokemon Showdown Import</span>
+                <span className="showdown-import-trigger__hint">
+                  {showdownImportText.trim()
+                    ? `${showdownImportText.trim().length} chars pasted · click to review`
+                    : "Paste Showdown text to fill the enemy board"}
+                </span>
+              </span>
+              <span className="showdown-import-trigger__icon" aria-hidden="true">
+                ↙
+              </span>
+            </button>
+          </div>
+          {storageMessage ? <p className="storage-message">{storageMessage}</p> : null}
+          {storageError ? <p className="storage-message error">{storageError}</p> : null}
+          {loadError ? <p className="storage-message error">{loadError}</p> : null}
+          {battleDataError ? <p className="storage-message error">{battleDataError}</p> : null}
+        </div>
+      </section>
+
+      {showdownImportOpen && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="showdown-import-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="simple-enemy-showdown-import-title"
+              onClick={(event) => {
+                if (event.target === event.currentTarget) {
+                  setShowdownImportOpen(false);
+                }
+              }}
+            >
+              <div className="showdown-import-modal__dialog" role="document">
+                <header className="showdown-import-modal__header">
+                  <div className="showdown-import-modal__title">
+                    <span className="eyebrow">Enemy Import</span>
+                    <h3 id="simple-enemy-showdown-import-title">Paste Showdown enemy team</h3>
+                  </div>
+                  <button
+                    type="button"
+                    className="showdown-import-modal__close"
+                    onClick={() => setShowdownImportOpen(false)}
+                    aria-label="Close Showdown import dialog"
+                    title="Close"
+                  >
+                    ×
+                  </button>
+                </header>
+                <div className="showdown-import-modal__body">
+                  <textarea
+                    className="showdown-import-modal__textarea"
+                    value={showdownImportText}
+                    onChange={(event) => setShowdownImportText(event.target.value)}
+                    placeholder={"Paste a Pokemon Showdown export here.\n\nEach set should be separated by a blank line."}
+                    spellCheck={false}
+                  />
+                </div>
+                <footer className="showdown-import-modal__footer">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => setShowdownImportText("")}
+                    disabled={!showdownImportText}
+                  >
+                    Clear text
+                  </button>
+                  <div className="showdown-import-modal__footer-spacer" />
+                  <button type="button" className="secondary-button" onClick={() => setShowdownImportOpen(false)}>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={importEnemyTeamFromShowdownText}
+                    disabled={!showdownImportText.trim()}
+                  >
+                    Import enemy team
+                  </button>
+                </footer>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      <section className="board-panel opponent-scout-panel">
+        <div className="opponent-scout-header">
+          <div>
+            <p className="eyebrow">Opponent Scout</p>
+            <h2>Enemy board</h2>
+          </div>
+          <div className="opponent-scout-actions">
+            <span className="lead-available-count">
+              {loadedSlotCount} / {MAX_OPPONENT_SCOUT_SLOTS} loaded
+            </span>
+          </div>
+        </div>
+
+        <div className="opponent-search-grid">
+          {enemySlots.map((slot, slotIndex) => (
+            <label key={`simple-enemy-slot-${slotIndex}`} className="opponent-search">
+              <span>Enemy {slotIndex + 1}</span>
+              <input
+                list="simple-enemy-pokemon-options"
+                className="team-pokemon-input"
+                placeholder={database ? "Search Pokemon" : "Loading local database..."}
+                value={slot.query}
+                onChange={(event) => updateEnemyQuery(slotIndex, event.target.value)}
+                disabled={!database}
+              />
+            </label>
+          ))}
+        </div>
+
+        <div className="simple-enemy-grid">
+          {enemySlots.map((slot, slotIndex) => {
+            const pokemon = resolveSlotPokemon(slot);
+            if (!pokemon) {
+              const trimmed = slot.query.trim();
+              return (
+                <article key={`simple-enemy-card-${slotIndex}`} className="enemy-card simple-enemy-card empty">
+                  <div className="enemy-card-header">
+                    <div className="opponent-card-top">
+                      <span className="eyebrow">Enemy {slotIndex + 1}</span>
+                    </div>
+                  </div>
+                  <p className="selector-note" style={{ margin: 0 }}>
+                    {trimmed
+                      ? `No match for "${trimmed}". Pick from the suggestions or import a team.`
+                      : "Type a Pokemon name or import a Showdown team to populate this slot."}
+                  </p>
+                </article>
+              );
+            }
+
+            const types = pokemon.types ?? [];
+            const fallbackAbility = slot.abilityName ?? getPokemonAbilityNames(pokemon)[0] ?? null;
+            const computed = getChampionsComputedStats(
+              pokemon,
+              slot.statSpread
+                ? {
+                    spread: normalizeChampionsStatSpread(
+                      slot.statSpread,
+                      getDefaultChampionsStatSpreadForPokemon(pokemon),
+                    ),
+                  }
+                : undefined,
+            );
+            const spreadLabel = slot.statSpread
+              ? `${getChampionsNatureLabel(slot.statSpread.nature)} · ${CHAMPIONS_STAT_ORDER.map(
+                  (statId) => `${statId.toUpperCase()} ${slot.statSpread!.statPoints[statId]}`,
+                ).join(" / ")}`
+              : "Default spread";
+
+            return (
+              <article key={`simple-enemy-card-${slotIndex}`} className="enemy-card simple-enemy-card">
+                <div className="enemy-card-header">
+                  <div className="opponent-card-top">
+                    <PokemonSprite pokemon={pokemon} className="opponent-card-sprite" />
+                    <div>
+                      <span className="eyebrow">Enemy {slotIndex + 1}</span>
+                      <h3>{pokemon.name}</h3>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="team-type-list">
+                  {types.map((type) => {
+                    const normalizedType = TYPE_ORDER.find(
+                      (candidate) => candidate.toLowerCase() === type.toLowerCase(),
+                    );
+                    if (!normalizedType) return null;
+                    return (
+                      <span
+                        key={`simple-enemy-type-${slotIndex}-${normalizedType}`}
+                        className="inline-type-pill"
+                        style={
+                          {
+                            "--type-color": TYPE_META[normalizedType].color,
+                            "--type-accent": TYPE_META[normalizedType].accent,
+                          } as CSSProperties
+                        }
+                      >
+                        {TYPE_META[normalizedType].label}
+                      </span>
+                    );
+                  })}
+                </div>
+
+                <div className="simple-enemy-meta">
+                  <div>
+                    <span>Ability</span>
+                    <strong>{fallbackAbility ?? "Unknown"}</strong>
+                  </div>
+                  <div>
+                    <span>Item</span>
+                    <strong>{slot.itemName ?? "Unknown"}</strong>
+                  </div>
+                  <div>
+                    <span>Spread</span>
+                    <strong>{spreadLabel}</strong>
+                  </div>
+                </div>
+
+                <div className="pokemon-stats-grid compact">
+                  {CHAMPIONS_STAT_ORDER.map((statId) => (
+                    <div key={`simple-enemy-stat-${slotIndex}-${statId}`} className="pokemon-stat-chip">
+                      <strong>{statId.toUpperCase()}</strong>
+                      <em>{computed[statId]}</em>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="simple-enemy-moves">
+                  <span className="lead-section-label cover">Known moves</span>
+                  {slot.moveNames.length > 0 ? (
+                    <ul>
+                      {slot.moveNames.slice(0, 4).map((moveName, moveIndex) => (
+                        <li key={`simple-enemy-move-${slotIndex}-${moveIndex}`}>{moveName}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="selector-note" style={{ margin: 0 }}>
+                      No moves logged yet. Import a Showdown team to capture them.
+                    </p>
+                  )}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+
+      <datalist id="simple-enemy-pokemon-options">
+        {pokemonPool.map((pokemon) => (
+          <option key={pokemon.id} value={pokemon.name} />
+        ))}
+      </datalist>
+    </>
+  );
+}
+
+function SettingsView({
+  featureVisibility,
+  onToggleFeature,
+  onResetFeatures,
+  hideBring4,
+  onToggleHideBring4,
+}: SettingsViewProps) {
   const hiddenCount = CUSTOMIZABLE_FEATURES.filter((feature) => !isFeatureVisible(featureVisibility, feature.id)).length;
   const groups: Array<FeatureDefinition["group"]> = ["Main pages", "Team Builder tools"];
 
@@ -20007,6 +20792,24 @@ function SettingsView({ featureVisibility, onToggleFeature, onResetFeatures }: S
                 </label>
               );
             })}
+            {group === "Team Builder tools" ? (
+              <label className={`settings-toggle-card ${hideBring4 ? "visible" : "hidden"}`}>
+                <input
+                  type="checkbox"
+                  checked={hideBring4}
+                  onChange={(event) => onToggleHideBring4(event.target.checked)}
+                />
+                <span className="settings-toggle-switch" aria-hidden="true" />
+                <span className="settings-toggle-copy">
+                  <strong>Hide Bring 4</strong>
+                  <small>
+                    Replace the Team Builder with a simplified enemy-only board (no bring-four logic or prediction).
+                    Useful when you only want to log or import the opposing six.
+                  </small>
+                </span>
+                <span className="settings-toggle-state">{hideBring4 ? "Enabled" : "Disabled"}</span>
+              </label>
+            ) : null}
           </div>
         </section>
       ))}
@@ -20018,6 +20821,7 @@ function App() {
   const [siteMode, setSiteMode] = useState<SiteMode>("calculator");
   const [teamBuilderResetKey, setTeamBuilderResetKey] = useState(0);
   const [featureVisibility, setFeatureVisibility] = useState<FeatureVisibilitySettings>(loadFeatureVisibilitySettings);
+  const [hideBring4, setHideBring4] = useState<boolean>(loadHideBring4Setting);
   const visibleSiteSections = useMemo(
     () =>
       SITE_SECTIONS.filter(
@@ -20035,6 +20839,10 @@ function App() {
   useEffect(() => {
     saveFeatureVisibilitySettings(featureVisibility);
   }, [featureVisibility]);
+
+  useEffect(() => {
+    saveHideBring4Setting(hideBring4);
+  }, [hideBring4]);
 
   const updateFeatureVisibility = (featureId: HiddenFeatureId, visible: boolean) => {
     setFeatureVisibility((current) => ({
@@ -20101,11 +20909,15 @@ function App() {
         {siteMode === "calculator" ? (
           <CalculatorView />
         ) : siteMode === "team" ? (
-          <TeamBuilderView
-            key={teamBuilderResetKey}
-            featureVisibility={featureVisibility}
-            onStartNewTeam={() => setTeamBuilderResetKey((value) => value + 1)}
-          />
+          hideBring4 ? (
+            <SimpleEnemyTeamView />
+          ) : (
+            <TeamBuilderView
+              key={teamBuilderResetKey}
+              featureVisibility={featureVisibility}
+              onStartNewTeam={() => setTeamBuilderResetKey((value) => value + 1)}
+            />
+          )
         ) : siteMode === "battle" ? (
           <BattleArenaPage />
         ) : siteMode === "movesets" ? (
@@ -20123,6 +20935,8 @@ function App() {
             featureVisibility={featureVisibility}
             onToggleFeature={updateFeatureVisibility}
             onResetFeatures={resetFeatureVisibility}
+            hideBring4={hideBring4}
+            onToggleHideBring4={setHideBring4}
           />
         ) : (
           <MatchHistoryView />

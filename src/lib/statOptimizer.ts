@@ -4,6 +4,7 @@ import {
   type DamageCategory,
   type DamageTerrain,
   type DamageWeather,
+  type MultihitInput,
 } from "./damage";
 import {
   CHAMPIONS_MAX_STAT_POINTS_PER_STAT,
@@ -32,6 +33,7 @@ export type TrainingOptimizerAttack = {
   basePower: number;
   category: DamageCategory;
   isSpreadMove: boolean;
+  multihit?: MultihitInput | null;
   attackerAbility?: DamageAbilityId;
   attackerAbilityName?: string | null;
   attackerItem?: DamageItemId;
@@ -243,6 +245,7 @@ function buildThreatDetail(options: {
     basePower: attack.basePower,
     category: attack.category,
     isSpreadMove: attack.isSpreadMove,
+    multihit: attack.multihit ?? null,
     weather: settings.weather,
     terrain: settings.terrain,
     attackerGrounded: attack.attackerGrounded ?? true,

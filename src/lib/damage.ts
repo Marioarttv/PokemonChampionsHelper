@@ -29,6 +29,8 @@ export type DamageWeather = "none" | "sun" | "rain" | "sand" | "snow";
 export type DamageTerrain = "none" | "electric" | "grassy" | "psychic" | "misty";
 export type DamageBattleRole = "attacker" | "defender";
 
+export type MultihitInput = number | [number, number];
+
 export type DamageEstimateInput = {
   attacker: PokemonRecord;
   defender: PokemonRecord;
@@ -37,6 +39,7 @@ export type DamageEstimateInput = {
   basePower: number;
   category: DamageCategory;
   isSpreadMove: boolean;
+  multihit?: MultihitInput | null;
   weather?: DamageWeather;
   terrain?: DamageTerrain;
   attackerGrounded?: boolean;
@@ -66,6 +69,11 @@ export type DamageEstimate = {
   minPercent: number;
   maxPercent: number;
   averagePercent: number;
+  hits: number;
+  hitRange: { min: number; max: number };
+  perHitMinDamage: number;
+  perHitMaxDamage: number;
+  perHitAverageDamage: number;
   attackStat: number;
   defenseStat: number;
   defenderHp: number;
@@ -265,6 +273,64 @@ export function resolveLowKickDamageInput({
   };
 }
 
+export function normalizeMultihitInput(multihit: MultihitInput | null | undefined): MultihitInput | null {
+  if (typeof multihit === "number" && Number.isFinite(multihit) && multihit > 1) {
+    return multihit;
+  }
+
+  if (Array.isArray(multihit) && multihit.length === 2) {
+    const [min, max] = multihit;
+    if (Number.isFinite(min) && Number.isFinite(max) && max > 1 && max >= min) {
+      return min === max ? max : [min, max];
+    }
+  }
+
+  return null;
+}
+
+export function getMultihitHitRange(multihit: MultihitInput | null | undefined): { min: number; max: number } {
+  const normalized = normalizeMultihitInput(multihit);
+  if (normalized == null) {
+    return { min: 1, max: 1 };
+  }
+  if (typeof normalized === "number") {
+    return { min: normalized, max: normalized };
+  }
+  return { min: normalized[0], max: normalized[1] };
+}
+
+export function getExpectedHits(
+  multihit: MultihitInput | null | undefined,
+  options: { ability?: DamageAbilityId; item?: DamageItemId } = {},
+): number {
+  const normalized = normalizeMultihitInput(multihit);
+  if (normalized == null) {
+    return 1;
+  }
+
+  if (typeof normalized === "number") {
+    return normalized;
+  }
+
+  const [min, max] = normalized;
+
+  if (options.ability === "skilllink") {
+    return max;
+  }
+
+  if (options.item === "loadeddice") {
+    // Loaded Dice forces variable-hit moves into the top of their range (4-5 for 2-5 moves).
+    return (Math.max(min, max - 1) + max) / 2;
+  }
+
+  // Showdown's roll distribution for 2-5 hit moves: 35% 2, 35% 3, 15% 4, 15% 5 ≈ 3.10 avg.
+  if (min === 2 && max === 5) {
+    return 3.1;
+  }
+
+  return (min + max) / 2;
+}
+
 export function resolveDamageMoveInput({
   attackType,
   basePower,
@@ -317,6 +383,7 @@ export function calculateRoughDamage({
   basePower,
   category,
   isSpreadMove,
+  multihit = null,
   weather = "none",
   terrain = "none",
   attackerGrounded = true,
@@ -455,9 +522,18 @@ export function calculateRoughDamage({
     itemMultiplier *
     helpingHandMultiplier *
     screenMultiplier;
-  const minDamage = Math.floor(baseDamage * modifier * MIN_RANDOM_MULTIPLIER);
-  const maxDamage = Math.floor(baseDamage * modifier * MAX_RANDOM_MULTIPLIER);
-  const averageDamage = Math.floor(baseDamage * modifier * AVG_RANDOM_MULTIPLIER);
+  const perHitMinDamage = Math.floor(baseDamage * modifier * MIN_RANDOM_MULTIPLIER);
+  const perHitMaxDamage = Math.floor(baseDamage * modifier * MAX_RANDOM_MULTIPLIER);
+  const perHitAverageDamage = Math.floor(baseDamage * modifier * AVG_RANDOM_MULTIPLIER);
+  const normalizedMultihit = normalizeMultihitInput(multihit);
+  const hits = getExpectedHits(normalizedMultihit, {
+    ability: attackerAbility,
+    item: attackerItem,
+  });
+  const hitRange = getMultihitHitRange(normalizedMultihit);
+  const minDamage = Math.floor(perHitMinDamage * hits);
+  const maxDamage = Math.floor(perHitMaxDamage * hits);
+  const averageDamage = Math.floor(perHitAverageDamage * hits);
 
   return {
     inputBasePower: basePower,
@@ -469,6 +545,11 @@ export function calculateRoughDamage({
     minPercent: (minDamage / defenderHp) * 100,
     maxPercent: (maxDamage / defenderHp) * 100,
     averagePercent: (averageDamage / defenderHp) * 100,
+    hits,
+    hitRange,
+    perHitMinDamage,
+    perHitMaxDamage,
+    perHitAverageDamage,
     attackStat,
     defenseStat,
     defenderHp,

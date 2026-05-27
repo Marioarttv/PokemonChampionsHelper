@@ -6,6 +6,8 @@ export type PersistedAttackTypeSpreadDefaults = Partial<Record<PokemonType, bool
 export type PersistedMoveCategory = "physical" | "special" | "status";
 export type PersistedAttackCategory = Extract<PersistedMoveCategory, "physical" | "special">;
 
+export type PersistedMoveMultihit = number | [number, number];
+
 export type PersistedKnownMove = {
   id: string;
   name?: string;
@@ -14,6 +16,7 @@ export type PersistedKnownMove = {
   basePower?: number;
   category?: PersistedMoveCategory;
   isSpreadMove?: boolean;
+  multihit?: PersistedMoveMultihit | null;
 };
 
 export type PersistedSavedAttack = {
@@ -23,6 +26,7 @@ export type PersistedSavedAttack = {
   basePower?: number;
   category?: PersistedAttackCategory;
   isSpreadMove?: boolean;
+  multihit?: PersistedMoveMultihit | null;
 };
 
 export type PersistedTeamSlot = {

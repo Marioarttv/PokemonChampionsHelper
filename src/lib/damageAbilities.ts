@@ -44,7 +44,8 @@ export type DamageAbilityId =
   | "sapsipper"
   | "eartheater"
   | "bulletproof"
-  | "soundproof";
+  | "soundproof"
+  | "skilllink";
 
 export type DamageAbilityOption = {
   id: DamageAbilityId;
@@ -293,6 +294,12 @@ const DAMAGE_ABILITY_OPTIONS: DamageAbilityOption[] = [
     label: "Soundproof",
     roles: ["defender"],
     description: "Grants immunity to supported sound moves.",
+  },
+  {
+    id: "skilllink",
+    label: "Skill Link",
+    roles: ["attacker"],
+    description: "Variable-hit moves always hit the maximum number of times.",
   },
 ];
 

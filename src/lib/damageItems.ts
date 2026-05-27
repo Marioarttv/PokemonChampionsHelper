@@ -51,7 +51,8 @@ export type DamageItemId =
   | "colburberry"
   | "babiriberry"
   | "roseliberry"
-  | "chilanberry";
+  | "chilanberry"
+  | "loadeddice";
 
 export type DamageItemOption = {
   id: DamageItemId;
@@ -110,6 +111,12 @@ const DAMAGE_ITEM_OPTIONS: DamageItemOption[] = [
   { id: "babiriberry", label: "Babiri Berry", roles: ["defender"], description: "Halves one super-effective Steel hit." },
   { id: "roseliberry", label: "Roseli Berry", roles: ["defender"], description: "Halves one super-effective Fairy hit." },
   { id: "chilanberry", label: "Chilan Berry", roles: ["defender"], description: "Halves one Normal hit." },
+  {
+    id: "loadeddice",
+    label: "Loaded Dice",
+    roles: ["attacker"],
+    description: "Variable-hit moves (e.g., Rock Blast, Bullet Seed) hit 4-5 times instead of 2-5.",
+  },
 ];
 
 const DAMAGE_ITEM_BY_ID = new Map(DAMAGE_ITEM_OPTIONS.map((option) => [option.id, option] as const));
