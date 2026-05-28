@@ -227,6 +227,7 @@ type HiddenFeatureId =
   | "trainingOptimizer"
   | "matchHistory"
   | "teamPreview"
+  | "doublesThreatBoard"
   | "battleEngine";
 type FeatureVisibilitySettings = Record<HiddenFeatureId, boolean>;
 type FeatureDefinition = {
@@ -8387,6 +8388,7 @@ function EnemyStatSpreadEditorModal({
 
 function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewProps) {
   const showTeamPreviewFeature = isFeatureVisible(featureVisibility, "teamPreview");
+  const showDoublesThreatBoardFeature = isFeatureVisible(featureVisibility, "doublesThreatBoard");
   const showBattleEngineFeature = isFeatureVisible(featureVisibility, "battleEngine");
   const showBattleIntelFeature = isFeatureVisible(featureVisibility, "battleIntel");
   const [teamMatrixMode, setTeamMatrixMode] = useState<TeamMatrixMode>("defense");
@@ -14623,445 +14625,446 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewP
           moveByKey={moveByKey}
         />
 
-        <section className="damage-doubles-panel">
-          <div className="board-header">
-            <div>
-              <p className="eyebrow">2v2 Threat Board</p>
-              <h2>See the biggest hit on each slot</h2>
-            </div>
-            <div className="damage-assumption-row">
-              <span className="damage-assumption-pill">Uses current weather / terrain / stage settings</span>
-              <span className="damage-assumption-pill">Shows each attacker’s best single hit</span>
-              <span className="damage-assumption-pill">Turn order uses Speed plus Tailwind / Trick Room</span>
-            </div>
-          </div>
-
-          <div className="damage-doubles-lineup-grid">
-            <article className="damage-doubles-lineup ally">
-              <div className="damage-doubles-lineup-topbar">
-                <div className="damage-doubles-lineup-copy">
-                  <p className="eyebrow">My Side</p>
-                  <p className="selector-note">
-                    Bring 1 and Bring 2 from the current bring order seed Slot A and Slot B automatically. Tap two
-                    allies to override.
-                  </p>
-                </div>
-                <div className="damage-doubles-lineup-actions">
-                  <div className="selected-slots" aria-label="Selected allies">
-                    {(["A", "B"] as const).map((rankLabel, rankIndex) => {
-                      const slotIndex = doublesAllySelection[rankIndex];
-                      const display = getThreatBoardAllyDisplay(slotIndex);
-                      const pokemon = display?.pokemon ?? null;
-                      return (
-                        <div
-                          key={`doubles-ally-selected-${rankLabel}`}
-                          className={`selected-slot doubles-lineup-selected ${pokemon ? "filled" : ""} ${
-                            display && display.formOptions.length > 1 ? "has-form-toggle" : ""
-                          }`}
-                        >
-                          <div className="doubles-lineup-selected-main">
-                            <span className="doubles-lineup-selected-rank">{rankLabel}</span>
-                            {pokemon ? (
-                              <>
-                                <PokemonSprite pokemon={pokemon} className="doubles-lineup-selected-sprite" />
-                                <span className="doubles-lineup-selected-name">{pokemon.name}</span>
-                              </>
-                            ) : (
-                              <span className="doubles-lineup-selected-empty">Empty</span>
-                            )}
-                          </div>
-                          {display ? (
-                            renderThreatBoardFormControls({
-                              side: "ally",
-                              slotIndex: display.slotIndex,
-                              basePokemon: display.basePokemon,
-                              pokemon: display.pokemon,
-                              formOptions: display.formOptions,
-                              compact: true,
-                            })
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="damage-doubles-lineup-action-buttons">
-                    <button
-                      type="button"
-                      className="reset-button"
-                      onClick={() => setDoublesAllySelection([null, null])}
-                      disabled={doublesAllyMembers.length === 0}
-                    >
-                      Clear
-                    </button>
-                  </div>
-                </div>
+        {showDoublesThreatBoardFeature ? (
+          <section className="damage-doubles-panel">
+            <div className="board-header">
+              <div>
+                <p className="eyebrow">2v2 Threat Board</p>
+                <h2>See the biggest hit on each slot</h2>
               </div>
+              <div className="damage-assumption-row">
+                <span className="damage-assumption-pill">Uses current weather / terrain / stage settings</span>
+                <span className="damage-assumption-pill">Shows each attacker’s best single hit</span>
+                <span className="damage-assumption-pill">Turn order uses Speed plus Tailwind / Trick Room</span>
+              </div>
+            </div>
 
-              <div className="doubles-lineup-track" role="list" aria-label="Team roster">
-                {battleEngineSelectableAllySlotIndices.map((slotIndex) => {
-                  const slot = team[slotIndex];
-                  const selectionRank = doublesAllySelection.indexOf(slotIndex);
-                  const isSelected = selectionRank !== -1;
-                  const display = getThreatBoardAllyDisplay(slotIndex);
-                  const pokemon = display?.pokemon ?? slot.pokemon;
-
-                  return (
-                    <div key={`doubles-ally-entry-${slotIndex}`} className="doubles-lineup-entry" role="listitem">
+            <div className="damage-doubles-lineup-grid">
+              <article className="damage-doubles-lineup ally">
+                <div className="damage-doubles-lineup-topbar">
+                  <div className="damage-doubles-lineup-copy">
+                    <p className="eyebrow">My Side</p>
+                    <p className="selector-note">
+                      Bring 1 and Bring 2 from the current bring order seed Slot A and Slot B automatically. Tap two
+                      allies to override.
+                    </p>
+                  </div>
+                  <div className="damage-doubles-lineup-actions">
+                    <div className="selected-slots" aria-label="Selected allies">
+                      {(["A", "B"] as const).map((rankLabel, rankIndex) => {
+                        const slotIndex = doublesAllySelection[rankIndex];
+                        const display = getThreatBoardAllyDisplay(slotIndex);
+                        const pokemon = display?.pokemon ?? null;
+                        return (
+                          <div
+                            key={`doubles-ally-selected-${rankLabel}`}
+                            className={`selected-slot doubles-lineup-selected ${pokemon ? "filled" : ""} ${
+                              display && display.formOptions.length > 1 ? "has-form-toggle" : ""
+                            }`}
+                          >
+                            <div className="doubles-lineup-selected-main">
+                              <span className="doubles-lineup-selected-rank">{rankLabel}</span>
+                              {pokemon ? (
+                                <>
+                                  <PokemonSprite pokemon={pokemon} className="doubles-lineup-selected-sprite" />
+                                  <span className="doubles-lineup-selected-name">{pokemon.name}</span>
+                                </>
+                              ) : (
+                                <span className="doubles-lineup-selected-empty">Empty</span>
+                              )}
+                            </div>
+                            {display ? (
+                              renderThreatBoardFormControls({
+                                side: "ally",
+                                slotIndex: display.slotIndex,
+                                basePokemon: display.basePokemon,
+                                pokemon: display.pokemon,
+                                formOptions: display.formOptions,
+                                compact: true,
+                              })
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="damage-doubles-lineup-action-buttons">
                       <button
                         type="button"
-                        aria-pressed={isSelected}
-                        disabled={!pokemon}
-                        className={`doubles-lineup-token ally ${isSelected ? "selected" : ""} ${
-                          pokemon ? "" : "empty"
-                        }`}
-                        onClick={() => toggleDoublesAllySelection(slotIndex)}
-                        title={pokemon ? pokemon.name : `Slot ${slotIndex + 1} empty`}
+                        className="reset-button"
+                        onClick={() => setDoublesAllySelection([null, null])}
+                        disabled={doublesAllyMembers.length === 0}
                       >
-                        <span className="doubles-lineup-token-slot">Slot {slotIndex + 1}</span>
-                        <div className="doubles-lineup-token-body">
-                          {pokemon ? (
-                            <PokemonSprite pokemon={pokemon} className="doubles-lineup-token-sprite" />
-                          ) : (
-                            <div className="doubles-lineup-token-placeholder">?</div>
-                          )}
-                          <div className="doubles-lineup-token-info">
-                            <strong>{pokemon ? pokemon.name : "Empty"}</strong>
-                            <span>
-                              {pokemon
-                                ? pokemon.types.join(" / ")
-                                : loadError
-                                  ? "Unavailable"
-                                  : "Add in Team Builder"}
-                            </span>
-                          </div>
-                        </div>
-                        {isSelected ? (
-                          <span className="doubles-lineup-token-rank">{selectionRank === 0 ? "A" : "B"}</span>
-                        ) : null}
+                        Clear
                       </button>
-                      {display ? (
-                        renderThreatBoardFormControls({
-                          side: "ally",
-                          slotIndex: display.slotIndex,
-                          basePokemon: display.basePokemon,
-                          pokemon: display.pokemon,
-                          formOptions: display.formOptions,
-                        })
-                      ) : null}
                     </div>
-                  );
-                })}
-              </div>
-            </article>
-
-            <article className="damage-doubles-lineup enemy">
-              <div className="damage-doubles-lineup-topbar">
-                <div className="damage-doubles-lineup-copy">
-                  <p className="eyebrow">Enemy Side</p>
-                  <p className="selector-note">
-                    {enemyBring.hasConfirmedBring && enemyBring.eliminatedSlotIndices.length > 0
-                      ? `Confirmed enemy four. ${enemyBring.eliminatedSlotIndices.length} benched ${
-                          enemyBring.eliminatedSlotIndices.length === 1 ? "mon is" : "mons are"
-                        } removed from Battle Lab.`
-                      : enemyBring.hasConfirmedBring &&
-                          enemyBring.bringCount === 4 &&
-                          enemyBring.candidateSlotIndices.length === enemyBring.bringCount
-                        ? "Enemy roster is already limited to the brought four."
-                      : enemyBring.bringCount === 4 && enemyBring.knownBringSlotIndices.length > 0
-                        ? `Tracking enemy bring: ${enemyBring.knownBringSlotIndices.length}/4 seen. Once all four are known, the last two are removed automatically.`
-                        : "Pick the two current threats you want to compare against."}
-                  </p>
-                </div>
-                <div className="damage-doubles-lineup-actions">
-                  <div className="selected-slots" aria-label="Selected enemies">
-                    {(["A", "B"] as const).map((rankLabel, rankIndex) => {
-                      const slotIndex = doublesEnemySelection[rankIndex];
-                      const display = getThreatBoardEnemyDisplay(slotIndex);
-                      const pokemon = display?.pokemon ?? null;
-                      return (
-                        <div
-                          key={`doubles-enemy-selected-${rankLabel}`}
-                          className={`selected-slot doubles-lineup-selected enemy ${pokemon ? "filled" : ""} ${
-                            display && display.formOptions.length > 1 ? "has-form-toggle" : ""
-                          }`}
-                        >
-                          <div className="doubles-lineup-selected-main">
-                            <span className="doubles-lineup-selected-rank">{rankLabel}</span>
-                            {pokemon ? (
-                              <>
-                                <PokemonSprite pokemon={pokemon} className="doubles-lineup-selected-sprite" />
-                                <span className="doubles-lineup-selected-name">{pokemon.name}</span>
-                              </>
-                            ) : (
-                              <span className="doubles-lineup-selected-empty">Empty</span>
-                            )}
-                          </div>
-                          {display ? (
-                            renderThreatBoardFormControls({
-                              side: "enemy",
-                              slotIndex: display.slotIndex,
-                              basePokemon: display.basePokemon,
-                              pokemon: display.pokemon,
-                              formOptions: display.formOptions,
-                              compact: true,
-                            })
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="damage-doubles-lineup-action-buttons">
-                    <button
-                      type="button"
-                      className="reset-button"
-                      onClick={() => setDoublesEnemySelection([null, null])}
-                      disabled={doublesEnemyMembers.length === 0}
-                    >
-                      Clear
-                    </button>
-                    <button
-                      type="button"
-                      className="reset-button"
-                      onClick={() => setKnownEnemyBringSlotIndices([])}
-                      disabled={knownEnemyBringSlotIndices.length === 0}
-                    >
-                      Reset 4
-                    </button>
                   </div>
                 </div>
-              </div>
 
-              <div className="doubles-lineup-track" role="list" aria-label="Enemy roster">
-                {enemyBattleEntries.map((entry) => {
-                  const selectionRank = doublesEnemySelection.indexOf(entry.slotIndex);
-                  const isSelected = selectionRank !== -1;
-                  const display = getThreatBoardEnemyDisplay(entry.slotIndex);
-                  const pokemon = display?.pokemon ?? entry.pokemon;
-                  const runtimeState =
-                    display?.state ?? getBattleSimulatorMemberStateForPokemon("enemy", entry.slotIndex, entry.pokemon);
-                  const isFainted = runtimeState.hpPercent <= 0;
-                  const moveCount =
-                    entry.movesetSource === "custom"
-                      ? entry.savedAttacks.length
-                      : display?.moveset.allMoveNames.length ?? entry.presetMoveNames.length;
+                <div className="doubles-lineup-track" role="list" aria-label="Team roster">
+                  {battleEngineSelectableAllySlotIndices.map((slotIndex) => {
+                    const slot = team[slotIndex];
+                    const selectionRank = doublesAllySelection.indexOf(slotIndex);
+                    const isSelected = selectionRank !== -1;
+                    const display = getThreatBoardAllyDisplay(slotIndex);
+                    const pokemon = display?.pokemon ?? slot.pokemon;
 
-                  return (
-                    <div key={`doubles-enemy-entry-${entry.slotIndex}`} className="doubles-lineup-entry" role="listitem">
-                      <button
-                        type="button"
-                        aria-pressed={isSelected}
-                        disabled={!pokemon || isFainted}
-                        className={`doubles-lineup-token enemy ${isSelected ? "selected" : ""} ${
-                          pokemon ? "" : "empty"
-                        }`}
-                        onClick={() => toggleDoublesEnemySelection(entry.slotIndex)}
-                        title={
-                          pokemon
-                            ? isFainted
-                              ? `${pokemon.name} fainted`
-                              : pokemon.name
-                            : `Enemy ${entry.slotIndex + 1} empty`
-                        }
-                      >
-                        <span className="doubles-lineup-token-slot">Enemy {entry.slotIndex + 1}</span>
-                        <div className="doubles-lineup-token-body">
-                          {pokemon ? (
-                            <PokemonSprite pokemon={pokemon} className="doubles-lineup-token-sprite" />
-                          ) : (
-                            <div className="doubles-lineup-token-placeholder">?</div>
-                          )}
-                          <div className="doubles-lineup-token-info">
-                            <strong>{pokemon ? pokemon.name : "Empty"}</strong>
-                            <span>
-                              {pokemon
-                                ? isFainted
-                                  ? "Fainted"
-                                  : moveCount > 0
-                                    ? `${pokemon.types.join(" / ")} · ${moveCount} ${
-                                        moveCount === 1 ? "move" : "moves"
-                                      }`
-                                    : pokemon.types.join(" / ")
-                                : "Add above"}
-                            </span>
-                          </div>
-                        </div>
-                        {isSelected ? (
-                          <span className="doubles-lineup-token-rank">{selectionRank === 0 ? "A" : "B"}</span>
-                        ) : null}
-                      </button>
-                      {display && !isFainted ? (
-                        renderThreatBoardFormControls({
-                          side: "enemy",
-                          slotIndex: display.slotIndex,
-                          basePokemon: display.basePokemon,
-                          pokemon: display.pokemon,
-                          formOptions: display.formOptions,
-                        })
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-            </article>
-          </div>
-
-          {selectedDoublesEnemyEntries.length > 0 ? (
-            <section className="damage-doubles-block damage-doubles-scout-panel">
-              <div className="coverage-preview-header">
-                <p className="eyebrow">Selected Enemy Scouting</p>
-                <span>{selectedDoublesEnemyEntries.length} shown</span>
-              </div>
-
-              <div className="damage-doubles-scout-grid">
-                {selectedDoublesEnemyEntries.map((entry) => {
-                  const display = getThreatBoardEnemyDisplay(entry.slotIndex);
-                  const pokemon = display?.pokemon ?? entry.pokemon;
-                  const importedMoveNames = display?.moveset.allMoveNames ?? entry.presetMoveNames;
-                  const abilityName = display?.moveset.abilityName ?? entry.abilityName;
-                  const itemName = entry.itemName ?? display?.moveset.itemName ?? null;
-                  const displayedMoveEntries =
-                    entry.movesetSource === "custom" && entry.savedAttacks.length > 0
-                      ? entry.savedAttacks.map((attack) => {
-                          const name = getAttackLabel(attack);
-                          return {
-                            name,
-                            move: getMoveRecordByName(name, moveByKey),
-                          };
-                        })
-                      : importedMoveNames.map((name) => ({
-                          name,
-                          move: getMoveRecordByName(name, moveByKey),
-                        }));
-
-                  return (
-                    <article key={`doubles-enemy-pool-${entry.slotIndex}`} className="damage-doubles-scout-card">
-                      <div className="damage-doubles-scout-head">
-                        <div className="damage-doubles-scout-identity">
-                          <PokemonSprite pokemon={pokemon} className="damage-side-sprite" />
-                          <div>
-                            <strong>{pokemon.name}</strong>
-                            <p>{entry.movesetSource === "custom" ? "Custom set" : "Imported set"}</p>
-                          </div>
-                        </div>
-                        <span className="mini-type-pill neutral-pill">
-                          {displayedMoveEntries.length} move{displayedMoveEntries.length === 1 ? "" : "s"}
-                        </span>
-                      </div>
-
-                      {display ? (
-                        renderThreatBoardFormControls({
-                          side: "enemy",
-                          slotIndex: display.slotIndex,
-                          basePokemon: display.basePokemon,
-                          pokemon: display.pokemon,
-                          formOptions: display.formOptions,
-                        })
-                      ) : null}
-
-                      <div className="damage-doubles-scout-meta">
-                        {abilityName ? <span>Ability {abilityName}</span> : null}
-                        {itemName ? <span>Item {itemName}</span> : null}
-                      </div>
-
-                      <div className="coverage-chip-list">
-                        {displayedMoveEntries.length > 0 ? (
-                          displayedMoveEntries.map((moveEntry) => {
-                            const resolvedType = moveEntry.move ? getTypeFromLabel(moveEntry.move.type) : null;
-                            const chipClassName = resolvedType ? "mini-type-pill" : "mini-type-pill neutral-pill";
-
-                            return (
-                              <span
-                                key={`doubles-enemy-pool-${entry.slotIndex}-${moveEntry.name}`}
-                                className={chipClassName}
-                                style={
-                                  resolvedType
-                                    ? ({
-                                        "--type-color": TYPE_META[resolvedType].color,
-                                        "--type-accent": TYPE_META[resolvedType].accent,
-                                      } as CSSProperties)
-                                    : undefined
-                                }
-                              >
-                                {moveEntry.name}
-                              </span>
-                            );
-                          })
-                        ) : (
-                          <span className="subtle-empty">No saved move data for this enemy yet.</span>
-                        )}
-                      </div>
-
-                      <div
-                        className={`damage-doubles-scout-details${
-                          doublesEnemyScoutDetailsOpen ? " is-open" : ""
-                        }`}
-                      >
+                    return (
+                      <div key={`doubles-ally-entry-${slotIndex}`} className="doubles-lineup-entry" role="listitem">
                         <button
                           type="button"
-                          className="damage-doubles-scout-details-toggle"
-                          onClick={() => setDoublesEnemyScoutDetailsOpen((prev) => !prev)}
-                          aria-expanded={doublesEnemyScoutDetailsOpen}
+                          aria-pressed={isSelected}
+                          disabled={!pokemon}
+                          className={`doubles-lineup-token ally ${isSelected ? "selected" : ""} ${
+                            pokemon ? "" : "empty"
+                          }`}
+                          onClick={() => toggleDoublesAllySelection(slotIndex)}
+                          title={pokemon ? pokemon.name : `Slot ${slotIndex + 1} empty`}
                         >
-                          <span>Move Details</span>
-                          <span className="damage-doubles-scout-details-hint">
-                            {doublesEnemyScoutDetailsOpen ? "Collapse" : "Expand"}
-                          </span>
-                        </button>
-                        {doublesEnemyScoutDetailsOpen ? (
-                          <div className="damage-doubles-scout-detail-list">
-                            {displayedMoveEntries.map((moveEntry) => {
-                              const detailType = moveEntry.move ? getTypeFromLabel(moveEntry.move.type) : null;
-                              const detailClassName = `damage-doubles-scout-detail${
-                                detailType ? " has-type" : ""
-                              }`;
-                              const detailStyle = detailType
-                                ? ({
-                                    "--type-color": TYPE_META[detailType].color,
-                                    "--type-accent": TYPE_META[detailType].accent,
-                                  } as CSSProperties)
-                                : undefined;
-                              return (
-                                <article
-                                  key={`doubles-enemy-pool-detail-${entry.slotIndex}-${moveEntry.name}`}
-                                  className={detailClassName}
-                                  style={detailStyle}
-                                >
-                                  <div className="damage-doubles-scout-detail-top">
-                                    <strong>{moveEntry.name}</strong>
-                                    {moveEntry.move ? (
-                                      <span className="damage-doubles-scout-detail-meta">
-                                        <span className="scout-move-category">
-                                          {moveEntry.move.category}
-                                        </span>
-                                        {moveEntry.move.basePower > 0 || isLowKickMove(moveEntry.move.name) ? (
-                                          <span className="scout-move-power">
-                                            <span className="scout-move-power-label">Power</span>
-                                            <strong className="scout-move-power-value">
-                                              {isLowKickMove(moveEntry.move.name) ? "Weight" : moveEntry.move.basePower}
-                                            </strong>
-                                          </span>
-                                        ) : null}
-                                      </span>
-                                    ) : (
-                                      <span className="damage-doubles-scout-detail-meta">Move data not found.</span>
-                                    )}
-                                  </div>
-                                  <p>{moveEntry.move?.shortDesc || moveEntry.move?.desc || "No description found."}</p>
-                                </article>
-                              );
-                            })}
+                          <span className="doubles-lineup-token-slot">Slot {slotIndex + 1}</span>
+                          <div className="doubles-lineup-token-body">
+                            {pokemon ? (
+                              <PokemonSprite pokemon={pokemon} className="doubles-lineup-token-sprite" />
+                            ) : (
+                              <div className="doubles-lineup-token-placeholder">?</div>
+                            )}
+                            <div className="doubles-lineup-token-info">
+                              <strong>{pokemon ? pokemon.name : "Empty"}</strong>
+                              <span>
+                                {pokemon
+                                  ? pokemon.types.join(" / ")
+                                  : loadError
+                                    ? "Unavailable"
+                                    : "Add in Team Builder"}
+                              </span>
+                            </div>
                           </div>
+                          {isSelected ? (
+                            <span className="doubles-lineup-token-rank">{selectionRank === 0 ? "A" : "B"}</span>
+                          ) : null}
+                        </button>
+                        {display ? (
+                          renderThreatBoardFormControls({
+                            side: "ally",
+                            slotIndex: display.slotIndex,
+                            basePokemon: display.basePokemon,
+                            pokemon: display.pokemon,
+                            formOptions: display.formOptions,
+                          })
                         ) : null}
                       </div>
-                    </article>
-                  );
-                })}
-              </div>
-            </section>
-          ) : null}
+                    );
+                  })}
+                </div>
+              </article>
 
-          {showBattleEngineFeature ? (
-            <>
+              <article className="damage-doubles-lineup enemy">
+                <div className="damage-doubles-lineup-topbar">
+                  <div className="damage-doubles-lineup-copy">
+                    <p className="eyebrow">Enemy Side</p>
+                    <p className="selector-note">
+                      {enemyBring.hasConfirmedBring && enemyBring.eliminatedSlotIndices.length > 0
+                        ? `Confirmed enemy four. ${enemyBring.eliminatedSlotIndices.length} benched ${
+                            enemyBring.eliminatedSlotIndices.length === 1 ? "mon is" : "mons are"
+                          } removed from Battle Lab.`
+                        : enemyBring.hasConfirmedBring &&
+                            enemyBring.bringCount === 4 &&
+                            enemyBring.candidateSlotIndices.length === enemyBring.bringCount
+                          ? "Enemy roster is already limited to the brought four."
+                        : enemyBring.bringCount === 4 && enemyBring.knownBringSlotIndices.length > 0
+                          ? `Tracking enemy bring: ${enemyBring.knownBringSlotIndices.length}/4 seen. Once all four are known, the last two are removed automatically.`
+                          : "Pick the two current threats you want to compare against."}
+                    </p>
+                  </div>
+                  <div className="damage-doubles-lineup-actions">
+                    <div className="selected-slots" aria-label="Selected enemies">
+                      {(["A", "B"] as const).map((rankLabel, rankIndex) => {
+                        const slotIndex = doublesEnemySelection[rankIndex];
+                        const display = getThreatBoardEnemyDisplay(slotIndex);
+                        const pokemon = display?.pokemon ?? null;
+                        return (
+                          <div
+                            key={`doubles-enemy-selected-${rankLabel}`}
+                            className={`selected-slot doubles-lineup-selected enemy ${pokemon ? "filled" : ""} ${
+                              display && display.formOptions.length > 1 ? "has-form-toggle" : ""
+                            }`}
+                          >
+                            <div className="doubles-lineup-selected-main">
+                              <span className="doubles-lineup-selected-rank">{rankLabel}</span>
+                              {pokemon ? (
+                                <>
+                                  <PokemonSprite pokemon={pokemon} className="doubles-lineup-selected-sprite" />
+                                  <span className="doubles-lineup-selected-name">{pokemon.name}</span>
+                                </>
+                              ) : (
+                                <span className="doubles-lineup-selected-empty">Empty</span>
+                              )}
+                            </div>
+                            {display ? (
+                              renderThreatBoardFormControls({
+                                side: "enemy",
+                                slotIndex: display.slotIndex,
+                                basePokemon: display.basePokemon,
+                                pokemon: display.pokemon,
+                                formOptions: display.formOptions,
+                                compact: true,
+                              })
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="damage-doubles-lineup-action-buttons">
+                      <button
+                        type="button"
+                        className="reset-button"
+                        onClick={() => setDoublesEnemySelection([null, null])}
+                        disabled={doublesEnemyMembers.length === 0}
+                      >
+                        Clear
+                      </button>
+                      <button
+                        type="button"
+                        className="reset-button"
+                        onClick={() => setKnownEnemyBringSlotIndices([])}
+                        disabled={knownEnemyBringSlotIndices.length === 0}
+                      >
+                        Reset 4
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="doubles-lineup-track" role="list" aria-label="Enemy roster">
+                  {enemyBattleEntries.map((entry) => {
+                    const selectionRank = doublesEnemySelection.indexOf(entry.slotIndex);
+                    const isSelected = selectionRank !== -1;
+                    const display = getThreatBoardEnemyDisplay(entry.slotIndex);
+                    const pokemon = display?.pokemon ?? entry.pokemon;
+                    const runtimeState =
+                      display?.state ?? getBattleSimulatorMemberStateForPokemon("enemy", entry.slotIndex, entry.pokemon);
+                    const isFainted = runtimeState.hpPercent <= 0;
+                    const moveCount =
+                      entry.movesetSource === "custom"
+                        ? entry.savedAttacks.length
+                        : display?.moveset.allMoveNames.length ?? entry.presetMoveNames.length;
+
+                    return (
+                      <div key={`doubles-enemy-entry-${entry.slotIndex}`} className="doubles-lineup-entry" role="listitem">
+                        <button
+                          type="button"
+                          aria-pressed={isSelected}
+                          disabled={!pokemon || isFainted}
+                          className={`doubles-lineup-token enemy ${isSelected ? "selected" : ""} ${
+                            pokemon ? "" : "empty"
+                          }`}
+                          onClick={() => toggleDoublesEnemySelection(entry.slotIndex)}
+                          title={
+                            pokemon
+                              ? isFainted
+                                ? `${pokemon.name} fainted`
+                                : pokemon.name
+                              : `Enemy ${entry.slotIndex + 1} empty`
+                          }
+                        >
+                          <span className="doubles-lineup-token-slot">Enemy {entry.slotIndex + 1}</span>
+                          <div className="doubles-lineup-token-body">
+                            {pokemon ? (
+                              <PokemonSprite pokemon={pokemon} className="doubles-lineup-token-sprite" />
+                            ) : (
+                              <div className="doubles-lineup-token-placeholder">?</div>
+                            )}
+                            <div className="doubles-lineup-token-info">
+                              <strong>{pokemon ? pokemon.name : "Empty"}</strong>
+                              <span>
+                                {pokemon
+                                  ? isFainted
+                                    ? "Fainted"
+                                    : moveCount > 0
+                                      ? `${pokemon.types.join(" / ")} · ${moveCount} ${
+                                          moveCount === 1 ? "move" : "moves"
+                                        }`
+                                      : pokemon.types.join(" / ")
+                                  : "Add above"}
+                              </span>
+                            </div>
+                          </div>
+                          {isSelected ? (
+                            <span className="doubles-lineup-token-rank">{selectionRank === 0 ? "A" : "B"}</span>
+                          ) : null}
+                        </button>
+                        {display && !isFainted ? (
+                          renderThreatBoardFormControls({
+                            side: "enemy",
+                            slotIndex: display.slotIndex,
+                            basePokemon: display.basePokemon,
+                            pokemon: display.pokemon,
+                            formOptions: display.formOptions,
+                          })
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </article>
+            </div>
+
+            {selectedDoublesEnemyEntries.length > 0 ? (
+              <section className="damage-doubles-block damage-doubles-scout-panel">
+                <div className="coverage-preview-header">
+                  <p className="eyebrow">Selected Enemy Scouting</p>
+                  <span>{selectedDoublesEnemyEntries.length} shown</span>
+                </div>
+
+                <div className="damage-doubles-scout-grid">
+                  {selectedDoublesEnemyEntries.map((entry) => {
+                    const display = getThreatBoardEnemyDisplay(entry.slotIndex);
+                    const pokemon = display?.pokemon ?? entry.pokemon;
+                    const importedMoveNames = display?.moveset.allMoveNames ?? entry.presetMoveNames;
+                    const abilityName = display?.moveset.abilityName ?? entry.abilityName;
+                    const itemName = entry.itemName ?? display?.moveset.itemName ?? null;
+                    const displayedMoveEntries =
+                      entry.movesetSource === "custom" && entry.savedAttacks.length > 0
+                        ? entry.savedAttacks.map((attack) => {
+                            const name = getAttackLabel(attack);
+                            return {
+                              name,
+                              move: getMoveRecordByName(name, moveByKey),
+                            };
+                          })
+                        : importedMoveNames.map((name) => ({
+                            name,
+                            move: getMoveRecordByName(name, moveByKey),
+                          }));
+
+                    return (
+                      <article key={`doubles-enemy-pool-${entry.slotIndex}`} className="damage-doubles-scout-card">
+                        <div className="damage-doubles-scout-head">
+                          <div className="damage-doubles-scout-identity">
+                            <PokemonSprite pokemon={pokemon} className="damage-side-sprite" />
+                            <div>
+                              <strong>{pokemon.name}</strong>
+                              <p>{entry.movesetSource === "custom" ? "Custom set" : "Imported set"}</p>
+                            </div>
+                          </div>
+                          <span className="mini-type-pill neutral-pill">
+                            {displayedMoveEntries.length} move{displayedMoveEntries.length === 1 ? "" : "s"}
+                          </span>
+                        </div>
+
+                        {display ? (
+                          renderThreatBoardFormControls({
+                            side: "enemy",
+                            slotIndex: display.slotIndex,
+                            basePokemon: display.basePokemon,
+                            pokemon: display.pokemon,
+                            formOptions: display.formOptions,
+                          })
+                        ) : null}
+
+                        <div className="damage-doubles-scout-meta">
+                          {abilityName ? <span>Ability {abilityName}</span> : null}
+                          {itemName ? <span>Item {itemName}</span> : null}
+                        </div>
+
+                        <div className="coverage-chip-list">
+                          {displayedMoveEntries.length > 0 ? (
+                            displayedMoveEntries.map((moveEntry) => {
+                              const resolvedType = moveEntry.move ? getTypeFromLabel(moveEntry.move.type) : null;
+                              const chipClassName = resolvedType ? "mini-type-pill" : "mini-type-pill neutral-pill";
+
+                              return (
+                                <span
+                                  key={`doubles-enemy-pool-${entry.slotIndex}-${moveEntry.name}`}
+                                  className={chipClassName}
+                                  style={
+                                    resolvedType
+                                      ? ({
+                                          "--type-color": TYPE_META[resolvedType].color,
+                                          "--type-accent": TYPE_META[resolvedType].accent,
+                                        } as CSSProperties)
+                                      : undefined
+                                  }
+                                >
+                                  {moveEntry.name}
+                                </span>
+                              );
+                            })
+                          ) : (
+                            <span className="subtle-empty">No saved move data for this enemy yet.</span>
+                          )}
+                        </div>
+
+                        <div
+                          className={`damage-doubles-scout-details${
+                            doublesEnemyScoutDetailsOpen ? " is-open" : ""
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            className="damage-doubles-scout-details-toggle"
+                            onClick={() => setDoublesEnemyScoutDetailsOpen((prev) => !prev)}
+                            aria-expanded={doublesEnemyScoutDetailsOpen}
+                          >
+                            <span>Move Details</span>
+                            <span className="damage-doubles-scout-details-hint">
+                              {doublesEnemyScoutDetailsOpen ? "Collapse" : "Expand"}
+                            </span>
+                          </button>
+                          {doublesEnemyScoutDetailsOpen ? (
+                            <div className="damage-doubles-scout-detail-list">
+                              {displayedMoveEntries.map((moveEntry) => {
+                                const detailType = moveEntry.move ? getTypeFromLabel(moveEntry.move.type) : null;
+                                const detailClassName = `damage-doubles-scout-detail${
+                                  detailType ? " has-type" : ""
+                                }`;
+                                const detailStyle = detailType
+                                  ? ({
+                                      "--type-color": TYPE_META[detailType].color,
+                                      "--type-accent": TYPE_META[detailType].accent,
+                                    } as CSSProperties)
+                                  : undefined;
+                                return (
+                                  <article
+                                    key={`doubles-enemy-pool-detail-${entry.slotIndex}-${moveEntry.name}`}
+                                    className={detailClassName}
+                                    style={detailStyle}
+                                  >
+                                    <div className="damage-doubles-scout-detail-top">
+                                      <strong>{moveEntry.name}</strong>
+                                      {moveEntry.move ? (
+                                        <span className="damage-doubles-scout-detail-meta">
+                                          <span className="scout-move-category">
+                                            {moveEntry.move.category}
+                                          </span>
+                                          {moveEntry.move.basePower > 0 || isLowKickMove(moveEntry.move.name) ? (
+                                            <span className="scout-move-power">
+                                              <span className="scout-move-power-label">Power</span>
+                                              <strong className="scout-move-power-value">
+                                                {isLowKickMove(moveEntry.move.name) ? "Weight" : moveEntry.move.basePower}
+                                              </strong>
+                                            </span>
+                                          ) : null}
+                                        </span>
+                                      ) : (
+                                        <span className="damage-doubles-scout-detail-meta">Move data not found.</span>
+                                      )}
+                                    </div>
+                                    <p>{moveEntry.move?.shortDesc || moveEntry.move?.desc || "No description found."}</p>
+                                  </article>
+                                );
+                              })}
+                            </div>
+                          ) : null}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            ) : null}
+
+            {showBattleEngineFeature ? (
+              <>
               <section className={`damage-doubles-block bl-showdown-bridge ${battleEngineUsesShowdown ? "connected" : showdownBridgeStatus}`}>
                 <div>
                   <p className="eyebrow">Showdown Live</p>
@@ -16208,8 +16211,9 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewP
                 </div>
               )}
             </>
-          ) : null}
-        </section>
+            ) : null}
+          </section>
+        ) : null}
       </section>
 
       {battleLabFaintPrompt ? (
@@ -19970,6 +19974,12 @@ const CUSTOMIZABLE_FEATURES: FeatureDefinition[] = [
     group: "Team Builder tools",
   },
   {
+    id: "doublesThreatBoard",
+    label: "2v2 Threat Board",
+    description: "Active-pair lineup picker, selected enemy scouting, and the doubles threat grid.",
+    group: "Team Builder tools",
+  },
+  {
     id: "battleEngine",
     label: "Battle Engine",
     description: "Showdown bridge, Battle Lab, turn planner, and engine recommendations.",
@@ -19989,6 +19999,7 @@ const DEFAULT_FEATURE_VISIBILITY: FeatureVisibilitySettings = {
   trainingOptimizer: true,
   matchHistory: true,
   teamPreview: true,
+  doublesThreatBoard: true,
   battleEngine: true,
 };
 
