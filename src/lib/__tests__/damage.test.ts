@@ -479,3 +479,62 @@ describe("multi-hit damage handling", () => {
     expect(estimate.hits).toBe(1);
   });
 });
+
+describe("Final Gambit damage handling", () => {
+  const attacker = makePokemon("Final Gambit User", {
+    types: ["Fighting"],
+    baseStats: { hp: 100, spa: 120 },
+  });
+  const neutralDefender = makePokemon("Neutral Target", {
+    types: ["Normal"],
+    baseStats: { hp: 100, spd: 100 },
+  });
+
+  it("deals fixed damage equal to the user's current HP", () => {
+    const estimate = calculateRoughDamage({
+      attacker,
+      defender: neutralDefender,
+      attackType: "fighting",
+      moveName: "Final Gambit",
+      basePower: 0,
+      category: "special",
+      isSpreadMove: false,
+      attackerCurrentHp: 123,
+      helpingHand: true,
+      lightScreen: true,
+    });
+
+    expect(estimate.fixedDamageSource).toBe("finalgambit");
+    expect(estimate.attackerHp).toBe(123);
+    expect(estimate.minDamage).toBe(123);
+    expect(estimate.maxDamage).toBe(123);
+    expect(estimate.averageDamage).toBe(123);
+    expect(estimate.stabMultiplier).toBe(1);
+    expect(estimate.helpingHandMultiplier).toBe(1);
+    expect(estimate.screenMultiplier).toBe(1);
+    expect(estimate.hits).toBe(1);
+  });
+
+  it("does no damage into Fighting immunity", () => {
+    const ghostDefender = makePokemon("Ghost Target", {
+      types: ["Ghost"],
+      baseStats: { hp: 100, spd: 100 },
+    });
+
+    const estimate = calculateRoughDamage({
+      attacker,
+      defender: ghostDefender,
+      attackType: "fighting",
+      moveName: "Final Gambit",
+      basePower: 0,
+      category: "special",
+      isSpreadMove: false,
+      attackerCurrentHp: 123,
+    });
+
+    expect(estimate.typeMultiplier).toBe(0);
+    expect(estimate.minDamage).toBe(0);
+    expect(estimate.maxDamage).toBe(0);
+    expect(estimate.averageDamage).toBe(0);
+  });
+});

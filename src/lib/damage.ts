@@ -39,6 +39,7 @@ export type DamageEstimateInput = {
   basePower: number;
   category: DamageCategory;
   isSpreadMove: boolean;
+  attackerCurrentHp?: number | null;
   multihit?: MultihitInput | null;
   weather?: DamageWeather;
   terrain?: DamageTerrain;
@@ -62,6 +63,7 @@ export type DamageEstimateInput = {
 export type DamageEstimate = {
   inputBasePower: number;
   effectiveBasePower: number;
+  fixedDamageSource: "finalgambit" | null;
   baseDamage: number;
   minDamage: number;
   maxDamage: number;
@@ -74,6 +76,7 @@ export type DamageEstimate = {
   perHitMinDamage: number;
   perHitMaxDamage: number;
   perHitAverageDamage: number;
+  attackerHp: number;
   attackStat: number;
   defenseStat: number;
   defenderHp: number;
@@ -165,6 +168,18 @@ function isWeatherBallMove(moveName: string | null | undefined) {
 
 export function isLowKickMove(moveName: string | null | undefined) {
   return moveName ? normalizeMoveNameKey(moveName) === "lowkick" : false;
+}
+
+export function isFinalGambitMove(moveName: string | null | undefined) {
+  return moveName ? normalizeMoveNameKey(moveName) === "finalgambit" : false;
+}
+
+function resolveCurrentHp(currentHp: number | null | undefined, maxHp: number) {
+  if (typeof currentHp !== "number" || !Number.isFinite(currentHp)) {
+    return maxHp;
+  }
+
+  return Math.max(0, Math.min(maxHp, Math.floor(currentHp)));
 }
 
 export function getLowKickBasePowerFromWeightKg(weightkg: number | null | undefined) {
@@ -383,6 +398,7 @@ export function calculateRoughDamage({
   basePower,
   category,
   isSpreadMove,
+  attackerCurrentHp = null,
   multihit = null,
   weather = "none",
   terrain = "none",
@@ -425,6 +441,9 @@ export function calculateRoughDamage({
     baseStats: effectiveDefenderStats,
     spread: defenderStatSpread,
   });
+  const fixedDamageSource = isFinalGambitMove(moveName) ? "finalgambit" : null;
+  const isFixedDamage = fixedDamageSource !== null;
+  const attackerHp = resolveCurrentHp(attackerCurrentHp, attackerStats.hp);
   const baseAttackStat = category === "physical" ? attackerStats.atk : attackerStats.spa;
   const baseDefenseStat = category === "physical" ? defenderStats.def : defenderStats.spd;
   const weatherDefenseMultiplier =
@@ -442,20 +461,25 @@ export function calculateRoughDamage({
   const secondaryType = defender.types[1] ? getTypeFromLabel(defender.types[1]) : null;
   const effectiveAttackType = getAbilityAdjustedAttackType(weatherAdjustedAttackType, attackerAbility);
   const baseTypeMultiplier = primaryType ? getMultiplier(effectiveAttackType, primaryType, secondaryType) : 1;
-  const typeMultiplier = getDefenderAbilityTypeMultiplier({
+  const rawTypeMultiplier = getDefenderAbilityTypeMultiplier({
     typeMultiplier: baseTypeMultiplier,
     attackType: effectiveAttackType,
     defenderAbility,
     moveName,
   });
-  const stabMultiplier = attacker.types.some((typeLabel) => getTypeFromLabel(typeLabel) === effectiveAttackType)
-    ? attackerAbility === "adaptability"
-      ? 2
-      : STAB_MULTIPLIER
-    : 1;
-  const spreadMultiplier = isSpreadMove ? SPREAD_MOVE_MULTIPLIER : 1;
+  const typeMultiplier = isFixedDamage ? (rawTypeMultiplier === 0 ? 0 : 1) : rawTypeMultiplier;
+  const stabMultiplier = isFixedDamage
+    ? 1
+    : attacker.types.some((typeLabel) => getTypeFromLabel(typeLabel) === effectiveAttackType)
+      ? attackerAbility === "adaptability"
+        ? 2
+        : STAB_MULTIPLIER
+      : 1;
+  const spreadMultiplier = isFixedDamage ? 1 : isSpreadMove ? SPREAD_MOVE_MULTIPLIER : 1;
   const weatherMultiplier =
-    attackerEffectiveWeather === "sun"
+    isFixedDamage
+      ? 1
+      : attackerEffectiveWeather === "sun"
       ? effectiveAttackType === "fire"
         ? 1.5
         : effectiveAttackType === "water"
@@ -469,7 +493,9 @@ export function calculateRoughDamage({
             : 1
         : 1;
   const terrainMultiplier =
-    terrain === "electric" && effectiveAttackType === "electric" && attackerGrounded
+    isFixedDamage
+      ? 1
+      : terrain === "electric" && effectiveAttackType === "electric" && attackerGrounded
       ? 1.3
       : terrain === "psychic" && effectiveAttackType === "psychic" && attackerGrounded
         ? 1.3
@@ -478,39 +504,49 @@ export function calculateRoughDamage({
           : terrain === "misty" && effectiveAttackType === "dragon" && defenderGrounded
             ? 0.5
             : 1;
-  const attackerAbilityMultiplier = getAttackerAbilityModifier({
-    originalAttackType: weatherAdjustedAttackType,
-    effectiveAttackType,
-    basePower: effectiveBasePower,
-    category,
-    weather: attackerEffectiveWeather,
-    attackerAbility,
-    moveName,
-  });
-  const fieldAbilityMultiplier = getFieldAbilityModifier(effectiveAttackType, attackerAbility, defenderAbility);
-  const defenderAbilityMultiplier = getDefenderAbilityModifier({
-    attackType: effectiveAttackType,
-    category,
-    defenderAbility,
-    typeMultiplier,
-    moveName,
-  });
+  const attackerAbilityMultiplier = isFixedDamage
+    ? 1
+    : getAttackerAbilityModifier({
+        originalAttackType: weatherAdjustedAttackType,
+        effectiveAttackType,
+        basePower: effectiveBasePower,
+        category,
+        weather: attackerEffectiveWeather,
+        attackerAbility,
+        moveName,
+      });
+  const fieldAbilityMultiplier = isFixedDamage
+    ? 1
+    : getFieldAbilityModifier(effectiveAttackType, attackerAbility, defenderAbility);
+  const defenderAbilityMultiplier = isFixedDamage
+    ? 1
+    : getDefenderAbilityModifier({
+        attackType: effectiveAttackType,
+        category,
+        defenderAbility,
+        typeMultiplier,
+        moveName,
+      });
   const abilityMultiplier = attackerAbilityMultiplier * fieldAbilityMultiplier * defenderAbilityMultiplier;
-  const attackerItemMultiplier = getAttackerItemModifier({
-    attackType: effectiveAttackType,
-    category,
-    attackerItem,
-    typeMultiplier,
-  });
-  const defenderItemMultiplier = getDefenderItemModifier({
-    attackType: effectiveAttackType,
-    defenderItem,
-    typeMultiplier,
-  });
+  const attackerItemMultiplier = isFixedDamage
+    ? 1
+    : getAttackerItemModifier({
+        attackType: effectiveAttackType,
+        category,
+        attackerItem,
+        typeMultiplier,
+      });
+  const defenderItemMultiplier = isFixedDamage
+    ? 1
+    : getDefenderItemModifier({
+        attackType: effectiveAttackType,
+        defenderItem,
+        typeMultiplier,
+      });
   const itemMultiplier = attackerItemMultiplier * defenderItemMultiplier;
-  const helpingHandMultiplier = helpingHand ? 1.5 : 1;
-  const screenMultiplier = getDamageScreenMultiplier({ category, reflect, lightScreen, auroraVeil });
-  const baseDamage =
+  const helpingHandMultiplier = isFixedDamage ? 1 : helpingHand ? 1.5 : 1;
+  const screenMultiplier = isFixedDamage ? 1 : getDamageScreenMultiplier({ category, reflect, lightScreen, auroraVeil });
+  const formulaBaseDamage =
     Math.floor(Math.floor((LEVEL_FACTOR * Math.max(effectiveBasePower, 0) * attackStat) / defenseStat) / 50) + 2;
   const modifier =
     stabMultiplier *
@@ -522,15 +558,19 @@ export function calculateRoughDamage({
     itemMultiplier *
     helpingHandMultiplier *
     screenMultiplier;
-  const perHitMinDamage = Math.floor(baseDamage * modifier * MIN_RANDOM_MULTIPLIER);
-  const perHitMaxDamage = Math.floor(baseDamage * modifier * MAX_RANDOM_MULTIPLIER);
-  const perHitAverageDamage = Math.floor(baseDamage * modifier * AVG_RANDOM_MULTIPLIER);
-  const normalizedMultihit = normalizeMultihitInput(multihit);
-  const hits = getExpectedHits(normalizedMultihit, {
-    ability: attackerAbility,
-    item: attackerItem,
-  });
-  const hitRange = getMultihitHitRange(normalizedMultihit);
+  const fixedDamage = fixedDamageSource === "finalgambit" ? (typeMultiplier === 0 ? 0 : attackerHp) : null;
+  const baseDamage = fixedDamage ?? formulaBaseDamage;
+  const perHitMinDamage = fixedDamage ?? Math.floor(baseDamage * modifier * MIN_RANDOM_MULTIPLIER);
+  const perHitMaxDamage = fixedDamage ?? Math.floor(baseDamage * modifier * MAX_RANDOM_MULTIPLIER);
+  const perHitAverageDamage = fixedDamage ?? Math.floor(baseDamage * modifier * AVG_RANDOM_MULTIPLIER);
+  const normalizedMultihit = isFixedDamage ? null : normalizeMultihitInput(multihit);
+  const hits = isFixedDamage
+    ? 1
+    : getExpectedHits(normalizedMultihit, {
+        ability: attackerAbility,
+        item: attackerItem,
+      });
+  const hitRange = isFixedDamage ? { min: 1, max: 1 } : getMultihitHitRange(normalizedMultihit);
   const minDamage = Math.floor(perHitMinDamage * hits);
   const maxDamage = Math.floor(perHitMaxDamage * hits);
   const averageDamage = Math.floor(perHitAverageDamage * hits);
@@ -538,6 +578,7 @@ export function calculateRoughDamage({
   return {
     inputBasePower: basePower,
     effectiveBasePower,
+    fixedDamageSource,
     baseDamage,
     minDamage,
     maxDamage,
@@ -550,6 +591,7 @@ export function calculateRoughDamage({
     perHitMinDamage,
     perHitMaxDamage,
     perHitAverageDamage,
+    attackerHp,
     attackStat,
     defenseStat,
     defenderHp,

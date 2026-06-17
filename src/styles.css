@@ -1508,6 +1508,197 @@ img {
   font-weight: 700;
 }
 
+.final-gambit-panel {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.final-gambit-toolbar {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.7fr) minmax(220px, 1.4fr) minmax(150px, 1fr) minmax(160px, 1fr);
+  gap: 0.6rem;
+  align-items: end;
+}
+
+.final-gambit-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.final-gambit-summary-card {
+  display: grid;
+  gap: 0.15rem;
+  min-height: 72px;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid rgba(226, 232, 255, 0.08);
+  background: rgba(16, 22, 44, 0.82);
+}
+
+.final-gambit-summary-card span {
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+  font-weight: 850;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.final-gambit-summary-card strong {
+  color: var(--ink-strong);
+  font-size: clamp(1.2rem, 2vw, 1.75rem);
+  line-height: 1;
+}
+
+.final-gambit-summary-card.good {
+  border-color: rgba(74, 222, 128, 0.28);
+}
+
+.final-gambit-summary-card.warn {
+  border-color: rgba(251, 191, 36, 0.26);
+}
+
+.final-gambit-summary-card.immune {
+  border-color: rgba(170, 184, 214, 0.2);
+}
+
+.final-gambit-filter {
+  justify-content: flex-start;
+}
+
+.final-gambit-result-list {
+  display: grid;
+  gap: 0.5rem;
+  transition: opacity 160ms ease;
+}
+
+.final-gambit-result-list.is-stale {
+  opacity: 0.68;
+}
+
+@media (min-width: 1180px) {
+  .final-gambit-result-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.final-gambit-result-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(230px, auto);
+  gap: 0.65rem;
+  align-items: center;
+  padding: 0.6rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid rgba(226, 232, 255, 0.08);
+  background: rgba(16, 22, 44, 0.82);
+}
+
+.final-gambit-result-card.kills {
+  border-color: rgba(74, 222, 128, 0.28);
+}
+
+.final-gambit-result-card.survives {
+  border-color: rgba(251, 191, 36, 0.22);
+}
+
+.final-gambit-result-card.immune {
+  border-color: rgba(170, 184, 214, 0.2);
+  opacity: 0.86;
+}
+
+.final-gambit-result-main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: center;
+  min-width: 0;
+}
+
+.final-gambit-result-main strong {
+  display: block;
+  color: var(--ink-strong);
+  font-size: 0.95rem;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.final-gambit-result-sprite {
+  width: 3rem;
+  height: 3rem;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.final-gambit-result-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.final-gambit-result-metrics > span:not(.final-gambit-status-pill) {
+  display: grid;
+  gap: 0.04rem;
+  min-width: 72px;
+  padding: 0.32rem 0.48rem;
+  border-radius: 7px;
+  background: rgba(28, 36, 62, 0.84);
+  border: 1px solid rgba(226, 232, 255, 0.08);
+}
+
+.final-gambit-result-metrics small {
+  color: var(--ink-muted);
+  font-size: 0.58rem;
+  font-weight: 850;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.final-gambit-result-metrics strong {
+  color: var(--ink-strong);
+  font-size: 0.82rem;
+}
+
+.final-gambit-status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0.34rem 0.58rem;
+  border-radius: 7px;
+  color: var(--ink-strong);
+  font-size: 0.74rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.final-gambit-status-pill.kills {
+  background: rgba(74, 222, 128, 0.16);
+  color: #dfffe8;
+}
+
+.final-gambit-status-pill.survives {
+  background: rgba(251, 191, 36, 0.14);
+  color: #fff2c2;
+}
+
+.final-gambit-status-pill.immune {
+  background: rgba(170, 184, 214, 0.12);
+  color: var(--ink-soft);
+}
+
+@media (max-width: 760px) {
+  .final-gambit-toolbar,
+  .final-gambit-summary-grid,
+  .final-gambit-result-card {
+    grid-template-columns: 1fr;
+  }
+
+  .final-gambit-result-metrics {
+    justify-content: flex-start;
+  }
+}
+
 .training-optimizer-panel {
   display: grid;
   gap: 0.8rem;

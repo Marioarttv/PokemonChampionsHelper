@@ -71,6 +71,7 @@ import {
   calculateRoughDamage,
   getEffectiveDamageBaseStats,
   getStatStageMultiplier,
+  isFinalGambitMove,
   isLowKickMove,
   type DamageCategory,
   type DamageTerrain,
@@ -205,6 +206,7 @@ type SiteMode =
   | "movesets"
   | "moveFinder"
   | "speed"
+  | "finalGambit"
   | "ohko"
   | "training"
   | "history"
@@ -214,6 +216,10 @@ type MatchHistoryTeamSort = "latest" | "name" | "matches" | "winRate";
 type SpeedTierSort = "boosted" | "neutral" | "base" | "name";
 type MoveFinderSpeedMetric = "base" | "neutral" | "boosted";
 type MoveFinderSpeedComparator = "any" | "atLeast" | "atMost";
+type FinalGambitScope = "regulation" | "all";
+type FinalGambitTargetHpMode = "default" | "min" | "max";
+type FinalGambitResultFilter = "all" | "kills" | "cantKill" | "immune";
+type FinalGambitRowStatus = "kills" | "survives" | "immune";
 type ShowdownBridgeStatus = "idle" | "ready" | "installed" | "waiting" | "error";
 type HiddenFeatureId =
   | "typeCalculator"
@@ -223,6 +229,7 @@ type HiddenFeatureId =
   | "movesets"
   | "moveFinder"
   | "speedTiers"
+  | "finalGambit"
   | "ohkoFinder"
   | "trainingOptimizer"
   | "matchHistory"
@@ -677,12 +684,16 @@ function getAttackBasePowerDisplay(basePower?: number) {
   return typeof basePower === "number" && Number.isFinite(basePower) && basePower > 0 ? String(basePower) : "";
 }
 
+function isZeroBasePowerDamageMove(moveName: string | null | undefined) {
+  return isLowKickMove(moveName) || isFinalGambitMove(moveName);
+}
+
 function getMoveRecordDamageBasePower(move: Pick<MoveRecord, "name" | "basePower">) {
   if (typeof move.basePower === "number" && Number.isFinite(move.basePower) && move.basePower > 0) {
     return Math.floor(move.basePower);
   }
 
-  return isLowKickMove(move.name) ? 0 : undefined;
+  return isZeroBasePowerDamageMove(move.name) ? 0 : undefined;
 }
 
 function normalizeSavedMoveBasePower(
@@ -694,12 +705,12 @@ function normalizeSavedMoveBasePower(
       return Math.floor(basePower);
     }
 
-    if (basePower === 0 && isLowKickMove(moveName)) {
+    if (basePower === 0 && isZeroBasePowerDamageMove(moveName)) {
       return 0;
     }
   }
 
-  return isLowKickMove(moveName) ? 0 : undefined;
+  return isZeroBasePowerDamageMove(moveName) ? 0 : undefined;
 }
 
 function formatMoveBasePowerLabel(basePower: number | null | undefined, moveName: string | null | undefined) {
@@ -707,6 +718,10 @@ function formatMoveBasePowerLabel(basePower: number | null | undefined, moveName
 
   if (normalizedBasePower === 0 && isLowKickMove(moveName)) {
     return "Weight BP";
+  }
+
+  if (normalizedBasePower === 0 && isFinalGambitMove(moveName)) {
+    return "Fixed HP";
   }
 
   return typeof normalizedBasePower === "number" ? `${normalizedBasePower} BP` : "Base power not set";
@@ -718,6 +733,10 @@ function getDamageInputBasePower(
   moveName: string | null | undefined,
 ) {
   if (isLowKickMove(moveName)) {
+    return 0;
+  }
+
+  if (isFinalGambitMove(moveName)) {
     return 0;
   }
 
@@ -1281,7 +1300,7 @@ function getResolvedAttackSpread(attack: PersistedSavedAttack) {
 }
 
 function getResolvedAttackBasePower(attack: PersistedSavedAttack) {
-  return normalizeSavedMoveBasePower(attack.basePower, attack.label) ?? (isLowKickMove(attack.label) ? 0 : null);
+  return normalizeSavedMoveBasePower(attack.basePower, attack.label) ?? null;
 }
 
 function getResolvedAttackMultihit(
@@ -3870,6 +3889,23 @@ function buildDamageModChips(
   category: DamageCategory,
 ): ModChip[] {
   const chips: ModChip[] = [];
+
+  if (estimate.fixedDamageSource === "finalgambit") {
+    chips.push({
+      key: "fixed",
+      label: `Final Gambit HP ${estimate.attackerHp}`,
+      tone: "stab",
+    });
+    if (estimate.typeMultiplier === 0) {
+      chips.push({
+        key: "type",
+        label: "Type 0x",
+        tone: "ne",
+      });
+    }
+    return chips;
+  }
+
   chips.push({
     key: "atk",
     label: `${category === "physical" ? "Atk" : "SpA"} ${estimate.attackStat}`,
@@ -4675,6 +4711,7 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
 
     const chips = buildDamageModChips(estimate, category);
     const isMultihit = estimate.hits > 1 || estimate.hitRange.max > 1;
+    const isFixedDamage = estimate.fixedDamageSource !== null;
 
     return (
       <div className="damage-result-card ready">
@@ -4685,7 +4722,7 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
           </span>
         </div>
         <p>
-          Avg {estimate.averageDamage} HP {hpLabel === "taken" ? "taken" : ""}
+          {isFixedDamage ? "Fixed" : "Avg"} {estimate.averageDamage} HP {hpLabel === "taken" ? "taken" : ""}
           {estimate.typeMultiplier === 0 ? " · no effect" : ""}
         </p>
         {isMultihit ? (
@@ -4836,6 +4873,8 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
               {damageMoveRows.map((row) => {
                 const effectiveType = row.estimate?.effectiveAttackType ?? row.attack.type;
                 const isWeightBasedPowerMove = isLowKickMove(row.attack.label);
+                const isFixedHpPowerMove = isFinalGambitMove(row.attack.label);
+                const isAutoResolvedPowerMove = isWeightBasedPowerMove || isFixedHpPowerMove;
                 return (
                   <article key={`damage-row-${row.attack.id}`} className="damage-move-card">
                     <header className="damage-move-card-head">
@@ -4862,8 +4901,8 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
                           min={isWeightBasedPowerMove ? "0" : "1"}
                           step="1"
                           inputMode="numeric"
-                          value={isWeightBasedPowerMove ? "" : row.config.power || (row.defaultPower ? String(row.defaultPower) : "")}
-                          disabled={isWeightBasedPowerMove}
+                          value={isAutoResolvedPowerMove ? "" : row.config.power || (row.defaultPower ? String(row.defaultPower) : "")}
+                          disabled={isAutoResolvedPowerMove}
                           onChange={(event) =>
                             updateDamageMoveConfig(
                               selectedDamageAttackerPokemon!.id,
@@ -4872,7 +4911,7 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
                               { power: event.target.value },
                             )
                           }
-                          placeholder={isWeightBasedPowerMove ? "Weight" : row.defaultPower ? String(row.defaultPower) : "80"}
+                          placeholder={isWeightBasedPowerMove ? "Weight" : isFixedHpPowerMove ? "HP" : row.defaultPower ? String(row.defaultPower) : "80"}
                         />
                       </label>
 
@@ -4945,7 +4984,7 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
                   const basePower = getResolvedAttackBasePower(attack);
                   const category = getResolvedAttackCategory(attack, selectedDamageDefenderPokemon);
                   const isSpreadMove = getResolvedAttackSpread(attack);
-                  const buttonPower = basePower ? String(basePower) : "";
+                  const buttonPower = basePower !== null ? String(basePower) : "";
                   const isActive =
                     defenseMoveConfig.attackType === attack.type &&
                     defenseMoveConfig.power === buttonPower &&
@@ -5100,7 +5139,9 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
                       <strong>{getAttackLabel(row.attack)}</strong>
                       <span className="damage-move-card-meta">
                         {row.category === "physical" ? "Phys" : "Spec"}
-                        {row.basePower !== null ? ` · BP ${row.basePower}` : " · BP ?"}
+                        {isFinalGambitMove(row.attack.label)
+                          ? " · Fixed HP"
+                          : row.basePower !== null ? ` · BP ${row.basePower}` : " · BP ?"}
                         {row.isSpreadMove ? " · Spread" : ""}
                       </span>
                     </header>
@@ -6066,6 +6107,8 @@ function TeamSlotCard({
                       const category = getKnownMoveCategory(move, pokemon);
                       const basePower = getKnownMoveBasePower(move);
                       const isWeightBasedPowerMove = isLowKickMove(getKnownMoveName(move));
+                      const isFixedHpPowerMove = isFinalGambitMove(getKnownMoveName(move));
+                      const isAutoResolvedPowerMove = isWeightBasedPowerMove || isFixedHpPowerMove;
 
                       return (
                         <article key={move.id} className="saved-attack-editor-card">
@@ -6143,9 +6186,17 @@ function TeamSlotCard({
                               min="0"
                               step="1"
                               inputMode="numeric"
-                              placeholder={category === "status" ? "Status" : isWeightBasedPowerMove ? "Weight" : "80"}
+                              placeholder={
+                                category === "status"
+                                  ? "Status"
+                                  : isWeightBasedPowerMove
+                                    ? "Weight"
+                                    : isFixedHpPowerMove
+                                      ? "HP"
+                                      : "80"
+                              }
                               value={getAttackBasePowerDisplay(basePower ?? undefined)}
-                              disabled={category === "status" || isWeightBasedPowerMove}
+                              disabled={category === "status" || isAutoResolvedPowerMove}
                               onChange={(event) => {
                                 const parsed = Number(event.target.value);
                                 updateDraftMove(move.id, {
@@ -6169,7 +6220,7 @@ function TeamSlotCard({
                                 onClick={() =>
                                   updateDraftMove(move.id, {
                                     category: nextCategory,
-                                    basePower: nextCategory === "status" ? undefined : isWeightBasedPowerMove ? 0 : basePower ?? 80,
+                                    basePower: nextCategory === "status" ? undefined : isAutoResolvedPowerMove ? 0 : basePower ?? 80,
                                   })}
                               >
                                 {nextCategory === "physical"
@@ -7105,7 +7156,11 @@ function BattleLabMoveButton({
 }: BattleLabMoveButtonProps) {
   const typeColor = move.type ? TYPE_META[move.type].color : "#9aa3b8";
   const accent = move.type ? TYPE_META[move.type].accent : "#4b5472";
-  const labelBp = isLowKickMove(move.name) ? "Weight" : move.basePower ? `${move.basePower}` : move.effectKind === "damage" ? "—" : "STA";
+  const labelBp = isLowKickMove(move.name)
+    ? "Weight"
+    : isFinalGambitMove(move.name)
+      ? "HP"
+      : move.basePower ? `${move.basePower}` : move.effectKind === "damage" ? "—" : "STA";
   const labelAcc = move.accuracy >= 100 ? "—" : `${move.accuracy}`;
   const tag =
     move.source === "candidate" ? "?" : move.source === "inferred" ? "i" : null;
@@ -13052,7 +13107,13 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewP
 
                   <div className="quick-meta-row">
                     <span>{quickMove.category}</span>
-                    <span>Power {isLowKickMove(quickMove.name) ? "Weight" : quickMove.basePower > 0 ? quickMove.basePower : "--"}</span>
+                    <span>
+                      Power {isLowKickMove(quickMove.name)
+                        ? "Weight"
+                        : isFinalGambitMove(quickMove.name)
+                          ? "HP"
+                          : quickMove.basePower > 0 ? quickMove.basePower : "--"}
+                    </span>
                     <span>Acc {formatMoveAccuracy(quickMove.accuracy)}</span>
                     <span>PP {quickMove.pp}</span>
                     <span>Priority {quickMove.priority >= 0 ? `+${quickMove.priority}` : quickMove.priority}</span>
@@ -15036,11 +15097,15 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewP
                                           <span className="scout-move-category">
                                             {moveEntry.move.category}
                                           </span>
-                                          {moveEntry.move.basePower > 0 || isLowKickMove(moveEntry.move.name) ? (
+                                          {moveEntry.move.basePower > 0 || isZeroBasePowerDamageMove(moveEntry.move.name) ? (
                                             <span className="scout-move-power">
                                               <span className="scout-move-power-label">Power</span>
                                               <strong className="scout-move-power-value">
-                                                {isLowKickMove(moveEntry.move.name) ? "Weight" : moveEntry.move.basePower}
+                                                {isLowKickMove(moveEntry.move.name)
+                                                  ? "Weight"
+                                                  : isFinalGambitMove(moveEntry.move.name)
+                                                    ? "HP"
+                                                    : moveEntry.move.basePower}
                                               </strong>
                                             </span>
                                           ) : null}
@@ -17034,8 +17099,14 @@ function MovesetDatabaseView() {
                                   <p>
                                     {entry.move
                                       ? `${entry.move.category}${
-                                          entry.move.basePower > 0 || isLowKickMove(entry.move.name)
-                                            ? ` • Power ${isLowKickMove(entry.move.name) ? "Weight" : entry.move.basePower}`
+                                          entry.move.basePower > 0 || isZeroBasePowerDamageMove(entry.move.name)
+                                            ? ` • Power ${
+                                                isLowKickMove(entry.move.name)
+                                                  ? "Weight"
+                                                  : isFinalGambitMove(entry.move.name)
+                                                    ? "HP"
+                                                    : entry.move.basePower
+                                              }`
                                             : ""
                                         }${entry.move.priority !== 0 ? ` • Priority ${entry.move.priority}` : ""}`
                                       : "Move data not found in the local battle database."}
@@ -17061,6 +17132,8 @@ function MovesetDatabaseView() {
                         const category = getKnownMoveCategory(move, selectedPokemon);
                         const basePower = getKnownMoveBasePower(move);
                         const isWeightBasedPowerMove = isLowKickMove(getKnownMoveName(move));
+                        const isFixedHpPowerMove = isFinalGambitMove(getKnownMoveName(move));
+                        const isAutoResolvedPowerMove = isWeightBasedPowerMove || isFixedHpPowerMove;
 
                         return (
                           <article key={move.id} className="saved-attack-editor-card">
@@ -17138,9 +17211,9 @@ function MovesetDatabaseView() {
                                   min="0"
                                   step="1"
                                   inputMode="numeric"
-                                  placeholder={category === "status" ? "Status" : isWeightBasedPowerMove ? "Weight" : "80"}
+                                  placeholder={category === "status" ? "Status" : isWeightBasedPowerMove ? "Weight" : isFixedHpPowerMove ? "HP" : "80"}
                                   value={getAttackBasePowerDisplay(basePower ?? undefined)}
-                                  disabled={category === "status" || isWeightBasedPowerMove}
+                                  disabled={category === "status" || isAutoResolvedPowerMove}
                                   onChange={(event) => {
                                     const parsed = Number(event.target.value);
                                     updateDraftKnownMove(move.id, {
@@ -17164,7 +17237,7 @@ function MovesetDatabaseView() {
                                     onClick={() =>
                                       updateDraftKnownMove(move.id, {
                                         category: nextCategory,
-                                        basePower: nextCategory === "status" ? undefined : isWeightBasedPowerMove ? 0 : basePower ?? 80,
+                                        basePower: nextCategory === "status" ? undefined : isAutoResolvedPowerMove ? 0 : basePower ?? 80,
                                       })}
                                   >
                                     {nextCategory === "physical"
@@ -17533,8 +17606,14 @@ function MoveFinderView() {
                   <strong>{selectedMove.name}</strong>
                   <p>
                     {selectedMove.category}
-                    {selectedMove.basePower > 0 || isLowKickMove(selectedMove.name)
-                      ? ` · Power ${isLowKickMove(selectedMove.name) ? "Weight" : selectedMove.basePower}`
+                    {selectedMove.basePower > 0 || isZeroBasePowerDamageMove(selectedMove.name)
+                      ? ` · Power ${
+                          isLowKickMove(selectedMove.name)
+                            ? "Weight"
+                            : isFinalGambitMove(selectedMove.name)
+                              ? "HP"
+                              : selectedMove.basePower
+                        }`
                       : ""}
                     {selectedMove.priority !== 0 ? ` · Priority ${selectedMove.priority}` : ""}
                   </p>
@@ -17788,6 +17867,385 @@ function SpeedTiersView() {
         ) : (
           <div className="matchup-empty-board">
             {database ? "No Pokémon match that search." : "Loading local database..."}
+          </div>
+        )}
+      </section>
+    </>
+  );
+}
+
+function getFinalGambitTargetEntries(database: PokemonRecord[] | null, scope: FinalGambitScope) {
+  if (scope === "regulation") {
+    return getCurrentRegulationMoveFinderEntries(database);
+  }
+
+  return (database ?? [])
+    .filter((pokemon) => {
+      if (isChampionsSuppressedBaseForm(pokemon)) {
+        return false;
+      }
+
+      return isChampionsPlayableBaseForm(pokemon) || isChampionsMegaEntry(pokemon) || pokemon.forme === null;
+    })
+    .sort((left, right) => left.num - right.num || left.name.localeCompare(right.name));
+}
+
+function getFinalGambitTargetHp(pokemon: PokemonRecord, mode: FinalGambitTargetHpMode) {
+  if (mode === "min") {
+    return getChampionsComputedStats(pokemon, {
+      spread: {
+        nature: getDefaultChampionsStatSpreadForPokemon(pokemon).nature,
+        statPoints: {
+          ...getDefaultChampionsStatSpreadForPokemon(pokemon).statPoints,
+          hp: 0,
+        },
+      },
+    }).hp;
+  }
+
+  if (mode === "max") {
+    return getChampionsComputedStats(pokemon, {
+      spread: {
+        nature: getDefaultChampionsStatSpreadForPokemon(pokemon).nature,
+        statPoints: {
+          ...getDefaultChampionsStatSpreadForPokemon(pokemon).statPoints,
+          hp: CHAMPIONS_MAX_STAT_POINTS_PER_STAT,
+        },
+      },
+    }).hp;
+  }
+
+  return getChampionsComputedStats(pokemon).hp;
+}
+
+function getFinalGambitTargetHpLabel(mode: FinalGambitTargetHpMode) {
+  if (mode === "min") {
+    return "0 HP";
+  }
+
+  if (mode === "max") {
+    return "32 HP";
+  }
+
+  return "Default HP";
+}
+
+function parseFinalGambitHp(value: string) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : null;
+}
+
+function getFinalGambitResultLabel(status: FinalGambitRowStatus, margin: number) {
+  if (status === "immune") {
+    return "Immune";
+  }
+
+  if (status === "kills") {
+    return `KO by ${margin} HP`;
+  }
+
+  return `Lives by ${margin} HP`;
+}
+
+function FinalGambitView() {
+  const [database, setDatabase] = useState<PokemonRecord[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [hpValue, setHpValue] = useState("200");
+  const [query, setQuery] = useState("");
+  const [scope, setScope] = useState<FinalGambitScope>("regulation");
+  const [targetHpMode, setTargetHpMode] = useState<FinalGambitTargetHpMode>("default");
+  const [resultFilter, setResultFilter] = useState<FinalGambitResultFilter>("all");
+  const deferredQuery = useDeferredValue(query);
+
+  useEffect(() => {
+    let active = true;
+
+    loadPokemonDatabase()
+      .then((db) => {
+        if (active) {
+          setDatabase(db.pokemon);
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setLoadError(error instanceof Error ? error.message : "Failed to load Pokemon database.");
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const finalGambitHp = parseFinalGambitHp(hpValue);
+  const targetEntries = useMemo(
+    () => getFinalGambitTargetEntries(database, scope),
+    [database, scope],
+  );
+  const rows = useMemo(() => {
+    const normalizedQuery = normalizeTextKey(deferredQuery);
+    const nextRows: Array<{
+      pokemon: PokemonRecord;
+      targetHp: number;
+      status: FinalGambitRowStatus;
+      margin: number;
+      fightingMultiplier: number | null;
+    }> = [];
+
+    for (const pokemon of targetEntries) {
+      if (
+        normalizedQuery &&
+        !normalizeTextKey(pokemon.name).includes(normalizedQuery) &&
+        !pokemon.types.some((typeLabel) => normalizeTextKey(typeLabel).includes(normalizedQuery)) &&
+        !String(pokemon.num).includes(normalizedQuery)
+      ) {
+        continue;
+      }
+
+      const targetHp = getFinalGambitTargetHp(pokemon, targetHpMode);
+      const fightingMultiplier = getPokemonDefensiveMultiplier(pokemon, "fighting");
+      const isImmune = fightingMultiplier === 0;
+      const status: FinalGambitRowStatus =
+        isImmune
+          ? "immune"
+          : finalGambitHp !== null && finalGambitHp >= targetHp
+            ? "kills"
+            : "survives";
+      const margin =
+        status === "kills"
+          ? Math.max(0, (finalGambitHp ?? 0) - targetHp)
+          : status === "survives"
+            ? Math.max(0, targetHp - (finalGambitHp ?? 0))
+            : 0;
+
+      if (resultFilter === "kills" && status !== "kills") {
+        continue;
+      }
+
+      if (resultFilter === "cantKill" && status === "kills") {
+        continue;
+      }
+
+      if (resultFilter === "immune" && status !== "immune") {
+        continue;
+      }
+
+      nextRows.push({
+        pokemon,
+        targetHp,
+        status,
+        margin,
+        fightingMultiplier,
+      });
+    }
+
+    return nextRows.sort((left, right) => {
+      const statusOrder: Record<FinalGambitRowStatus, number> = {
+        kills: 0,
+        survives: 1,
+        immune: 2,
+      };
+      const statusDelta = statusOrder[left.status] - statusOrder[right.status];
+
+      if (statusDelta !== 0) {
+        return statusDelta;
+      }
+
+      if (left.status === "kills") {
+        return right.targetHp - left.targetHp || left.pokemon.name.localeCompare(right.pokemon.name);
+      }
+
+      if (left.status === "survives") {
+        return left.targetHp - right.targetHp || left.pokemon.name.localeCompare(right.pokemon.name);
+      }
+
+      return left.pokemon.name.localeCompare(right.pokemon.name);
+    });
+  }, [deferredQuery, finalGambitHp, resultFilter, targetEntries, targetHpMode]);
+  const allScopedRows = useMemo(() => {
+    return targetEntries.map((pokemon) => {
+      const targetHp = getFinalGambitTargetHp(pokemon, targetHpMode);
+      const fightingMultiplier = getPokemonDefensiveMultiplier(pokemon, "fighting");
+      const status: FinalGambitRowStatus =
+        fightingMultiplier === 0
+          ? "immune"
+          : finalGambitHp !== null && finalGambitHp >= targetHp
+            ? "kills"
+            : "survives";
+      return { status };
+    });
+  }, [finalGambitHp, targetEntries, targetHpMode]);
+  const killCount = allScopedRows.filter((row) => row.status === "kills").length;
+  const immuneCount = allScopedRows.filter((row) => row.status === "immune").length;
+  const cantKillCount = allScopedRows.length - killCount;
+  const hpModeLabel = getFinalGambitTargetHpLabel(targetHpMode);
+  const isStale = query !== deferredQuery;
+
+  return (
+    <>
+      <section className="team-builder-hero">
+        <div>
+          <p className="eyebrow">Final Gambit</p>
+          <h2>HP-based knockout scan</h2>
+          <p className="selector-note">
+            Final Gambit deals fixed damage equal to the user&apos;s current HP. Fighting immunities are listed as
+            immune.
+          </p>
+        </div>
+        <div className="team-builder-meta">
+          <span>{finalGambitHp ?? 0} HP damage</span>
+          <span>{hpModeLabel} targets</span>
+          <span>{scope === "regulation" ? POKEMON_CHAMPIONS_ACTIVE_REGULATION : "Local dex"}</span>
+        </div>
+      </section>
+
+      <section className="board-panel final-gambit-panel">
+        <div className="final-gambit-toolbar">
+          <label className="move-finder-field">
+            <span className="team-input-label">User HP</span>
+            <input
+              className="team-pokemon-input"
+              type="number"
+              min="1"
+              step="1"
+              inputMode="numeric"
+              value={hpValue}
+              onChange={(event) => setHpValue(event.target.value)}
+              placeholder="200"
+            />
+          </label>
+
+          <label className="move-finder-field">
+            <span className="team-input-label">Search</span>
+            <input
+              className="team-pokemon-input"
+              placeholder={database ? "Name, type, or dex number" : "Loading local database..."}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              disabled={!database}
+            />
+          </label>
+
+          <label className="move-finder-field">
+            <span className="team-input-label">Scope</span>
+            <select
+              className="team-select"
+              value={scope}
+              onChange={(event) => setScope(event.target.value as FinalGambitScope)}
+            >
+              <option value="regulation">Current Regulation</option>
+              <option value="all">Local Dex</option>
+            </select>
+          </label>
+
+          <label className="move-finder-field">
+            <span className="team-input-label">Target HP</span>
+            <select
+              className="team-select"
+              value={targetHpMode}
+              onChange={(event) => setTargetHpMode(event.target.value as FinalGambitTargetHpMode)}
+            >
+              <option value="default">Default Champions HP</option>
+              <option value="min">0 HP points</option>
+              <option value="max">32 HP points</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="final-gambit-summary-grid">
+          <article className="final-gambit-summary-card">
+            <span>Damage</span>
+            <strong>{finalGambitHp ?? "--"}</strong>
+          </article>
+          <article className="final-gambit-summary-card good">
+            <span>Can Kill</span>
+            <strong>{killCount}</strong>
+          </article>
+          <article className="final-gambit-summary-card warn">
+            <span>Can&apos;t Kill</span>
+            <strong>{cantKillCount}</strong>
+          </article>
+          <article className="final-gambit-summary-card immune">
+            <span>Immune</span>
+            <strong>{immuneCount}</strong>
+          </article>
+        </div>
+
+        <div className="ohko-filter-chips final-gambit-filter" role="group" aria-label="Final Gambit result filter">
+          {([
+            ["all", "All"],
+            ["kills", "Can Kill"],
+            ["cantKill", "Can't Kill"],
+            ["immune", "Immune"],
+          ] as const).map(([value, label]) => (
+            <button
+              key={`final-gambit-filter-${value}`}
+              type="button"
+              className={`ohko-filter-chip ${resultFilter === value ? "active" : ""}`}
+              onClick={() => setResultFilter(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {loadError ? (
+          <p className="storage-message error">{loadError}</p>
+        ) : rows.length > 0 ? (
+          <div className={`final-gambit-result-list ${isStale ? "is-stale" : ""}`} role="list">
+            {rows.map((row) => (
+              <article
+                key={`final-gambit-${row.pokemon.id}`}
+                className={`final-gambit-result-card ${row.status}`}
+                role="listitem"
+              >
+                <div className="final-gambit-result-main">
+                  <PokemonSprite pokemon={row.pokemon} className="final-gambit-result-sprite" />
+                  <div>
+                    <strong>{row.pokemon.name}</strong>
+                    <div className="team-type-list">
+                      {row.pokemon.types.map((typeLabel) => {
+                        const type = getTypeFromLabel(typeLabel);
+
+                        return type ? (
+                          <span
+                            key={`final-gambit-${row.pokemon.id}-${type}`}
+                            className="inline-type-pill"
+                            style={
+                              {
+                                "--type-color": TYPE_META[type].color,
+                                "--type-accent": TYPE_META[type].accent,
+                              } as CSSProperties
+                            }
+                          >
+                            <img src={getTypeIconUrl(type)} alt="" aria-hidden="true" />
+                            {TYPE_META[type].label}
+                          </span>
+                        ) : null;
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="final-gambit-result-metrics">
+                  <span>
+                    <small>Target HP</small>
+                    <strong>{row.targetHp}</strong>
+                  </span>
+                  <span>
+                    <small>Fighting</small>
+                    <strong>{row.fightingMultiplier === null ? "?" : `${formatFlatMultiplier(row.fightingMultiplier)}`}</strong>
+                  </span>
+                  <span className={`final-gambit-status-pill ${row.status}`}>
+                    {getFinalGambitResultLabel(row.status, row.margin)}
+                  </span>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="matchup-empty-board">
+            {database ? "No Pokémon match the current Final Gambit filters." : "Loading local database..."}
           </div>
         )}
       </section>
@@ -19950,6 +20408,12 @@ const CUSTOMIZABLE_FEATURES: FeatureDefinition[] = [
     group: "Main pages",
   },
   {
+    id: "finalGambit",
+    label: "Final Gambit",
+    description: "HP-based Final Gambit knockout and survival scanner.",
+    group: "Main pages",
+  },
+  {
     id: "ohkoFinder",
     label: "OHKO Finder",
     description: "Targeted knockout scanner page.",
@@ -19995,6 +20459,7 @@ const DEFAULT_FEATURE_VISIBILITY: FeatureVisibilitySettings = {
   movesets: true,
   moveFinder: true,
   speedTiers: true,
+  finalGambit: true,
   ohkoFinder: true,
   trainingOptimizer: true,
   matchHistory: true,
@@ -20010,10 +20475,11 @@ const SITE_SECTIONS: Array<{ id: SiteMode; index: string; label: string; feature
   { id: "movesets", index: "04", label: "Movesets DB", featureId: "movesets" },
   { id: "moveFinder", index: "05", label: "Move Finder", featureId: "moveFinder" },
   { id: "speed", index: "06", label: "Speed Tiers", featureId: "speedTiers" },
-  { id: "ohko", index: "07", label: "OHKO Finder", featureId: "ohkoFinder" },
-  { id: "training", index: "08", label: "Training Optimizer", featureId: "trainingOptimizer" },
-  { id: "history", index: "09", label: "Match History", featureId: "matchHistory" },
-  { id: "settings", index: "10", label: "Settings" },
+  { id: "finalGambit", index: "07", label: "Final Gambit", featureId: "finalGambit" },
+  { id: "ohko", index: "08", label: "OHKO Finder", featureId: "ohkoFinder" },
+  { id: "training", index: "09", label: "Training Optimizer", featureId: "trainingOptimizer" },
+  { id: "history", index: "10", label: "Match History", featureId: "matchHistory" },
+  { id: "settings", index: "11", label: "Settings" },
 ];
 
 function createDefaultFeatureVisibility(): FeatureVisibilitySettings {
@@ -20971,6 +21437,8 @@ function App() {
           <MoveFinderView />
         ) : siteMode === "speed" ? (
           <SpeedTiersView />
+        ) : siteMode === "finalGambit" ? (
+          <FinalGambitView />
         ) : siteMode === "ohko" ? (
           <OhkoFinderView />
         ) : siteMode === "training" ? (
