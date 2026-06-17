@@ -278,7 +278,7 @@ type LoadedTeamSlot = TeamSlotState & {
 
 type TeamMatrixMode = "defense" | "offense";
 type DamageCalcMode = "attack" | "defend";
-type TeamBuilderFormat = "all" | "regulationMA";
+type TeamBuilderFormat = "all" | "activeRegulation";
 type LeadSummary = {
   slotIndex: number;
   pokemon: PokemonRecord;
@@ -8429,7 +8429,7 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewP
   const [showdownExportWarnings, setShowdownExportWarnings] = useState<string[]>([]);
   const [showdownExportOpen, setShowdownExportOpen] = useState(false);
   const [activeSavedTeamId, setActiveSavedTeamId] = useState<string | null>(null);
-  const [teamBuilderFormat, setTeamBuilderFormat] = useState<TeamBuilderFormat>("regulationMA");
+  const [teamBuilderFormat, setTeamBuilderFormat] = useState<TeamBuilderFormat>("activeRegulation");
   const [quickPokemonQuery, setQuickPokemonQuery] = useState("");
   const [quickMoveQuery, setQuickMoveQuery] = useState("");
   const [teamSlots, setTeamSlots] = useState<TeamSlotState[]>(
@@ -12419,7 +12419,7 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewP
               value={teamBuilderFormat}
               onChange={(event) => setTeamBuilderFormat(event.target.value as TeamBuilderFormat)}
             >
-              <option value="regulationMA">{POKEMON_CHAMPIONS_ACTIVE_REGULATION}</option>
+              <option value="activeRegulation">{POKEMON_CHAMPIONS_ACTIVE_REGULATION}</option>
               <option value="all">All Local Dex</option>
             </select>
           </label>
@@ -12873,7 +12873,7 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewP
                   className="team-pokemon-input quick-search-input"
                   placeholder={
                     database
-                      ? teamBuilderFormat === "regulationMA"
+                      ? teamBuilderFormat === "activeRegulation"
                         ? `Search ${POKEMON_CHAMPIONS_ACTIVE_REGULATION} Pokemon`
                         : "Search Pokemon"
                       : "Loading local database..."
@@ -13314,7 +13314,7 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewP
                 className="team-pokemon-input"
                 placeholder={
                   database
-                    ? teamBuilderFormat === "regulationMA"
+                    ? teamBuilderFormat === "activeRegulation"
                       ? `Search ${POKEMON_CHAMPIONS_ACTIVE_REGULATION} Pokemon`
                       : "Search Pokemon"
                     : "Loading local database..."
@@ -16681,12 +16681,12 @@ function MovesetDatabaseView() {
           <h2>Build defaults for legal Pokémon</h2>
           <p className="selector-note">
             This page tracks custom enemy defaults for {POKEMON_CHAMPIONS_ACTIVE_REGULATION}. The legal list is based
-            on the current Regulation M-A pool sourced on {POKEMON_CHAMPIONS_LEGAL_LIST_SOURCED_AT}, and the imported
+            on the current {POKEMON_CHAMPIONS_ACTIVE_REGULATION} pool sourced on {POKEMON_CHAMPIONS_LEGAL_LIST_SOURCED_AT}, and the imported
             meta sets now include moves, abilities, and items for enemy auto-fill in Team Builder.
           </p>
         </div>
         <div className="team-builder-meta">
-          <span>{POKEMON_CHAMPIONS_LEGAL_SPECIES_NAMES.length} sourced Regulation M-A species</span>
+          <span>{POKEMON_CHAMPIONS_LEGAL_SPECIES_NAMES.length} sourced regulation species</span>
           <span>{legalPokemon.length} editable entries</span>
           <span>{POKEMON_CHAMPIONS_ACTIVE_REGULATION}</span>
           <span>{POKEMON_CHAMPIONS_ACTIVE_REGULATION_WINDOW}</span>
@@ -17708,7 +17708,7 @@ function SpeedTiersView() {
           <p className="eyebrow">Speed Tiers</p>
           <h2>Champions speed benchmarks for max Speed spreads</h2>
           <p className="selector-note">
-            Compare legal Regulation M-A Pokémon at base Speed, 32 Speed, and 32 Speed with a Speed-boosting nature.
+            Compare legal {POKEMON_CHAMPIONS_ACTIVE_REGULATION} Pokémon at base Speed, 32 Speed, and 32 Speed with a Speed-boosting nature.
           </p>
         </div>
         <div className="team-builder-meta">

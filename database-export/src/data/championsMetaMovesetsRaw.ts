@@ -1,6 +1,6 @@
 export const CHAMPIONS_META_MOVESETS_RAW = String.raw`Pokemon Champions Meta Sets
-Source: https://www.pokemon-zone.com/champions/pokemon/
-Exported: 2026-04-19T17:28:05.487Z
+Source: https://www.pokemon-zone.com/champions/pokemon/; Regulation M-B additions hand-curated from Pokemon Zone learnsets and news
+Exported: 2026-06-17T14:22:00.000Z
 
 Incineroar
 Types: Fire / Dark
@@ -1837,4 +1837,202 @@ Ability: Cursed Body
 Item: Focus Sash
 Moves: Giga Drain / Protect / Shadow Ball / Trick Room
 Usage: 100.0 rating · 1 teams
+
+Vileplume
+Types: Grass / Poison
+Usage: 0 uses
+Set #1
+Ability: Chlorophyll
+Item: Big Root
+Moves: Giga Drain / Sludge Bomb / Sleep Powder / Strength Sap
+Usage: 0 rating · 0 teams
+
+Qwilfish
+Types: Water / Poison
+Usage: 0 uses
+Set #1
+Ability: Intimidate
+Item: Focus Sash
+Moves: Crunch / Icy Wind / Poison Jab / Taunt
+Usage: 0 rating · 0 teams
+
+Sceptile-Mega
+Types: Grass / Dragon
+Usage: 0 uses
+Set #1
+Ability: Tough Claws
+Item: Sceptilite
+Moves: Dragon Claw / Leaf Blade / Protect / Rock Slide
+Usage: 0 rating · 0 teams
+
+Blaziken-Mega
+Types: Fire / Fighting
+Usage: 0 uses
+Set #1
+Ability: Speed Boost
+Item: Blazikenite
+Moves: Close Combat / Flare Blitz / Protect / Swords Dance
+Usage: 0 rating · 0 teams
+
+Swampert-Mega
+Types: Water / Ground
+Usage: 0 uses
+Set #1
+Ability: Swift Swim
+Item: Swampertite
+Moves: High Horsepower / Ice Punch / Liquidation / Protect
+Usage: 0 rating · 0 teams
+
+Mawile-Mega
+Types: Steel / Fairy
+Usage: 0 uses
+Set #1
+Ability: Huge Power
+Item: Mawilite
+Moves: Iron Head / Play Rough / Protect / Sucker Punch
+Usage: 0 rating · 0 teams
+
+Metagross-Mega
+Types: Steel / Psychic
+Usage: 0 uses
+Set #1
+Ability: Tough Claws
+Item: Metagrossite
+Moves: Iron Head / Protect / Psychic Fangs / Stomping Tantrum
+Usage: 0 rating · 0 teams
+
+Staraptor-Mega
+Types: Fighting / Flying
+Usage: 0 uses
+Set #1
+Ability: Contrary
+Item: Staraptite
+Moves: Brave Bird / Close Combat / Double-Edge / Protect
+Usage: 0 rating · 0 teams
+
+Musharna
+Types: Psychic
+Usage: 0 uses
+Set #1
+Ability: Telepathy
+Item: Sitrus Berry
+Moves: Helping Hand / Moonblast / Protect / Trick Room
+Usage: 0 rating · 0 teams
+
+Scolipede-Mega
+Types: Bug / Poison
+Usage: 0 uses
+Set #1
+Ability: Shell Armor
+Item: Scolipite
+Moves: Megahorn / Poison Jab / Protect / Swords Dance
+Usage: 0 rating · 0 teams
+
+Scrafty-Mega
+Types: Dark / Fighting
+Usage: 0 uses
+Set #1
+Ability: Intimidate
+Item: Scraftinite
+Moves: Drain Punch / Fake Out / Knock Off / Protect
+Usage: 0 rating · 0 teams
+
+Eelektross-Mega
+Types: Electric
+Usage: 0 uses
+Set #1
+Ability: Eelevate
+Item: Eelektrossite
+Moves: Flamethrower / Giga Drain / Protect / Thunderbolt
+Usage: 0 rating · 0 teams
+
+Pyroar-Mega
+Types: Fire / Normal
+Usage: 0 uses
+Set #1
+Ability: Fire Mane
+Item: Pyroarite
+Moves: Heat Wave / Hyper Voice / Protect / Snarl
+Usage: 0 rating · 0 teams
+
+Malamar-Mega
+Types: Dark / Psychic
+Usage: 0 uses
+Set #1
+Ability: Contrary
+Item: Malamarite
+Moves: Knock Off / Protect / Psycho Cut / Superpower
+Usage: 0 rating · 0 teams
+
+Barbaracle-Mega
+Types: Rock / Fighting
+Usage: 0 uses
+Set #1
+Ability: Tough Claws
+Item: Barbaracite
+Moves: Cross Chop / Protect / Rock Slide / Shell Smash
+Usage: 0 rating · 0 teams
+
+Dragalge-Mega
+Types: Poison / Dragon
+Usage: 0 uses
+Set #1
+Ability: Regenerator
+Item: Dragalgite
+Moves: Draco Meteor / Hydro Pump / Protect / Sludge Bomb
+Usage: 0 rating · 0 teams
+
+Grimmsnarl
+Types: Dark / Fairy
+Usage: 0 uses
+Set #1
+Ability: Prankster
+Item: Light Clay
+Moves: Light Screen / Reflect / Spirit Break / Thunder Wave
+Usage: 0 rating · 0 teams
+
+Falinks-Mega
+Types: Fighting
+Usage: 0 uses
+Set #1
+Ability: Defiant
+Item: Falinksite
+Moves: Close Combat / No Retreat / Protect / Throat Chop
+Usage: 0 rating · 0 teams
+
+Overqwil
+Types: Dark / Poison
+Usage: 0 uses
+Set #1
+Ability: Intimidate
+Item: Black Sludge
+Moves: Barb Barrage / Crunch / Icy Wind / Protect
+Usage: 0 rating · 0 teams
+
+Houndstone
+Types: Ghost
+Usage: 0 uses
+Set #1
+Ability: Sand Rush
+Item: Spell Tag
+Moves: Last Respects / Protect / Shadow Sneak / Will-O-Wisp
+Usage: 0 rating · 0 teams
+
+Annihilape
+Types: Fighting / Ghost
+Usage: 0 uses
+Set #1
+Ability: Defiant
+Item: Leftovers
+Moves: Bulk Up / Drain Punch / Protect / Rage Fist
+Usage: 0 rating · 0 teams
+
+Gholdengo
+Types: Steel / Ghost
+Usage: 0 uses
+Set #1
+Ability: Good as Gold
+Item: Life Orb
+Moves: Make It Rain / Nasty Plot / Protect / Shadow Ball
+Usage: 0 rating · 0 teams
 `;

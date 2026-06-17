@@ -49,6 +49,20 @@ const DISPLAY_NAME_KEY_OVERRIDES: Record<string, string> = {
 
 const DISPLAY_NAME_KEY_ALIASES: Record<string, readonly string[]> = {
   "Floette [Eternal Flower]": ["floette", "floettemega"],
+  "Barbaracle-Mega": ["barbaracle"],
+  "Blaziken-Mega": ["blaziken"],
+  "Dragalge-Mega": ["dragalge"],
+  "Eelektross-Mega": ["eelektross"],
+  "Falinks-Mega": ["falinks"],
+  "Malamar-Mega": ["malamar"],
+  "Mawile-Mega": ["mawile"],
+  "Metagross-Mega": ["metagross"],
+  "Pyroar-Mega": ["pyroar"],
+  "Sceptile-Mega": ["sceptile"],
+  "Scolipede-Mega": ["scolipede"],
+  "Scrafty-Mega": ["scrafty"],
+  "Staraptor-Mega": ["staraptor"],
+  "Swampert-Mega": ["swampert"],
 };
 
 const MOVE_NAME_ALIASES: Record<string, string> = {

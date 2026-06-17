@@ -46,6 +46,25 @@ Current snapshot metadata:
 - abilityCount: `314`
 - itemCount: `583`
 
+### `public/data/champions-learnsets.json`
+
+Generated from `@pkmn/dex` Gen 9 learnsets and the current Champions legal-species list.
+
+Contains the legal learnset index used by the app's move finder for:
+
+- current regulation metadata
+- legal base-species count
+- legal form learnsets, including Mega forms
+- move ids learnable by each legal species/form
+
+Current snapshot metadata:
+
+- source: `@pkmn/dex gen9 learnsets`
+- regulation: `Regulation M-B`
+- regulation window: `June 17, 2026 onward`
+- legalSpeciesCount: `208`
+- learnsetCount: `389`
+
 ### `src/data/typeChart.ts`
 
 Local type reference data, including:
@@ -60,10 +79,10 @@ Current Pokemon Champions legal-species snapshot used by the app.
 
 Current snapshot metadata:
 
-- regulation: `Regulation M-A`
-- regulation window: `April 8, 2026 to June 17, 2026`
-- sourced at: `April 18, 2026`
-- source note: `MetaVGC regulation snapshot`
+- regulation: `Regulation M-B`
+- regulation window: `June 17, 2026 onward`
+- sourced at: `June 17, 2026`
+- source note: `Regulation M-A snapshot plus Regulation M-B additions`
 
 ### `src/data/championsMetaMovesetsRaw.ts`
 
@@ -72,7 +91,8 @@ Raw text export of Pokemon Champions meta sets.
 Current snapshot metadata:
 
 - source: `https://www.pokemon-zone.com/champions/pokemon/`
-- exportedAt: `2026-04-19T17:28:05.487Z`
+- exportedAt: `2026-06-17T14:22:00.000Z`
+- source note: `Regulation M-B rows are hand-curated probable defaults from Pokemon Zone learnsets and news`
 
 ## What Is Not In This Folder
 
@@ -98,7 +118,7 @@ Best for battle-ready structured data:
 - learnsets
 - showdown-aligned battle behavior
 
-This project already uses `@pkmn/dex` as the source for the two JSON files in `public/data/`.
+This project already uses `@pkmn/dex` as the source for the JSON files in `public/data/`.
 
 Good when you want:
 
@@ -204,3 +224,4 @@ That regenerates:
 
 - `public/data/pokemon-db.json`
 - `public/data/battle-data.json`
+- `public/data/champions-learnsets.json`

@@ -52,6 +52,7 @@ The app uses reproducible local datasets generated from `@pkmn/dex`:
 
 - `public/data/pokemon-db.json`
 - `public/data/battle-data.json`
+- `public/data/champions-learnsets.json`
 
 Generate or refresh them with:
 

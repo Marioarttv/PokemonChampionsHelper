@@ -170,9 +170,9 @@ function baseSnapshot(): ShowdownBridgeSnapshot {
       },
     },
     battle: {
-      id: "gen9championsvgc2026regma-test",
-      roomid: "battle-gen9championsvgc2026regma-test",
-      tier: "[Gen 9 Champions] VGC 2026 Reg M-A",
+      id: "gen9championsvgc2026regmb-test",
+      roomid: "battle-gen9championsvgc2026regmb-test",
+      tier: "[Gen 9 Champions] VGC 2026 Reg M-B",
       gameType: "doubles",
       gen: 9,
       turn: 2,

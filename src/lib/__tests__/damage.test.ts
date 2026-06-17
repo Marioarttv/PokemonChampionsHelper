@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { calculateRoughDamage } from "../damage";
 import { getDefaultDamageAbilityId } from "../damageAbilities";
+import { getDamageItemOptions, normalizeDamageItemId } from "../damageItems";
 import { makePokemon } from "../engine/__tests__/fixtures";
 
 describe("damage ability handling", () => {
@@ -155,6 +156,44 @@ describe("damage ability handling", () => {
     expect(defaultAbility).toBe("toughclaws");
     expect(toughClawsEstimate.attackerAbilityMultiplier).toBe(1.3);
     expect(toughClawsEstimate.maxDamage).toBeGreaterThan(noAbilityEstimate.maxDamage);
+  });
+});
+
+describe("damage item handling", () => {
+  it("includes Life Orb and applies its attacker damage boost", () => {
+    const attacker = makePokemon("Life Orb Attacker", {
+      types: ["Fire"],
+      baseStats: { spa: 120 },
+    });
+    const defender = makePokemon("Neutral Target", {
+      types: ["Normal"],
+      baseStats: { hp: 100, spd: 100 },
+    });
+
+    const noItemEstimate = calculateRoughDamage({
+      attacker,
+      defender,
+      attackType: "fire",
+      moveName: "Flamethrower",
+      basePower: 90,
+      category: "special",
+      isSpreadMove: false,
+    });
+    const lifeOrbEstimate = calculateRoughDamage({
+      attacker,
+      defender,
+      attackType: "fire",
+      moveName: "Flamethrower",
+      basePower: 90,
+      category: "special",
+      isSpreadMove: false,
+      attackerItem: "lifeorb",
+    });
+
+    expect(normalizeDamageItemId("Life Orb")).toBe("lifeorb");
+    expect(getDamageItemOptions("attacker").some((item) => item.id === "lifeorb")).toBe(true);
+    expect(lifeOrbEstimate.attackerItemMultiplier).toBe(1.3);
+    expect(lifeOrbEstimate.maxDamage).toBeGreaterThan(noItemEstimate.maxDamage);
   });
 });
 
