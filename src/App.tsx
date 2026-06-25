@@ -9,6 +9,7 @@ import {
   type CSSProperties,
   type ChangeEvent,
   type Dispatch,
+  type ReactNode,
   type SetStateAction,
 } from "react";
 import { createPortal } from "react-dom";
@@ -7221,6 +7222,7 @@ type BattleLabSlotProps = {
   projectedHpDelta: number | null;
   pulse: number;
   effectFlash: "protect" | "status" | null;
+  isActive: boolean;
   editing: boolean;
   quickEditing: boolean;
   canFaint: boolean;
@@ -7243,6 +7245,7 @@ function BattleLabSlot({
   projectedHpDelta,
   pulse,
   effectFlash,
+  isActive,
   editing,
   quickEditing,
   canFaint,
@@ -7443,7 +7446,7 @@ function BattleLabSlot({
         </div>
       ) : null}
 
-      {editing && simulatorPatch && typeof document !== "undefined"
+      {isActive && editing && simulatorPatch && typeof document !== "undefined"
         ? createPortal(
             <div
               className="bl-slot-editor-modal"
@@ -8166,6 +8169,7 @@ function CalculatorView() {
 type TeamBuilderViewProps = {
   onStartNewTeam: () => void;
   featureVisibility: FeatureVisibilitySettings;
+  isActive: boolean;
 };
 
 type MatchSaveSelectorProps = {
@@ -8440,7 +8444,7 @@ function EnemyStatSpreadEditorModal({
   );
 }
 
-function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewProps) {
+function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBuilderViewProps) {
   const showTeamPreviewFeature = isFeatureVisible(featureVisibility, "teamPreview");
   const showDoublesThreatBoardFeature = isFeatureVisible(featureVisibility, "doublesThreatBoard");
   const showBattleEngineFeature = isFeatureVisible(featureVisibility, "battleEngine");
@@ -9707,7 +9711,7 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewP
   };
 
   useEffect(() => {
-    if (!showdownImportOpen && !showdownExportOpen) {
+    if (!isActive || (!showdownImportOpen && !showdownExportOpen)) {
       return;
     }
 
@@ -9726,7 +9730,7 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewP
       window.removeEventListener("keydown", handleKey);
       document.body.style.overflow = previousOverflow;
     };
-  }, [showdownExportOpen, showdownImportOpen]);
+  }, [isActive, showdownExportOpen, showdownImportOpen]);
 
   useEffect(() => {
     if (filledLeadOptions.length === 0) {
@@ -12446,7 +12450,7 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewP
 
   return (
     <>
-      {editingEnemyStatSpreadEntry && typeof document !== "undefined" ? (
+      {isActive && editingEnemyStatSpreadEntry && typeof document !== "undefined" ? (
         <EnemyStatSpreadEditorModal
           entry={editingEnemyStatSpreadEntry}
           basePokemonBySpeciesKey={basePokemonBySpeciesKey}
@@ -12642,7 +12646,7 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewP
           )}
         </div>
 
-        {showdownImportOpen && typeof document !== "undefined"
+        {isActive && showdownImportOpen && typeof document !== "undefined"
           ? createPortal(
           <div
             className="showdown-import-modal"
@@ -12719,7 +12723,7 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewP
           )
           : null}
 
-        {showdownExportOpen && typeof document !== "undefined"
+        {isActive && showdownExportOpen && typeof document !== "undefined"
           ? createPortal(
           <div
             className="showdown-import-modal"
@@ -13267,7 +13271,7 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewP
           </div>
         </div>
 
-        {saveMatchOpen && typeof document !== "undefined"
+        {isActive && saveMatchOpen && typeof document !== "undefined"
           ? createPortal(
               <div
                 className="showdown-import-modal match-save-modal"
@@ -15493,6 +15497,7 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewP
                                   pulse={id ? damagePulses[id] ?? 0 : 0}
                                   effectFlash={id ? slotFlashes[id] ?? null : null}
                                   motion={getSlotMotion("enemy", i === 0 ? 0 : 1, id)}
+                                  isActive={isActive}
                                   editing={editingSlotKey === slotKey && simViewMode === "real"}
                                   quickEditing={simViewMode === "real" && !battleEngineUsesShowdown}
                                   canFaint={simViewMode === "real" && !battleEngineUsesShowdown && Boolean(combatant && combatant.currentHp > 0)}
@@ -15602,6 +15607,7 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewP
                                   pulse={id ? damagePulses[id] ?? 0 : 0}
                                   effectFlash={id ? slotFlashes[id] ?? null : null}
                                   motion={getSlotMotion("ally", i === 0 ? 0 : 1, id)}
+                                  isActive={isActive}
                                   editing={editingSlotKey === slotKey && simViewMode === "real"}
                                   quickEditing={simViewMode === "real" && !battleEngineUsesShowdown}
                                   canFaint={simViewMode === "real" && !battleEngineUsesShowdown && Boolean(combatant && combatant.currentHp > 0)}
@@ -16280,7 +16286,7 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility }: TeamBuilderViewP
         ) : null}
       </section>
 
-      {battleLabFaintPrompt ? (
+      {isActive && battleLabFaintPrompt ? (
         <BattleLabFaintModal
           prompt={battleLabFaintPrompt}
           onChoose={(teamIndex) => {
@@ -19893,7 +19899,11 @@ function OhkoFinderView() {
   );
 }
 
-function MatchHistoryView() {
+type MatchHistoryViewProps = {
+  isActive: boolean;
+};
+
+function MatchHistoryView({ isActive }: MatchHistoryViewProps) {
   const [entries, setEntries] = useState<PersistedMatchHistoryEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [teamSort, setTeamSort] = useState<MatchHistoryTeamSort>("latest");
@@ -20122,7 +20132,7 @@ function MatchHistoryView() {
         <div className="match-history-empty">No match history yet. Save an enemy team from Team Builder after a game.</div>
       )}
 
-      {editingEntry && typeof document !== "undefined"
+      {isActive && editingEntry && typeof document !== "undefined"
         ? createPortal(
             <div
               className="showdown-import-modal match-save-modal"
@@ -20572,7 +20582,11 @@ function createEmptySimpleEnemySlots(): SimpleEnemySlot[] {
   return Array.from({ length: MAX_OPPONENT_SCOUT_SLOTS }, createEmptySimpleEnemySlot);
 }
 
-function SimpleEnemyTeamView() {
+type SimpleEnemyTeamViewProps = {
+  isActive: boolean;
+};
+
+function SimpleEnemyTeamView({ isActive }: SimpleEnemyTeamViewProps) {
   const [database, setDatabase] = useState<PokemonRecord[] | null>(null);
   const [battleData, setBattleData] = useState<{
     abilities: AbilityRecord[];
@@ -20931,7 +20945,7 @@ function SimpleEnemyTeamView() {
   };
 
   useEffect(() => {
-    if (!showdownImportOpen) return;
+    if (!isActive || !showdownImportOpen) return;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
@@ -20946,7 +20960,7 @@ function SimpleEnemyTeamView() {
       window.removeEventListener("keydown", handleKey);
       document.body.style.overflow = previousOverflow;
     };
-  }, [showdownImportOpen]);
+  }, [isActive, showdownImportOpen]);
 
   const loadedSlotCount = enemySlots.filter((slot) => resolveSlotPokemon(slot)).length;
 
@@ -21026,7 +21040,7 @@ function SimpleEnemyTeamView() {
         </div>
       </section>
 
-      {showdownImportOpen && typeof document !== "undefined"
+      {isActive && showdownImportOpen && typeof document !== "undefined"
         ? createPortal(
             <div
               className="showdown-import-modal"
@@ -21336,8 +21350,38 @@ function SettingsView({
   );
 }
 
+type SiteSectionPanelProps = {
+  mode: SiteMode;
+  activeMode: SiteMode;
+  shouldMount: boolean;
+  children: ReactNode;
+};
+
+function SiteSectionPanel({
+  mode,
+  activeMode,
+  shouldMount,
+  children,
+}: SiteSectionPanelProps) {
+  const isActive = activeMode === mode;
+
+  return (
+    <div
+      className="site-section-panel"
+      data-site-section={mode}
+      hidden={!isActive}
+      aria-hidden={isActive ? undefined : true}
+    >
+      {shouldMount ? children : null}
+    </div>
+  );
+}
+
 function App() {
   const [siteMode, setSiteMode] = useState<SiteMode>("calculator");
+  const [mountedSiteModes, setMountedSiteModes] = useState<Set<SiteMode>>(
+    () => new Set(["calculator"]),
+  );
   const [teamBuilderResetKey, setTeamBuilderResetKey] = useState(0);
   const [featureVisibility, setFeatureVisibility] = useState<FeatureVisibilitySettings>(loadFeatureVisibilitySettings);
   const [hideBring4, setHideBring4] = useState<boolean>(loadHideBring4Setting);
@@ -21354,6 +21398,18 @@ function App() {
       setSiteMode("settings");
     }
   }, [siteMode, visibleSiteSections]);
+
+  useEffect(() => {
+    setMountedSiteModes((current) => {
+      if (current.has(siteMode)) {
+        return current;
+      }
+
+      const next = new Set(current);
+      next.add(siteMode);
+      return next;
+    });
+  }, [siteMode]);
 
   useEffect(() => {
     saveFeatureVisibilitySettings(featureVisibility);
@@ -21373,6 +21429,8 @@ function App() {
   const resetFeatureVisibility = () => {
     setFeatureVisibility(createDefaultFeatureVisibility());
   };
+
+  const shouldMountSiteMode = (mode: SiteMode) => siteMode === mode || mountedSiteModes.has(mode);
 
   return (
     <div className="app-shell">
@@ -21425,33 +21483,100 @@ function App() {
           ))}
         </nav>
 
-        {siteMode === "calculator" ? (
+        <SiteSectionPanel
+          mode="calculator"
+          activeMode={siteMode}
+          shouldMount={shouldMountSiteMode("calculator")}
+        >
           <CalculatorView />
-        ) : siteMode === "team" ? (
-          hideBring4 ? (
-            <SimpleEnemyTeamView />
+        </SiteSectionPanel>
+
+        <SiteSectionPanel
+          mode="team"
+          activeMode={siteMode}
+          shouldMount={shouldMountSiteMode("team")}
+        >
+          {hideBring4 ? (
+            <SimpleEnemyTeamView isActive={siteMode === "team"} />
           ) : (
             <TeamBuilderView
               key={teamBuilderResetKey}
               featureVisibility={featureVisibility}
+              isActive={siteMode === "team"}
               onStartNewTeam={() => setTeamBuilderResetKey((value) => value + 1)}
             />
-          )
-        ) : siteMode === "battle" ? (
+          )}
+        </SiteSectionPanel>
+
+        <SiteSectionPanel
+          mode="battle"
+          activeMode={siteMode}
+          shouldMount={shouldMountSiteMode("battle")}
+        >
           <BattleArenaPage />
-        ) : siteMode === "movesets" ? (
+        </SiteSectionPanel>
+
+        <SiteSectionPanel
+          mode="movesets"
+          activeMode={siteMode}
+          shouldMount={shouldMountSiteMode("movesets")}
+        >
           <MovesetDatabaseView />
-        ) : siteMode === "moveFinder" ? (
+        </SiteSectionPanel>
+
+        <SiteSectionPanel
+          mode="moveFinder"
+          activeMode={siteMode}
+          shouldMount={shouldMountSiteMode("moveFinder")}
+        >
           <MoveFinderView />
-        ) : siteMode === "speed" ? (
+        </SiteSectionPanel>
+
+        <SiteSectionPanel
+          mode="speed"
+          activeMode={siteMode}
+          shouldMount={shouldMountSiteMode("speed")}
+        >
           <SpeedTiersView />
-        ) : siteMode === "finalGambit" ? (
+        </SiteSectionPanel>
+
+        <SiteSectionPanel
+          mode="finalGambit"
+          activeMode={siteMode}
+          shouldMount={shouldMountSiteMode("finalGambit")}
+        >
           <FinalGambitView />
-        ) : siteMode === "ohko" ? (
+        </SiteSectionPanel>
+
+        <SiteSectionPanel
+          mode="ohko"
+          activeMode={siteMode}
+          shouldMount={shouldMountSiteMode("ohko")}
+        >
           <OhkoFinderView />
-        ) : siteMode === "training" ? (
+        </SiteSectionPanel>
+
+        <SiteSectionPanel
+          mode="training"
+          activeMode={siteMode}
+          shouldMount={shouldMountSiteMode("training")}
+        >
           <TrainingOptimizerView />
-        ) : siteMode === "settings" ? (
+        </SiteSectionPanel>
+
+        <SiteSectionPanel
+          mode="history"
+          activeMode={siteMode}
+          shouldMount={shouldMountSiteMode("history")}
+        >
+          <MatchHistoryView isActive={siteMode === "history"} />
+        </SiteSectionPanel>
+
+        <SiteSectionPanel
+          mode="settings"
+          activeMode={siteMode}
+          shouldMount={shouldMountSiteMode("settings")}
+        >
           <SettingsView
             featureVisibility={featureVisibility}
             onToggleFeature={updateFeatureVisibility}
@@ -21459,9 +21584,7 @@ function App() {
             hideBring4={hideBring4}
             onToggleHideBring4={setHideBring4}
           />
-        ) : (
-          <MatchHistoryView />
-        )}
+        </SiteSectionPanel>
       </main>
     </div>
   );
