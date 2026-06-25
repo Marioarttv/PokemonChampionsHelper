@@ -217,9 +217,8 @@ type SpeedTierSort = "boosted" | "neutral" | "base" | "name";
 type MoveFinderSpeedMetric = "base" | "neutral" | "boosted";
 type MoveFinderSpeedComparator = "any" | "atLeast" | "atMost";
 type FinalGambitScope = "regulation" | "all";
-type FinalGambitTargetHpMode = "default" | "min" | "max";
-type FinalGambitResultFilter = "all" | "kills" | "cantKill" | "immune";
-type FinalGambitRowStatus = "kills" | "survives" | "immune";
+type FinalGambitResultFilter = "all" | "canKill" | "guaranteed" | "possible" | "cantKill" | "immune";
+type FinalGambitRowStatus = "guaranteed" | "possible" | "survives" | "immune";
 type ShowdownBridgeStatus = "idle" | "ready" | "installed" | "waiting" | "error";
 type HiddenFeatureId =
   | "typeCalculator"
@@ -17890,44 +17889,27 @@ function getFinalGambitTargetEntries(database: PokemonRecord[] | null, scope: Fi
     .sort((left, right) => left.num - right.num || left.name.localeCompare(right.name));
 }
 
-function getFinalGambitTargetHp(pokemon: PokemonRecord, mode: FinalGambitTargetHpMode) {
-  if (mode === "min") {
-    return getChampionsComputedStats(pokemon, {
-      spread: {
-        nature: getDefaultChampionsStatSpreadForPokemon(pokemon).nature,
-        statPoints: {
-          ...getDefaultChampionsStatSpreadForPokemon(pokemon).statPoints,
-          hp: 0,
-        },
-      },
-    }).hp;
-  }
+function getFinalGambitHpRange(pokemon: PokemonRecord) {
+  const defaultSpread = getDefaultChampionsStatSpreadForPokemon(pokemon);
+  const minHpSpread: ChampionsStatSpread = {
+    nature: defaultSpread.nature,
+    statPoints: {
+      ...defaultSpread.statPoints,
+      hp: 0,
+    },
+  };
+  const maxHpSpread: ChampionsStatSpread = {
+    nature: defaultSpread.nature,
+    statPoints: {
+      ...defaultSpread.statPoints,
+      hp: CHAMPIONS_MAX_STAT_POINTS_PER_STAT,
+    },
+  };
 
-  if (mode === "max") {
-    return getChampionsComputedStats(pokemon, {
-      spread: {
-        nature: getDefaultChampionsStatSpreadForPokemon(pokemon).nature,
-        statPoints: {
-          ...getDefaultChampionsStatSpreadForPokemon(pokemon).statPoints,
-          hp: CHAMPIONS_MAX_STAT_POINTS_PER_STAT,
-        },
-      },
-    }).hp;
-  }
-
-  return getChampionsComputedStats(pokemon).hp;
-}
-
-function getFinalGambitTargetHpLabel(mode: FinalGambitTargetHpMode) {
-  if (mode === "min") {
-    return "0 HP";
-  }
-
-  if (mode === "max") {
-    return "32 HP";
-  }
-
-  return "Default HP";
+  return {
+    minHp: getChampionsComputedStats(pokemon, { spread: minHpSpread }).hp,
+    maxHp: getChampionsComputedStats(pokemon, { spread: maxHpSpread }).hp,
+  };
 }
 
 function parseFinalGambitHp(value: string) {
@@ -17940,11 +17922,15 @@ function getFinalGambitResultLabel(status: FinalGambitRowStatus, margin: number)
     return "Immune";
   }
 
-  if (status === "kills") {
-    return `KO by ${margin} HP`;
+  if (status === "guaranteed") {
+    return `KO all by ${margin} HP`;
   }
 
-  return `Lives by ${margin} HP`;
+  if (status === "possible") {
+    return `KO min, miss max by ${margin} HP`;
+  }
+
+  return `Lives min by ${margin} HP`;
 }
 
 function FinalGambitView() {
@@ -17953,7 +17939,6 @@ function FinalGambitView() {
   const [hpValue, setHpValue] = useState("200");
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState<FinalGambitScope>("regulation");
-  const [targetHpMode, setTargetHpMode] = useState<FinalGambitTargetHpMode>("default");
   const [resultFilter, setResultFilter] = useState<FinalGambitResultFilter>("all");
   const deferredQuery = useDeferredValue(query);
 
@@ -17986,7 +17971,8 @@ function FinalGambitView() {
     const normalizedQuery = normalizeTextKey(deferredQuery);
     const nextRows: Array<{
       pokemon: PokemonRecord;
-      targetHp: number;
+      minHp: number;
+      maxHp: number;
       status: FinalGambitRowStatus;
       margin: number;
       fightingMultiplier: number | null;
@@ -18002,27 +17988,39 @@ function FinalGambitView() {
         continue;
       }
 
-      const targetHp = getFinalGambitTargetHp(pokemon, targetHpMode);
+      const hpRange = getFinalGambitHpRange(pokemon);
       const fightingMultiplier = getPokemonDefensiveMultiplier(pokemon, "fighting");
       const isImmune = fightingMultiplier === 0;
       const status: FinalGambitRowStatus =
         isImmune
           ? "immune"
-          : finalGambitHp !== null && finalGambitHp >= targetHp
-            ? "kills"
-            : "survives";
+          : finalGambitHp !== null && finalGambitHp >= hpRange.maxHp
+            ? "guaranteed"
+            : finalGambitHp !== null && finalGambitHp >= hpRange.minHp
+              ? "possible"
+              : "survives";
       const margin =
-        status === "kills"
-          ? Math.max(0, (finalGambitHp ?? 0) - targetHp)
-          : status === "survives"
-            ? Math.max(0, targetHp - (finalGambitHp ?? 0))
-            : 0;
+        status === "guaranteed"
+          ? Math.max(0, (finalGambitHp ?? 0) - hpRange.maxHp)
+          : status === "possible"
+            ? Math.max(0, hpRange.maxHp - (finalGambitHp ?? 0))
+            : status === "survives"
+              ? Math.max(0, hpRange.minHp - (finalGambitHp ?? 0))
+              : 0;
 
-      if (resultFilter === "kills" && status !== "kills") {
+      if (resultFilter === "canKill" && status !== "guaranteed" && status !== "possible") {
         continue;
       }
 
-      if (resultFilter === "cantKill" && status === "kills") {
+      if (resultFilter === "guaranteed" && status !== "guaranteed") {
+        continue;
+      }
+
+      if (resultFilter === "possible" && status !== "possible") {
+        continue;
+      }
+
+      if (resultFilter === "cantKill" && (status === "guaranteed" || status === "possible")) {
         continue;
       }
 
@@ -18032,7 +18030,8 @@ function FinalGambitView() {
 
       nextRows.push({
         pokemon,
-        targetHp,
+        minHp: hpRange.minHp,
+        maxHp: hpRange.maxHp,
         status,
         margin,
         fightingMultiplier,
@@ -18041,9 +18040,10 @@ function FinalGambitView() {
 
     return nextRows.sort((left, right) => {
       const statusOrder: Record<FinalGambitRowStatus, number> = {
-        kills: 0,
-        survives: 1,
-        immune: 2,
+        guaranteed: 0,
+        possible: 1,
+        survives: 2,
+        immune: 3,
       };
       const statusDelta = statusOrder[left.status] - statusOrder[right.status];
 
@@ -18051,34 +18051,41 @@ function FinalGambitView() {
         return statusDelta;
       }
 
-      if (left.status === "kills") {
-        return right.targetHp - left.targetHp || left.pokemon.name.localeCompare(right.pokemon.name);
+      if (left.status === "guaranteed") {
+        return right.maxHp - left.maxHp || left.pokemon.name.localeCompare(right.pokemon.name);
+      }
+
+      if (left.status === "possible") {
+        return left.margin - right.margin || right.minHp - left.minHp || left.pokemon.name.localeCompare(right.pokemon.name);
       }
 
       if (left.status === "survives") {
-        return left.targetHp - right.targetHp || left.pokemon.name.localeCompare(right.pokemon.name);
+        return left.minHp - right.minHp || left.pokemon.name.localeCompare(right.pokemon.name);
       }
 
       return left.pokemon.name.localeCompare(right.pokemon.name);
     });
-  }, [deferredQuery, finalGambitHp, resultFilter, targetEntries, targetHpMode]);
+  }, [deferredQuery, finalGambitHp, resultFilter, targetEntries]);
   const allScopedRows = useMemo(() => {
     return targetEntries.map((pokemon) => {
-      const targetHp = getFinalGambitTargetHp(pokemon, targetHpMode);
+      const hpRange = getFinalGambitHpRange(pokemon);
       const fightingMultiplier = getPokemonDefensiveMultiplier(pokemon, "fighting");
       const status: FinalGambitRowStatus =
         fightingMultiplier === 0
           ? "immune"
-          : finalGambitHp !== null && finalGambitHp >= targetHp
-            ? "kills"
-            : "survives";
+          : finalGambitHp !== null && finalGambitHp >= hpRange.maxHp
+            ? "guaranteed"
+            : finalGambitHp !== null && finalGambitHp >= hpRange.minHp
+              ? "possible"
+              : "survives";
       return { status };
     });
-  }, [finalGambitHp, targetEntries, targetHpMode]);
-  const killCount = allScopedRows.filter((row) => row.status === "kills").length;
+  }, [finalGambitHp, targetEntries]);
+  const guaranteedCount = allScopedRows.filter((row) => row.status === "guaranteed").length;
+  const possibleCount = allScopedRows.filter((row) => row.status === "possible").length;
+  const killCount = guaranteedCount + possibleCount;
   const immuneCount = allScopedRows.filter((row) => row.status === "immune").length;
   const cantKillCount = allScopedRows.length - killCount;
-  const hpModeLabel = getFinalGambitTargetHpLabel(targetHpMode);
   const isStale = query !== deferredQuery;
 
   return (
@@ -18094,7 +18101,7 @@ function FinalGambitView() {
         </div>
         <div className="team-builder-meta">
           <span>{finalGambitHp ?? 0} HP damage</span>
-          <span>{hpModeLabel} targets</span>
+          <span>Min-max HP targets</span>
           <span>{scope === "regulation" ? POKEMON_CHAMPIONS_ACTIVE_REGULATION : "Local dex"}</span>
         </div>
       </section>
@@ -18137,19 +18144,6 @@ function FinalGambitView() {
               <option value="all">Local Dex</option>
             </select>
           </label>
-
-          <label className="move-finder-field">
-            <span className="team-input-label">Target HP</span>
-            <select
-              className="team-select"
-              value={targetHpMode}
-              onChange={(event) => setTargetHpMode(event.target.value as FinalGambitTargetHpMode)}
-            >
-              <option value="default">Default Champions HP</option>
-              <option value="min">0 HP points</option>
-              <option value="max">32 HP points</option>
-            </select>
-          </label>
         </div>
 
         <div className="final-gambit-summary-grid">
@@ -18160,6 +18154,14 @@ function FinalGambitView() {
           <article className="final-gambit-summary-card good">
             <span>Can Kill</span>
             <strong>{killCount}</strong>
+          </article>
+          <article className="final-gambit-summary-card guaranteed">
+            <span>Guaranteed</span>
+            <strong>{guaranteedCount}</strong>
+          </article>
+          <article className="final-gambit-summary-card possible">
+            <span>Possible</span>
+            <strong>{possibleCount}</strong>
           </article>
           <article className="final-gambit-summary-card warn">
             <span>Can&apos;t Kill</span>
@@ -18174,7 +18176,9 @@ function FinalGambitView() {
         <div className="ohko-filter-chips final-gambit-filter" role="group" aria-label="Final Gambit result filter">
           {([
             ["all", "All"],
-            ["kills", "Can Kill"],
+            ["canKill", "Can Kill"],
+            ["guaranteed", "Guaranteed"],
+            ["possible", "Possible"],
             ["cantKill", "Can't Kill"],
             ["immune", "Immune"],
           ] as const).map(([value, label]) => (
@@ -18229,8 +18233,12 @@ function FinalGambitView() {
 
                 <div className="final-gambit-result-metrics">
                   <span>
-                    <small>Target HP</small>
-                    <strong>{row.targetHp}</strong>
+                    <small>Min HP</small>
+                    <strong>{row.minHp}</strong>
+                  </span>
+                  <span>
+                    <small>Max HP</small>
+                    <strong>{row.maxHp}</strong>
                   </span>
                   <span>
                     <small>Fighting</small>

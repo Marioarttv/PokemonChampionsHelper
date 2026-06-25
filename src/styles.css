@@ -1515,14 +1515,14 @@ img {
 
 .final-gambit-toolbar {
   display: grid;
-  grid-template-columns: minmax(110px, 0.7fr) minmax(220px, 1.4fr) minmax(150px, 1fr) minmax(160px, 1fr);
+  grid-template-columns: minmax(110px, 0.7fr) minmax(220px, 1.6fr) minmax(150px, 1fr);
   gap: 0.6rem;
   align-items: end;
 }
 
 .final-gambit-summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 0.5rem;
 }
 
@@ -1552,6 +1552,14 @@ img {
 
 .final-gambit-summary-card.good {
   border-color: rgba(74, 222, 128, 0.28);
+}
+
+.final-gambit-summary-card.guaranteed {
+  border-color: rgba(61, 216, 184, 0.26);
+}
+
+.final-gambit-summary-card.possible {
+  border-color: rgba(96, 165, 250, 0.26);
 }
 
 .final-gambit-summary-card.warn {
@@ -1593,8 +1601,12 @@ img {
   background: rgba(16, 22, 44, 0.82);
 }
 
-.final-gambit-result-card.kills {
+.final-gambit-result-card.guaranteed {
   border-color: rgba(74, 222, 128, 0.28);
+}
+
+.final-gambit-result-card.possible {
+  border-color: rgba(96, 165, 250, 0.26);
 }
 
 .final-gambit-result-card.survives {
@@ -1672,9 +1684,14 @@ img {
   white-space: nowrap;
 }
 
-.final-gambit-status-pill.kills {
+.final-gambit-status-pill.guaranteed {
   background: rgba(74, 222, 128, 0.16);
   color: #dfffe8;
+}
+
+.final-gambit-status-pill.possible {
+  background: rgba(96, 165, 250, 0.14);
+  color: #dbeafe;
 }
 
 .final-gambit-status-pill.survives {
