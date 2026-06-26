@@ -72,8 +72,9 @@ import {
   calculateRoughDamage,
   getEffectiveDamageBaseStats,
   getStatStageMultiplier,
+  getWeightBasedDamageMoveCategory,
   isFinalGambitMove,
-  isLowKickMove,
+  isWeightBasedDamageMove,
   type DamageCategory,
   type DamageTerrain,
   type DamageWeather,
@@ -685,7 +686,7 @@ function getAttackBasePowerDisplay(basePower?: number) {
 }
 
 function isZeroBasePowerDamageMove(moveName: string | null | undefined) {
-  return isLowKickMove(moveName) || isFinalGambitMove(moveName);
+  return isWeightBasedDamageMove(moveName) || isFinalGambitMove(moveName);
 }
 
 function getMoveRecordDamageBasePower(move: Pick<MoveRecord, "name" | "basePower">) {
@@ -716,7 +717,7 @@ function normalizeSavedMoveBasePower(
 function formatMoveBasePowerLabel(basePower: number | null | undefined, moveName: string | null | undefined) {
   const normalizedBasePower = normalizeSavedMoveBasePower(basePower, moveName);
 
-  if (normalizedBasePower === 0 && isLowKickMove(moveName)) {
+  if (normalizedBasePower === 0 && isWeightBasedDamageMove(moveName)) {
     return "Weight BP";
   }
 
@@ -732,7 +733,7 @@ function getDamageInputBasePower(
   defaultPower: number | null,
   moveName: string | null | undefined,
 ) {
-  if (isLowKickMove(moveName)) {
+  if (isWeightBasedDamageMove(moveName)) {
     return 0;
   }
 
@@ -763,6 +764,11 @@ function getKnownMoveBasePower(move: PersistedKnownMove) {
 function getKnownMoveCategory(move: PersistedKnownMove, pokemon?: PokemonRecord | null) {
   if (move.category === "physical" || move.category === "special" || move.category === "status") {
     return move.category;
+  }
+
+  const weightBasedCategory = getWeightBasedDamageMoveCategory(getKnownMoveName(move));
+  if (weightBasedCategory) {
+    return weightBasedCategory;
   }
 
   return getKnownMoveBasePower(move) !== null ? getPreferredDamageCategory(pokemon) : "status";
@@ -4872,7 +4878,7 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
             <div className="damage-move-grid">
               {damageMoveRows.map((row) => {
                 const effectiveType = row.estimate?.effectiveAttackType ?? row.attack.type;
-                const isWeightBasedPowerMove = isLowKickMove(row.attack.label);
+                const isWeightBasedPowerMove = isWeightBasedDamageMove(row.attack.label);
                 const isFixedHpPowerMove = isFinalGambitMove(row.attack.label);
                 const isAutoResolvedPowerMove = isWeightBasedPowerMove || isFixedHpPowerMove;
                 return (
@@ -6106,7 +6112,7 @@ function TeamSlotCard({
                       const moveType = getKnownMoveType(move);
                       const category = getKnownMoveCategory(move, pokemon);
                       const basePower = getKnownMoveBasePower(move);
-                      const isWeightBasedPowerMove = isLowKickMove(getKnownMoveName(move));
+                      const isWeightBasedPowerMove = isWeightBasedDamageMove(getKnownMoveName(move));
                       const isFixedHpPowerMove = isFinalGambitMove(getKnownMoveName(move));
                       const isAutoResolvedPowerMove = isWeightBasedPowerMove || isFixedHpPowerMove;
 
@@ -7156,7 +7162,7 @@ function BattleLabMoveButton({
 }: BattleLabMoveButtonProps) {
   const typeColor = move.type ? TYPE_META[move.type].color : "#9aa3b8";
   const accent = move.type ? TYPE_META[move.type].accent : "#4b5472";
-  const labelBp = isLowKickMove(move.name)
+  const labelBp = isWeightBasedDamageMove(move.name)
     ? "Weight"
     : isFinalGambitMove(move.name)
       ? "HP"
@@ -13111,7 +13117,7 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBu
                   <div className="quick-meta-row">
                     <span>{quickMove.category}</span>
                     <span>
-                      Power {isLowKickMove(quickMove.name)
+                      Power {isWeightBasedDamageMove(quickMove.name)
                         ? "Weight"
                         : isFinalGambitMove(quickMove.name)
                           ? "HP"
@@ -15104,7 +15110,7 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBu
                                             <span className="scout-move-power">
                                               <span className="scout-move-power-label">Power</span>
                                               <strong className="scout-move-power-value">
-                                                {isLowKickMove(moveEntry.move.name)
+                                                {isWeightBasedDamageMove(moveEntry.move.name)
                                                   ? "Weight"
                                                   : isFinalGambitMove(moveEntry.move.name)
                                                     ? "HP"
@@ -17106,7 +17112,7 @@ function MovesetDatabaseView() {
                                       ? `${entry.move.category}${
                                           entry.move.basePower > 0 || isZeroBasePowerDamageMove(entry.move.name)
                                             ? ` • Power ${
-                                                isLowKickMove(entry.move.name)
+                                                isWeightBasedDamageMove(entry.move.name)
                                                   ? "Weight"
                                                   : isFinalGambitMove(entry.move.name)
                                                     ? "HP"
@@ -17136,7 +17142,7 @@ function MovesetDatabaseView() {
                         const moveType = getKnownMoveType(move);
                         const category = getKnownMoveCategory(move, selectedPokemon);
                         const basePower = getKnownMoveBasePower(move);
-                        const isWeightBasedPowerMove = isLowKickMove(getKnownMoveName(move));
+                        const isWeightBasedPowerMove = isWeightBasedDamageMove(getKnownMoveName(move));
                         const isFixedHpPowerMove = isFinalGambitMove(getKnownMoveName(move));
                         const isAutoResolvedPowerMove = isWeightBasedPowerMove || isFixedHpPowerMove;
 
@@ -17613,7 +17619,7 @@ function MoveFinderView() {
                     {selectedMove.category}
                     {selectedMove.basePower > 0 || isZeroBasePowerDamageMove(selectedMove.name)
                       ? ` · Power ${
-                          isLowKickMove(selectedMove.name)
+                          isWeightBasedDamageMove(selectedMove.name)
                             ? "Weight"
                             : isFinalGambitMove(selectedMove.name)
                               ? "HP"

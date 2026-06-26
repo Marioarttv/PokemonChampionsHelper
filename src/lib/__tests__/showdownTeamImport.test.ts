@@ -87,4 +87,44 @@ describe("importShowdownTeamText", () => {
     expect(result.importedPokemonCount).toBe(1);
     expect(result.unresolvedSpecies).toEqual([]);
   });
+
+  it("imports Grass Knot as a zero-base-power damaging move", () => {
+    const farigiraf = makePokemon("Farigiraf", {
+      id: "farigiraf",
+      baseSpecies: "Farigiraf",
+      types: ["Normal", "Psychic"],
+      baseStats: { hp: 120, atk: 90, def: 70, spa: 110, spd: 70, spe: 60 },
+    });
+    const moveByKey = createMoveLookup(
+      makeMove("Grass Knot", { id: "grassknot", type: "Grass", category: "Special", basePower: 0, target: "normal" }),
+    );
+
+    const result = importShowdownTeamText(
+      [
+        "Farigiraf @ Colbur Berry",
+        "Ability: Armor Tail",
+        "Level: 50",
+        "- Grass Knot",
+      ].join("\n"),
+      {
+        pokemonEntries: [farigiraf],
+        moveByKey,
+        maxTeamSize: 6,
+        maxMovesPerSlot: 4,
+      },
+    );
+
+    expect(result.slots[0]?.savedAttacks?.[0]).toMatchObject({
+      label: "Grass Knot",
+      type: "grass",
+      basePower: 0,
+      category: "special",
+    });
+    expect(result.slots[0]?.knownMoves?.[0]).toMatchObject({
+      label: "Grass Knot",
+      type: "grass",
+      basePower: 0,
+      category: "special",
+    });
+  });
 });

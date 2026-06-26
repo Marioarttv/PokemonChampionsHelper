@@ -236,6 +236,35 @@ describe("move-specific damage handling", () => {
     expect(estimate.effectiveBasePower).toBe(expectedBasePower);
   });
 
+  it("resolves Farigiraf's Grass Knot against Mega Swampert as 100 BP", () => {
+    const farigiraf = makePokemon("Farigiraf", {
+      types: ["Normal", "Psychic"],
+      baseStats: { hp: 120, atk: 90, def: 70, spa: 110, spd: 70, spe: 60 },
+      weightkg: 160,
+    });
+    const megaSwampert = makePokemon("Swampert-Mega", {
+      types: ["Water", "Ground"],
+      baseStats: { hp: 100, atk: 150, def: 110, spa: 95, spd: 110, spe: 70 },
+      weightkg: 102,
+    });
+
+    const estimate = calculateRoughDamage({
+      attacker: farigiraf,
+      defender: megaSwampert,
+      attackType: "grass",
+      moveName: "Grass Knot",
+      basePower: 0,
+      category: "special",
+      isSpreadMove: false,
+    });
+
+    expect(estimate.inputBasePower).toBe(0);
+    expect(estimate.effectiveBasePower).toBe(100);
+    expect(estimate.effectiveAttackType).toBe("grass");
+    expect(estimate.typeMultiplier).toBe(4);
+    expect(estimate.minDamage).toBeGreaterThan(0);
+  });
+
   it.each([
     ["sun", "fire"],
     ["rain", "water"],

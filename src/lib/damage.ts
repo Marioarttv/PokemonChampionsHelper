@@ -170,6 +170,27 @@ export function isLowKickMove(moveName: string | null | undefined) {
   return moveName ? normalizeMoveNameKey(moveName) === "lowkick" : false;
 }
 
+export function isGrassKnotMove(moveName: string | null | undefined) {
+  return moveName ? normalizeMoveNameKey(moveName) === "grassknot" : false;
+}
+
+export function isWeightBasedDamageMove(moveName: string | null | undefined) {
+  const key = moveName ? normalizeMoveNameKey(moveName) : "";
+  return key === "lowkick" || key === "grassknot";
+}
+
+export function getWeightBasedDamageMoveCategory(moveName: string | null | undefined): DamageCategory | null {
+  if (isLowKickMove(moveName)) {
+    return "physical";
+  }
+
+  if (isGrassKnotMove(moveName)) {
+    return "special";
+  }
+
+  return null;
+}
+
 export function isFinalGambitMove(moveName: string | null | undefined) {
   return moveName ? normalizeMoveNameKey(moveName) === "finalgambit" : false;
 }
@@ -182,7 +203,7 @@ function resolveCurrentHp(currentHp: number | null | undefined, maxHp: number) {
   return Math.max(0, Math.min(maxHp, Math.floor(currentHp)));
 }
 
-export function getLowKickBasePowerFromWeightKg(weightkg: number | null | undefined) {
+export function getWeightBasedBasePowerFromWeightKg(weightkg: number | null | undefined) {
   if (typeof weightkg !== "number" || !Number.isFinite(weightkg) || weightkg < 10) {
     return 20;
   }
@@ -204,6 +225,10 @@ export function getLowKickBasePowerFromWeightKg(weightkg: number | null | undefi
   }
 
   return 120;
+}
+
+export function getLowKickBasePowerFromWeightKg(weightkg: number | null | undefined) {
+  return getWeightBasedBasePowerFromWeightKg(weightkg);
 }
 
 export function getAttackerEffectiveWeather({
@@ -268,7 +293,7 @@ export function resolveWeatherBallDamageInput({
   };
 }
 
-export function resolveLowKickDamageInput({
+export function resolveWeightBasedDamageInput({
   basePower,
   defender,
   moveName,
@@ -277,14 +302,14 @@ export function resolveLowKickDamageInput({
   defender: PokemonRecord;
   moveName?: string | null;
 }) {
-  if (!isLowKickMove(moveName)) {
+  if (!isWeightBasedDamageMove(moveName)) {
     return {
       basePower,
     };
   }
 
   return {
-    basePower: getLowKickBasePowerFromWeightKg(defender.weightkg),
+    basePower: getWeightBasedBasePowerFromWeightKg(defender.weightkg),
   };
 }
 
@@ -365,7 +390,7 @@ export function resolveDamageMoveInput({
     moveName,
     weather,
   });
-  const basePowerResolvedMove = resolveLowKickDamageInput({
+  const basePowerResolvedMove = resolveWeightBasedDamageInput({
     basePower: weatherResolvedMove.basePower,
     defender,
     moveName,

@@ -67,6 +67,38 @@ describe("engine regression coverage", () => {
     expect(result.state.combatants["enemy-0"].currentHp).toBeLessThan(result.state.combatants["enemy-0"].maxHp);
   });
 
+  it("keeps Grass Knot as a damaging weight-based move in battle state", () => {
+    const farigiraf = makePokemon("Farigiraf", {
+      types: ["Normal", "Psychic"],
+      baseStats: { hp: 120, atk: 90, def: 70, spa: 110, spd: 70, spe: 60 },
+      weightkg: 160,
+    });
+    const megaSwampert = makePokemon("Swampert-Mega", {
+      types: ["Water", "Ground"],
+      baseStats: { hp: 100, atk: 150, def: 110, spa: 95, spd: 110, spe: 70 },
+      weightkg: 102,
+    });
+    const grassKnot = makeMove("Grass Knot", {
+      type: "Grass",
+      category: "Special",
+      basePower: 0,
+      target: "normal",
+    });
+    const tackle = makeMove("Tackle", { type: "Normal", category: "Physical", basePower: 50, target: "normal" });
+    const state = createTestBattleState({
+      ally: [makeMember({ side: "ally", slot: 0, pokemon: farigiraf, moveNames: ["Grass Knot"] })],
+      enemy: [makeMember({ side: "enemy", slot: 0, pokemon: megaSwampert, moveNames: ["Tackle"] })],
+      moves: [grassKnot, tackle],
+    });
+    const move = state.combatants["ally-0"].knownMoves[0]!;
+    const preview = getDamagePreview(state, "ally-0", "enemy-0", move);
+
+    expect(move.basePower).toBe(0);
+    expect(move.category).toBe("special");
+    expect(preview?.estimate.effectiveBasePower).toBe(100);
+    expect(preview?.estimate.typeMultiplier).toBe(4);
+  });
+
   it("resolves Mega Sol Weather Ball as user-only sun even while rain stays active", () => {
     const meganium = makePokemon("Meganium-Mega", {
       types: ["Grass", "Fairy"],
