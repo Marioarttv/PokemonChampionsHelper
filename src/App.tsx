@@ -828,6 +828,10 @@ function getResolvedFieldValue(value: string | null | undefined) {
   return trimmed ? trimmed : null;
 }
 
+function getDamageItemIdFromName(itemName: string | null | undefined): DamageItemId {
+  return normalizeDamageItemId(itemName) ?? "none";
+}
+
 function getStatSpreadSummary(spread: ChampionsStatSpread) {
   const entries = CHAMPIONS_STAT_ORDER
     .filter((statId) => spread.statPoints[statId] > 0)
@@ -1597,6 +1601,7 @@ type DoublesSelectedMember = {
   savedAttacks: PersistedSavedAttack[];
   statSpread: ChampionsStatSpread | null;
   abilityName: string | null;
+  itemId: DamageItemId;
   movesetSourceLabel: string;
   speedStat: number;
   hpPercent: number;
@@ -1666,6 +1671,8 @@ function buildMatchupEloTargetResult(options: {
   targetPokemon: PokemonRecord;
   targetSavedAttacks: PersistedSavedAttack[];
   targetStatSpread?: ChampionsStatSpread | null;
+  attackerItem?: DamageItemId;
+  targetItem?: DamageItemId;
   weather: DamageWeather;
   terrain: DamageTerrain;
   attackerGrounded: boolean;
@@ -1681,6 +1688,8 @@ function buildMatchupEloTargetResult(options: {
     targetPokemon,
     targetSavedAttacks,
     targetStatSpread,
+    attackerItem,
+    targetItem,
     weather,
     terrain,
     attackerGrounded,
@@ -1702,6 +1711,8 @@ function buildMatchupEloTargetResult(options: {
       defenderStatStage,
       attackerStatSpread,
       defenderStatSpread: targetStatSpread,
+      attackerItem,
+      defenderItem: targetItem,
     },
   );
   const bestIncomingHit =
@@ -1715,6 +1726,8 @@ function buildMatchupEloTargetResult(options: {
           defenderStatStage,
           attackerStatSpread: targetStatSpread,
           defenderStatSpread: attackerStatSpread,
+          attackerItem: targetItem,
+          defenderItem: attackerItem,
         })
       : null;
   const survivesBestIncomingHit = bestIncomingHit ? bestIncomingHit.estimate.maxPercent < 100 : null;
@@ -1761,6 +1774,8 @@ function getAutomaticDamageRows(options: {
   attackerAbility?: DamageAbilityId;
   attackerAbilityName?: string | null;
   defenderAbility?: DamageAbilityId;
+  attackerItem?: DamageItemId;
+  defenderItem?: DamageItemId;
   reflect?: boolean;
   lightScreen?: boolean;
   auroraVeil?: boolean;
@@ -1780,6 +1795,8 @@ function getAutomaticDamageRows(options: {
     attackerAbility,
     attackerAbilityName,
     defenderAbility,
+    attackerItem,
+    defenderItem,
     reflect,
     lightScreen,
     auroraVeil,
@@ -1812,6 +1829,8 @@ function getAutomaticDamageRows(options: {
       attackerAbility: attackerAbility ?? getDefaultDamageAbilityId(attackerPokemon),
       attackerAbilityName: attackerAbilityName ?? null,
       defenderAbility: defenderAbility ?? getDefaultDamageAbilityId(defenderPokemon),
+      attackerItem: attackerItem ?? "none",
+      defenderItem: defenderItem ?? "none",
       reflect: reflect ?? false,
       lightScreen: lightScreen ?? false,
       auroraVeil: auroraVeil ?? false,
@@ -4171,6 +4190,14 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
     setDamageDefenderAbility(defaultAbilityId);
   }, [defenderEntry?.abilityName, selectedDamageDefenderPokemon?.id, setDamageDefenderAbility]);
 
+  useEffect(() => {
+    setDamageAttackerItem(getDamageItemIdFromName(attackerSlot?.itemName));
+  }, [attackerSlot?.itemName, setDamageAttackerItem]);
+
+  useEffect(() => {
+    setDamageDefenderItem(getDamageItemIdFromName(defenderEntry?.itemName));
+  }, [defenderEntry?.itemName, setDamageDefenderItem]);
+
   const updateDamageMoveConfig = (
     pokemonId: string,
     attackId: string,
@@ -4362,8 +4389,8 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
               attackerAbility: damageDefenderAbility,
               attackerAbilityName: defenderEntry?.abilityName ?? null,
               defenderAbility: damageAttackerAbility,
-              attackerItem: damageAttackerItem,
-              defenderItem: damageDefenderItem,
+              attackerItem: damageDefenderItem,
+              defenderItem: damageAttackerItem,
               helpingHand: damageHelpingHand,
               reflect: damageReflect,
               lightScreen: damageLightScreen,
@@ -4428,8 +4455,8 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
       attackerAbility: damageDefenderAbility,
       attackerAbilityName: defenderEntry?.abilityName ?? null,
       defenderAbility: damageAttackerAbility,
-      attackerItem: damageAttackerItem,
-      defenderItem: damageDefenderItem,
+      attackerItem: damageDefenderItem,
+      defenderItem: damageAttackerItem,
       helpingHand: damageHelpingHand,
       reflect: damageReflect,
       lightScreen: damageLightScreen,
@@ -9881,6 +9908,7 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBu
             savedAttacks: slot.savedAttacks,
             statSpread: slot.resolvedStatSpread,
             abilityName: battleMoveset.abilityName,
+            itemId: getDamageItemIdFromName(slot.itemName),
             movesetSourceLabel: "Saved",
             speedStat: getChampionsComputedStats(battlePokemon, { spread: slot.resolvedStatSpread }).spe,
             hpPercent: runtime.hpPercent,
@@ -9916,6 +9944,7 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBu
           );
           const savedAttacks =
             entry.savedAttacks.length > 0 ? entry.savedAttacks : createStabProxySavedAttacks(battlePokemon);
+          const itemName = entry.itemName ?? battleMoveset.itemName;
 
           const runtime = doublesRuntime[`enemy-${slotIndex}`] ?? DEFAULT_DOUBLES_RUNTIME;
           const member: DoublesSelectedMember = {
@@ -9925,6 +9954,7 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBu
             savedAttacks,
             statSpread: entry.statSpread ?? battleMoveset.statSpread,
             abilityName: battleMoveset.abilityName,
+            itemId: getDamageItemIdFromName(itemName),
             movesetSourceLabel:
               entry.savedAttacks.length > 0
                 ? entry.movesetSource === "custom"
@@ -10043,6 +10073,8 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBu
             attackerStatSpread: member.statSpread,
             defenderStatSpread: defender.statSpread,
             attackerAbilityName: member.abilityName,
+            attackerItem: member.itemId,
+            defenderItem: defender.itemId,
             weather: damageWeather,
             terrain: damageTerrain,
             attackerGrounded: isLikelyGrounded(member.pokemon),
@@ -10085,6 +10117,8 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBu
             attackerStatSpread: member.statSpread,
             defenderStatSpread: defender.statSpread,
             attackerAbilityName: member.abilityName,
+            attackerItem: member.itemId,
+            defenderItem: defender.itemId,
             weather: damageWeather,
             terrain: damageTerrain,
             attackerGrounded: isLikelyGrounded(member.pokemon),
@@ -10327,6 +10361,8 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBu
                 targetPokemon: enemy.pokemon,
                 targetSavedAttacks: enemy.savedAttacks,
                 targetStatSpread: enemy.statSpread ?? null,
+                attackerItem: getDamageItemIdFromName(slot.itemName),
+                targetItem: enemy.itemId,
                 weather: damageWeather,
                 terrain: damageTerrain,
                 attackerGrounded: isLikelyGrounded(pokemon),
@@ -11580,6 +11616,8 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBu
           attackerStatSpread: member.statSpread,
           defenderStatSpread: defender.statSpread,
           attackerAbilityName: member.abilityName,
+          attackerItem: member.itemId,
+          defenderItem: defender.itemId,
           weather: damageWeather,
           terrain: damageTerrain,
           attackerGrounded: isLikelyGrounded(member.pokemon),
@@ -11618,6 +11656,8 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBu
           attackerStatSpread: member.statSpread,
           defenderStatSpread: defender.statSpread,
           attackerAbilityName: member.abilityName,
+          attackerItem: member.itemId,
+          defenderItem: defender.itemId,
           weather: damageWeather,
           terrain: damageTerrain,
           attackerGrounded: isLikelyGrounded(member.pokemon),
@@ -11693,6 +11733,8 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBu
                     attackerAbility: getDefaultDamageAbilityId(attackerPokemon),
                     attackerAbilityName: slot.abilityName,
                     defenderAbility: getDefaultDamageAbilityId(entry.pokemon),
+                    attackerItem: getDamageItemIdFromName(slot.itemName),
+                    defenderItem: getDamageItemIdFromName(entry.itemName),
                     reflect: damageReflect,
                     lightScreen: damageLightScreen,
                     auroraVeil: damageAuroraVeil,
@@ -11773,6 +11815,8 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBu
               targetSavedAttacks:
                 entry.savedAttacks.length > 0 ? entry.savedAttacks : createStabProxySavedAttacks(entry.pokemon),
               targetStatSpread: entry.statSpread ?? null,
+              attackerItem: getDamageItemIdFromName(slot.itemName),
+              targetItem: getDamageItemIdFromName(entry.itemName),
               weather: damageWeather,
               terrain: damageTerrain,
               attackerGrounded,
@@ -11882,6 +11926,8 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBu
       attackerAbility: damageCalcMode === "attack" ? damageAttackerAbility : damageDefenderAbility,
       attackerAbilityName: currentDamageAttackerAbilityName,
       defenderAbility: damageCalcMode === "attack" ? damageDefenderAbility : damageAttackerAbility,
+      attackerItem: damageCalcMode === "attack" ? damageAttackerItem : damageDefenderItem,
+      defenderItem: damageCalcMode === "attack" ? damageDefenderItem : damageAttackerItem,
       reflect: damageReflect,
       lightScreen: damageLightScreen,
       auroraVeil: damageAuroraVeil,
@@ -11895,10 +11941,12 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBu
     currentDamageAttackerPokemon,
     currentDamageDefenderPokemon,
     damageAttackerGrounded,
+    damageAttackerItem,
     damageDefenderAbility,
     damageCalcMode,
     damageDefenseStage,
     damageDefenderGrounded,
+    damageDefenderItem,
     damageReflect,
     damageLightScreen,
     damageAuroraVeil,
@@ -19340,6 +19388,7 @@ function OhkoFinderView() {
         const targetResults = selectedTargets.map((targetPokemon) => {
           const targetStoredMoves = targetStoredMovesById.get(targetPokemon.id) ?? {
             savedAttacks: [],
+            itemName: null,
             statSpread: null,
             movesetSource: "none" as const,
           };
@@ -19351,6 +19400,8 @@ function OhkoFinderView() {
             targetPokemon,
             targetSavedAttacks: targetStoredMoves.savedAttacks,
             targetStatSpread: targetStoredMoves.statSpread,
+            attackerItem: getDamageItemIdFromName(storedMoves.itemName),
+            targetItem: getDamageItemIdFromName(targetStoredMoves.itemName),
             weather: damageWeather,
             terrain: damageTerrain,
             attackerGrounded,
