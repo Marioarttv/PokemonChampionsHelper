@@ -49,6 +49,7 @@ import {
 } from "./lib/engine";
 import {
   getWeightBasedDamageMoveCategory,
+  isHpBasedDamageMove,
   isWeightBasedDamageMove,
   type DamageTerrain,
   type DamageWeather,
@@ -213,7 +214,14 @@ function toKnownMoveFromRecord(move: MoveRecord): PersistedKnownMove {
     name: move.name,
     label: move.name,
     type: getMovePokemonType(move) ?? undefined,
-    basePower: category === "status" ? undefined : move.basePower > 0 ? move.basePower : isWeightBasedDamageMove(move.name) ? 0 : undefined,
+    basePower:
+      category === "status"
+        ? undefined
+        : move.basePower > 0
+          ? move.basePower
+          : isWeightBasedDamageMove(move.name) || isHpBasedDamageMove(move.name)
+            ? 0
+            : undefined,
     category,
     isSpreadMove: isSpreadTarget(move.target),
   };
@@ -236,7 +244,10 @@ function normalizeKnownMove(move: PersistedKnownMove, moveByKey: ReadonlyMap<str
     name: move.name ?? moveName,
     label: move.label || moveName,
     type: type ?? undefined,
-    basePower: move.category === "status" ? undefined : move.basePower ?? (isWeightBasedDamageMove(moveName) ? 0 : undefined),
+    basePower:
+      move.category === "status"
+        ? undefined
+        : move.basePower ?? (isWeightBasedDamageMove(moveName) || isHpBasedDamageMove(moveName) ? 0 : undefined),
     category: move.category ?? getWeightBasedDamageMoveCategory(moveName) ?? (move.basePower && move.basePower > 0 ? "physical" : "status"),
     isSpreadMove: Boolean(move.isSpreadMove),
   } satisfies PersistedKnownMove;

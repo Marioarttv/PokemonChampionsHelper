@@ -1,0 +1,1288 @@
+{
+  "captured_at" : "2026-07-15T16:57:10.111Z",
+  "schema_version" : 1,
+  "source" : {
+    "app_build" : "25",
+    "app_version" : "1.1.4",
+    "bundle_id" : "jp.pokemon.pokemonchampions",
+    "offset_profile" : "champions-1.1.4-25-arm64e-v1",
+    "unity_framework_sha256" : "e162bcd191a4a0fab1c131ed2d7b7755ecc675074da28868a7006c9b54e56dab",
+    "unity_framework_uuid" : "30C1CBE3-025E-3590-88C3-2FEE8235D2A3"
+  },
+  "state" : {
+    "available" : true,
+    "battle_rule" : 5,
+    "battle_stage_md_id" : 1,
+    "battle_type" : 3,
+    "local_team_index" : 0,
+    "opponent_observability" : {
+      "remote_pokemon" : 6,
+      "remote_with_abilities" : 6,
+      "remote_with_base_points" : 0,
+      "remote_with_items" : 1,
+      "remote_with_moves" : 0
+    },
+    "replay_mode" : false,
+    "spectator_mode" : false,
+    "spectator_mode_type" : 0,
+    "teams" : [
+      {
+        "battle_rule" : 5,
+        "is_local_player" : true,
+        "pokemon" : [
+          {
+            "ability_md_id" : 33,
+            "base_points" : {
+              "attack" : 32,
+              "defense" : 0,
+              "hp" : 14,
+              "special_attack" : 0,
+              "special_defense" : 0,
+              "speed" : 20
+            },
+            "can_mega" : true,
+            "change_select_locked" : false,
+            "current_hp" : 0,
+            "entered_field" : false,
+            "extra_type" : 18,
+            "extra_type_cause" : 0,
+            "fainted" : true,
+            "field_effects" : [
+
+            ],
+            "form_no" : 0,
+            "gender" : 0,
+            "group_index" : 0,
+            "illusion_active" : false,
+            "illusion_revealed" : false,
+            "is_local_team" : true,
+            "item_md_id" : 752,
+            "last_ability_md_id" : 67,
+            "max_hp" : 189,
+            "mega_locked" : false,
+            "mega_mode" : true,
+            "move_select_auto" : false,
+            "moves" : [
+              {
+                "current_pp" : 12,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 12,
+                "md_id" : 89,
+                "move_type" : 4,
+                "slot_index" : 0,
+                "target" : 5
+              },
+              {
+                "current_pp" : 11,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 12,
+                "md_id" : 834,
+                "move_type" : 10,
+                "slot_index" : 1,
+                "target" : 1
+              },
+              {
+                "current_pp" : 16,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 16,
+                "md_id" : 8,
+                "move_type" : 14,
+                "slot_index" : 2,
+                "target" : 1
+              },
+              {
+                "current_pp" : 8,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 8,
+                "md_id" : 182,
+                "move_type" : 0,
+                "slot_index" : 3,
+                "target" : 8
+              }
+            ],
+            "nature_correction_md_id" : 3,
+            "needs_change" : false,
+            "personal_id" : 260,
+            "personal_md_index" : 88,
+            "position_index" : -1,
+            "raw_hp_ratio" : 0,
+            "selection_order" : 1,
+            "side_index" : -1,
+            "stat_stages" : {
+              "accuracy" : 0,
+              "attack" : 0,
+              "critical" : 0,
+              "defense" : 0,
+              "evasion" : 0,
+              "hp" : 0,
+              "special_attack" : 0,
+              "special_defense" : 0,
+              "speed" : 0
+            },
+            "status_condition" : 0,
+            "substitute" : false,
+            "team_group_index" : 0,
+            "team_pokemon_index" : 1,
+            "team_user_index" : 0,
+            "type_1" : 10,
+            "type_2" : 4,
+            "user_index" : 0,
+            "volatile_effects" : [
+
+            ]
+          },
+          {
+            "ability_md_id" : 2,
+            "base_points" : {
+              "attack" : 0,
+              "defense" : 0,
+              "hp" : 32,
+              "special_attack" : 32,
+              "special_defense" : 0,
+              "speed" : 2
+            },
+            "can_mega" : false,
+            "change_select_locked" : false,
+            "current_hp" : 0,
+            "entered_field" : false,
+            "extra_type" : 19,
+            "extra_type_cause" : 0,
+            "fainted" : true,
+            "field_effects" : [
+
+            ],
+            "form_no" : 0,
+            "gender" : 1,
+            "group_index" : 1,
+            "illusion_active" : false,
+            "illusion_revealed" : false,
+            "is_local_team" : true,
+            "item_md_id" : 275,
+            "last_ability_md_id" : -1,
+            "max_hp" : 167,
+            "mega_locked" : false,
+            "mega_mode" : false,
+            "move_select_auto" : false,
+            "moves" : [
+              {
+                "current_pp" : 11,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 12,
+                "md_id" : 542,
+                "move_type" : 2,
+                "slot_index" : 0,
+                "target" : 1
+              },
+              {
+                "current_pp" : 12,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 12,
+                "md_id" : 469,
+                "move_type" : 5,
+                "slot_index" : 1,
+                "target" : 13
+              },
+              {
+                "current_pp" : 12,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 12,
+                "md_id" : 311,
+                "move_type" : 0,
+                "slot_index" : 2,
+                "target" : 1
+              },
+              {
+                "current_pp" : 15,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 16,
+                "md_id" : 366,
+                "move_type" : 2,
+                "slot_index" : 3,
+                "target" : 13
+              }
+            ],
+            "nature_correction_md_id" : 16,
+            "needs_change" : false,
+            "personal_id" : 279,
+            "personal_md_index" : 90,
+            "position_index" : -1,
+            "raw_hp_ratio" : 0,
+            "selection_order" : 0,
+            "side_index" : -1,
+            "stat_stages" : {
+              "accuracy" : 0,
+              "attack" : 0,
+              "critical" : 0,
+              "defense" : 0,
+              "evasion" : 0,
+              "hp" : 0,
+              "special_attack" : 0,
+              "special_defense" : 0,
+              "speed" : 0
+            },
+            "status_condition" : 0,
+            "substitute" : false,
+            "team_group_index" : 1,
+            "team_pokemon_index" : 0,
+            "team_user_index" : 0,
+            "type_1" : 10,
+            "type_2" : 2,
+            "user_index" : 0,
+            "volatile_effects" : [
+
+            ]
+          },
+          {
+            "ability_md_id" : 91,
+            "base_points" : {
+              "attack" : 32,
+              "defense" : 0,
+              "hp" : 2,
+              "special_attack" : 0,
+              "special_defense" : 0,
+              "speed" : 32
+            },
+            "can_mega" : false,
+            "change_select_locked" : false,
+            "current_hp" : 197,
+            "entered_field" : false,
+            "extra_type" : 19,
+            "extra_type_cause" : 0,
+            "fainted" : false,
+            "field_effects" : [
+
+            ],
+            "form_no" : 0,
+            "gender" : 0,
+            "group_index" : 2,
+            "illusion_active" : false,
+            "illusion_revealed" : false,
+            "is_local_team" : true,
+            "item_md_id" : 287,
+            "last_ability_md_id" : -1,
+            "max_hp" : 197,
+            "mega_locked" : false,
+            "mega_mode" : false,
+            "move_select_auto" : false,
+            "moves" : [
+              {
+                "current_pp" : 12,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 12,
+                "md_id" : 854,
+                "move_type" : 7,
+                "slot_index" : 0,
+                "target" : 0
+              },
+              {
+                "current_pp" : 12,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 12,
+                "md_id" : 834,
+                "move_type" : 10,
+                "slot_index" : 1,
+                "target" : 0
+              },
+              {
+                "current_pp" : 20,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 20,
+                "md_id" : 812,
+                "move_type" : 10,
+                "slot_index" : 2,
+                "target" : 0
+              },
+              {
+                "current_pp" : 20,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 20,
+                "md_id" : 453,
+                "move_type" : 10,
+                "slot_index" : 3,
+                "target" : 0
+              }
+            ],
+            "nature_correction_md_id" : 3,
+            "needs_change" : false,
+            "personal_id" : 902,
+            "personal_md_index" : 330,
+            "position_index" : -1,
+            "raw_hp_ratio" : 10000,
+            "selection_order" : -1,
+            "side_index" : -1,
+            "stat_stages" : {
+              "accuracy" : 0,
+              "attack" : 0,
+              "critical" : 0,
+              "defense" : 0,
+              "evasion" : 0,
+              "hp" : 0,
+              "special_attack" : 0,
+              "special_defense" : 0,
+              "speed" : 0
+            },
+            "status_condition" : 0,
+            "substitute" : false,
+            "team_group_index" : 2,
+            "team_pokemon_index" : -1,
+            "team_user_index" : 0,
+            "type_1" : 10,
+            "type_2" : 7,
+            "user_index" : 0,
+            "volatile_effects" : [
+
+            ]
+          },
+          {
+            "ability_md_id" : 24,
+            "base_points" : {
+              "attack" : 32,
+              "defense" : 0,
+              "hp" : 2,
+              "special_attack" : 0,
+              "special_defense" : 0,
+              "speed" : 32
+            },
+            "can_mega" : false,
+            "change_select_locked" : false,
+            "current_hp" : 185,
+            "entered_field" : true,
+            "extra_type" : 19,
+            "extra_type_cause" : 0,
+            "fainted" : false,
+            "field_effects" : [
+
+            ],
+            "form_no" : 0,
+            "gender" : 0,
+            "group_index" : 3,
+            "illusion_active" : false,
+            "illusion_revealed" : false,
+            "is_local_team" : true,
+            "item_md_id" : 270,
+            "last_ability_md_id" : -1,
+            "max_hp" : 185,
+            "mega_locked" : false,
+            "mega_mode" : false,
+            "move_select_auto" : false,
+            "moves" : [
+              {
+                "current_pp" : 16,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 16,
+                "md_id" : 337,
+                "move_type" : 15,
+                "slot_index" : 0,
+                "target" : 1
+              },
+              {
+                "current_pp" : 11,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 12,
+                "md_id" : 89,
+                "move_type" : 4,
+                "slot_index" : 1,
+                "target" : 5
+              },
+              {
+                "current_pp" : 12,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 12,
+                "md_id" : 157,
+                "move_type" : 5,
+                "slot_index" : 2,
+                "target" : 6
+              },
+              {
+                "current_pp" : 8,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 8,
+                "md_id" : 182,
+                "move_type" : 0,
+                "slot_index" : 3,
+                "target" : 8
+              }
+            ],
+            "nature_correction_md_id" : 13,
+            "needs_change" : false,
+            "personal_id" : 445,
+            "personal_md_index" : 137,
+            "position_index" : 1,
+            "raw_hp_ratio" : 10000,
+            "selection_order" : 2,
+            "side_index" : 0,
+            "stat_stages" : {
+              "accuracy" : 0,
+              "attack" : 0,
+              "critical" : 0,
+              "defense" : 0,
+              "evasion" : 0,
+              "hp" : 0,
+              "special_attack" : 0,
+              "special_defense" : 0,
+              "speed" : 0
+            },
+            "status_condition" : 0,
+            "substitute" : false,
+            "team_group_index" : 3,
+            "team_pokemon_index" : 2,
+            "team_user_index" : 0,
+            "type_1" : 15,
+            "type_2" : 4,
+            "user_index" : 0,
+            "volatile_effects" : [
+
+            ]
+          },
+          {
+            "ability_md_id" : 299,
+            "base_points" : {
+              "attack" : 0,
+              "defense" : 0,
+              "hp" : 32,
+              "special_attack" : 32,
+              "special_defense" : 0,
+              "speed" : 2
+            },
+            "can_mega" : false,
+            "change_select_locked" : false,
+            "current_hp" : 178,
+            "entered_field" : false,
+            "extra_type" : 19,
+            "extra_type_cause" : 0,
+            "fainted" : false,
+            "field_effects" : [
+
+            ],
+            "form_no" : 0,
+            "gender" : 2,
+            "group_index" : 4,
+            "illusion_active" : false,
+            "illusion_revealed" : false,
+            "is_local_team" : true,
+            "item_md_id" : 158,
+            "last_ability_md_id" : -1,
+            "max_hp" : 178,
+            "mega_locked" : false,
+            "mega_mode" : false,
+            "move_select_auto" : false,
+            "moves" : [
+              {
+                "current_pp" : 16,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 16,
+                "md_id" : 902,
+                "move_type" : 11,
+                "slot_index" : 0,
+                "target" : 0
+              },
+              {
+                "current_pp" : 20,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 20,
+                "md_id" : 476,
+                "move_type" : 6,
+                "slot_index" : 1,
+                "target" : 0
+              },
+              {
+                "current_pp" : 8,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 8,
+                "md_id" : 182,
+                "move_type" : 0,
+                "slot_index" : 2,
+                "target" : 0
+              },
+              {
+                "current_pp" : 16,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 16,
+                "md_id" : 247,
+                "move_type" : 7,
+                "slot_index" : 3,
+                "target" : 0
+              }
+            ],
+            "nature_correction_md_id" : 15,
+            "needs_change" : false,
+            "personal_id" : 1013,
+            "personal_md_index" : 357,
+            "position_index" : -1,
+            "raw_hp_ratio" : 10000,
+            "selection_order" : -1,
+            "side_index" : -1,
+            "stat_stages" : {
+              "accuracy" : 0,
+              "attack" : 0,
+              "critical" : 0,
+              "defense" : 0,
+              "evasion" : 0,
+              "hp" : 0,
+              "special_attack" : 0,
+              "special_defense" : 0,
+              "speed" : 0
+            },
+            "status_condition" : 0,
+            "substitute" : false,
+            "team_group_index" : 4,
+            "team_pokemon_index" : -1,
+            "team_user_index" : 0,
+            "type_1" : 11,
+            "type_2" : 7,
+            "user_index" : 0,
+            "volatile_effects" : [
+
+            ]
+          },
+          {
+            "ability_md_id" : 192,
+            "base_points" : {
+              "attack" : 0,
+              "defense" : 2,
+              "hp" : 32,
+              "special_attack" : 5,
+              "special_defense" : 25,
+              "speed" : 2
+            },
+            "can_mega" : false,
+            "change_select_locked" : false,
+            "current_hp" : 138,
+            "entered_field" : true,
+            "extra_type" : 19,
+            "extra_type_cause" : 0,
+            "fainted" : false,
+            "field_effects" : [
+
+            ],
+            "form_no" : 0,
+            "gender" : 0,
+            "group_index" : 5,
+            "illusion_active" : false,
+            "illusion_revealed" : false,
+            "is_local_team" : true,
+            "item_md_id" : 234,
+            "last_ability_md_id" : -1,
+            "max_hp" : 197,
+            "mega_locked" : false,
+            "mega_mode" : false,
+            "move_select_auto" : false,
+            "moves" : [
+              {
+                "current_pp" : 11,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 12,
+                "md_id" : 905,
+                "move_type" : 12,
+                "slot_index" : 0,
+                "target" : 1
+              },
+              {
+                "current_pp" : 12,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 12,
+                "md_id" : 406,
+                "move_type" : 15,
+                "slot_index" : 1,
+                "target" : 1
+              },
+              {
+                "current_pp" : 12,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 12,
+                "md_id" : 430,
+                "move_type" : 8,
+                "slot_index" : 2,
+                "target" : 1
+              },
+              {
+                "current_pp" : 7,
+                "lock_data_kind" : 0,
+                "lock_data_md_id" : 0,
+                "lock_execute_kind" : 0,
+                "locked" : false,
+                "max_pp" : 8,
+                "md_id" : 182,
+                "move_type" : 0,
+                "slot_index" : 3,
+                "target" : 8
+              }
+            ],
+            "nature_correction_md_id" : 15,
+            "needs_change" : false,
+            "personal_id" : 1018,
+            "personal_md_index" : 359,
+            "position_index" : 2,
+            "raw_hp_ratio" : 7005,
+            "selection_order" : 3,
+            "side_index" : 0,
+            "stat_stages" : {
+              "accuracy" : 0,
+              "attack" : 0,
+              "critical" : 0,
+              "defense" : 1,
+              "evasion" : 0,
+              "hp" : 0,
+              "special_attack" : 1,
+              "special_defense" : 0,
+              "speed" : 0
+            },
+            "status_condition" : 0,
+            "substitute" : false,
+            "team_group_index" : 5,
+            "team_pokemon_index" : 3,
+            "team_user_index" : 0,
+            "type_1" : 8,
+            "type_2" : 15,
+            "user_index" : 0,
+            "volatile_effects" : [
+              {
+                "elapsed_turns" : 0,
+                "execute_id" : 182,
+                "execute_kind" : 1,
+                "lifespan_turns" : 0,
+                "md_id" : 66,
+                "step_or_count" : 0,
+                "target_execute_id" : 0,
+                "target_execute_kind" : 0
+              },
+              {
+                "elapsed_turns" : 0,
+                "execute_id" : 182,
+                "execute_kind" : 1,
+                "lifespan_turns" : 0,
+                "md_id" : 56,
+                "step_or_count" : 0,
+                "target_execute_id" : 0,
+                "target_execute_kind" : 0
+              }
+            ]
+          }
+        ],
+        "pokemon_order" : [
+          2,
+          3,
+          0,
+          1
+        ],
+        "selected_entry" : true,
+        "selected_group_indices" : [
+          1,
+          0,
+          3,
+          5
+        ],
+        "team_index" : 0,
+        "waiting_for_action" : true
+      },
+      {
+        "battle_rule" : 5,
+        "is_local_player" : false,
+        "pokemon" : [
+          {
+            "ability_md_id" : 33,
+            "base_points" : {
+              "attack" : 0,
+              "defense" : 0,
+              "hp" : 0,
+              "special_attack" : 0,
+              "special_defense" : 0,
+              "speed" : 0
+            },
+            "can_mega" : false,
+            "change_select_locked" : false,
+            "current_hp" : 175,
+            "entered_field" : true,
+            "extra_type" : 18,
+            "extra_type_cause" : 0,
+            "fainted" : false,
+            "field_effects" : [
+
+            ],
+            "form_no" : 0,
+            "gender" : 0,
+            "group_index" : 0,
+            "illusion_active" : false,
+            "illusion_revealed" : false,
+            "is_local_team" : false,
+            "item_md_id" : 752,
+            "last_ability_md_id" : 67,
+            "max_hp" : 175,
+            "mega_locked" : false,
+            "mega_mode" : true,
+            "move_select_auto" : false,
+            "moves" : [
+
+            ],
+            "nature_correction_md_id" : 0,
+            "needs_change" : false,
+            "personal_id" : 260,
+            "personal_md_index" : 88,
+            "position_index" : 2,
+            "raw_hp_ratio" : 1354,
+            "selection_order" : -1,
+            "side_index" : 1,
+            "stat_stages" : {
+              "accuracy" : 0,
+              "attack" : 0,
+              "critical" : 0,
+              "defense" : 0,
+              "evasion" : 0,
+              "hp" : 0,
+              "special_attack" : 0,
+              "special_defense" : 0,
+              "speed" : 0
+            },
+            "status_condition" : 0,
+            "substitute" : false,
+            "team_group_index" : 0,
+            "team_pokemon_index" : 1,
+            "team_user_index" : 1,
+            "type_1" : 10,
+            "type_2" : 4,
+            "user_index" : 1,
+            "volatile_effects" : [
+              {
+                "elapsed_turns" : 0,
+                "execute_id" : 182,
+                "execute_kind" : 1,
+                "lifespan_turns" : 0,
+                "md_id" : 66,
+                "step_or_count" : 0,
+                "target_execute_id" : 0,
+                "target_execute_kind" : 0
+              },
+              {
+                "elapsed_turns" : 0,
+                "execute_id" : 182,
+                "execute_kind" : 1,
+                "lifespan_turns" : 0,
+                "md_id" : 56,
+                "step_or_count" : 0,
+                "target_execute_id" : 0,
+                "target_execute_kind" : 0
+              }
+            ]
+          },
+          {
+            "ability_md_id" : 128,
+            "base_points" : {
+              "attack" : 0,
+              "defense" : 0,
+              "hp" : 0,
+              "special_attack" : 0,
+              "special_defense" : 0,
+              "speed" : 0
+            },
+            "can_mega" : false,
+            "change_select_locked" : false,
+            "current_hp" : 175,
+            "entered_field" : false,
+            "extra_type" : 19,
+            "extra_type_cause" : 0,
+            "fainted" : false,
+            "field_effects" : [
+
+            ],
+            "form_no" : 0,
+            "gender" : 0,
+            "group_index" : 1,
+            "illusion_active" : false,
+            "illusion_revealed" : false,
+            "is_local_team" : false,
+            "item_md_id" : -1,
+            "last_ability_md_id" : -1,
+            "max_hp" : 175,
+            "mega_locked" : false,
+            "mega_mode" : false,
+            "move_select_auto" : false,
+            "moves" : [
+
+            ],
+            "nature_correction_md_id" : 0,
+            "needs_change" : false,
+            "personal_id" : 983,
+            "personal_md_index" : 355,
+            "position_index" : -1,
+            "raw_hp_ratio" : 10000,
+            "selection_order" : -1,
+            "side_index" : -1,
+            "stat_stages" : {
+              "accuracy" : 0,
+              "attack" : 0,
+              "critical" : 0,
+              "defense" : 0,
+              "evasion" : 0,
+              "hp" : 0,
+              "special_attack" : 0,
+              "special_defense" : 0,
+              "speed" : 0
+            },
+            "status_condition" : 0,
+            "substitute" : false,
+            "team_group_index" : 1,
+            "team_pokemon_index" : -1,
+            "team_user_index" : 1,
+            "type_1" : 16,
+            "type_2" : 8,
+            "user_index" : 1,
+            "volatile_effects" : [
+
+            ]
+          },
+          {
+            "ability_md_id" : 51,
+            "base_points" : {
+              "attack" : 0,
+              "defense" : 0,
+              "hp" : 0,
+              "special_attack" : 0,
+              "special_defense" : 0,
+              "speed" : 0
+            },
+            "can_mega" : false,
+            "change_select_locked" : false,
+            "current_hp" : 135,
+            "entered_field" : false,
+            "extra_type" : 19,
+            "extra_type_cause" : 0,
+            "fainted" : false,
+            "field_effects" : [
+
+            ],
+            "form_no" : 0,
+            "gender" : 0,
+            "group_index" : 2,
+            "illusion_active" : false,
+            "illusion_revealed" : false,
+            "is_local_team" : false,
+            "item_md_id" : -1,
+            "last_ability_md_id" : -1,
+            "max_hp" : 135,
+            "mega_locked" : false,
+            "mega_mode" : false,
+            "move_select_auto" : false,
+            "moves" : [
+
+            ],
+            "nature_correction_md_id" : 0,
+            "needs_change" : false,
+            "personal_id" : 279,
+            "personal_md_index" : 90,
+            "position_index" : -1,
+            "raw_hp_ratio" : 10000,
+            "selection_order" : -1,
+            "side_index" : -1,
+            "stat_stages" : {
+              "accuracy" : 0,
+              "attack" : 0,
+              "critical" : 0,
+              "defense" : 0,
+              "evasion" : 0,
+              "hp" : 0,
+              "special_attack" : 0,
+              "special_defense" : 0,
+              "speed" : 0
+            },
+            "status_condition" : 0,
+            "substitute" : false,
+            "team_group_index" : 2,
+            "team_pokemon_index" : -1,
+            "team_user_index" : 1,
+            "type_1" : 10,
+            "type_2" : 2,
+            "user_index" : 1,
+            "volatile_effects" : [
+
+            ]
+          },
+          {
+            "ability_md_id" : 192,
+            "base_points" : {
+              "attack" : 0,
+              "defense" : 0,
+              "hp" : 0,
+              "special_attack" : 0,
+              "special_defense" : 0,
+              "speed" : 0
+            },
+            "can_mega" : false,
+            "change_select_locked" : false,
+            "current_hp" : 165,
+            "entered_field" : true,
+            "extra_type" : 19,
+            "extra_type_cause" : 0,
+            "fainted" : false,
+            "field_effects" : [
+
+            ],
+            "form_no" : 0,
+            "gender" : 0,
+            "group_index" : 3,
+            "illusion_active" : false,
+            "illusion_revealed" : false,
+            "is_local_team" : false,
+            "item_md_id" : -1,
+            "last_ability_md_id" : -1,
+            "max_hp" : 165,
+            "mega_locked" : false,
+            "mega_mode" : false,
+            "move_select_auto" : false,
+            "moves" : [
+
+            ],
+            "nature_correction_md_id" : 0,
+            "needs_change" : false,
+            "personal_id" : 1018,
+            "personal_md_index" : 359,
+            "position_index" : 1,
+            "raw_hp_ratio" : 8020,
+            "selection_order" : -1,
+            "side_index" : 1,
+            "stat_stages" : {
+              "accuracy" : 0,
+              "attack" : 0,
+              "critical" : 0,
+              "defense" : 1,
+              "evasion" : 0,
+              "hp" : 0,
+              "special_attack" : 1,
+              "special_defense" : 0,
+              "speed" : 0
+            },
+            "status_condition" : 0,
+            "substitute" : false,
+            "team_group_index" : 3,
+            "team_pokemon_index" : 3,
+            "team_user_index" : 1,
+            "type_1" : 8,
+            "type_2" : 15,
+            "user_index" : 1,
+            "volatile_effects" : [
+              {
+                "elapsed_turns" : 0,
+                "execute_id" : 182,
+                "execute_kind" : 1,
+                "lifespan_turns" : 0,
+                "md_id" : 66,
+                "step_or_count" : 0,
+                "target_execute_id" : 0,
+                "target_execute_kind" : 0
+              },
+              {
+                "elapsed_turns" : 0,
+                "execute_id" : 182,
+                "execute_kind" : 1,
+                "lifespan_turns" : 0,
+                "md_id" : 56,
+                "step_or_count" : 0,
+                "target_execute_id" : 0,
+                "target_execute_kind" : 0
+              }
+            ]
+          },
+          {
+            "ability_md_id" : 299,
+            "base_points" : {
+              "attack" : 0,
+              "defense" : 0,
+              "hp" : 0,
+              "special_attack" : 0,
+              "special_defense" : 0,
+              "speed" : 0
+            },
+            "can_mega" : false,
+            "change_select_locked" : false,
+            "current_hp" : 146,
+            "entered_field" : false,
+            "extra_type" : 19,
+            "extra_type_cause" : 0,
+            "fainted" : false,
+            "field_effects" : [
+
+            ],
+            "form_no" : 0,
+            "gender" : 2,
+            "group_index" : 4,
+            "illusion_active" : false,
+            "illusion_revealed" : false,
+            "is_local_team" : false,
+            "item_md_id" : -1,
+            "last_ability_md_id" : -1,
+            "max_hp" : 146,
+            "mega_locked" : false,
+            "mega_mode" : false,
+            "move_select_auto" : false,
+            "moves" : [
+
+            ],
+            "nature_correction_md_id" : 0,
+            "needs_change" : false,
+            "personal_id" : 1013,
+            "personal_md_index" : 357,
+            "position_index" : -1,
+            "raw_hp_ratio" : 10000,
+            "selection_order" : -1,
+            "side_index" : -1,
+            "stat_stages" : {
+              "accuracy" : 0,
+              "attack" : 0,
+              "critical" : 0,
+              "defense" : 0,
+              "evasion" : 0,
+              "hp" : 0,
+              "special_attack" : 0,
+              "special_defense" : 0,
+              "speed" : 0
+            },
+            "status_condition" : 0,
+            "substitute" : false,
+            "team_group_index" : 4,
+            "team_pokemon_index" : -1,
+            "team_user_index" : 1,
+            "type_1" : 11,
+            "type_2" : 7,
+            "user_index" : 1,
+            "volatile_effects" : [
+
+            ]
+          },
+          {
+            "ability_md_id" : 33,
+            "base_points" : {
+              "attack" : 0,
+              "defense" : 0,
+              "hp" : 0,
+              "special_attack" : 0,
+              "special_defense" : 0,
+              "speed" : 0
+            },
+            "can_mega" : false,
+            "change_select_locked" : false,
+            "current_hp" : 195,
+            "entered_field" : false,
+            "extra_type" : 19,
+            "extra_type_cause" : 0,
+            "fainted" : false,
+            "field_effects" : [
+
+            ],
+            "form_no" : 0,
+            "gender" : 0,
+            "group_index" : 5,
+            "illusion_active" : false,
+            "illusion_revealed" : false,
+            "is_local_team" : false,
+            "item_md_id" : -1,
+            "last_ability_md_id" : -1,
+            "max_hp" : 195,
+            "mega_locked" : false,
+            "mega_mode" : false,
+            "move_select_auto" : false,
+            "moves" : [
+
+            ],
+            "nature_correction_md_id" : 0,
+            "needs_change" : false,
+            "personal_id" : 902,
+            "personal_md_index" : 330,
+            "position_index" : -1,
+            "raw_hp_ratio" : 4398,
+            "selection_order" : -1,
+            "side_index" : -1,
+            "stat_stages" : {
+              "accuracy" : 0,
+              "attack" : 0,
+              "critical" : 0,
+              "defense" : 0,
+              "evasion" : 0,
+              "hp" : 0,
+              "special_attack" : 0,
+              "special_defense" : 0,
+              "speed" : 0
+            },
+            "status_condition" : 0,
+            "substitute" : false,
+            "team_group_index" : 5,
+            "team_pokemon_index" : 0,
+            "team_user_index" : 1,
+            "type_1" : 10,
+            "type_2" : 7,
+            "user_index" : 1,
+            "volatile_effects" : [
+
+            ]
+          }
+        ],
+        "pokemon_order" : [
+
+        ],
+        "selected_entry" : false,
+        "selected_group_indices" : [
+          5,
+          0,
+          3
+        ],
+        "team_index" : 1,
+        "waiting_for_action" : false
+      }
+    ],
+    "world" : {
+      "battle_rule" : 5,
+      "elapsed_turns" : 3,
+      "field_effects" : [
+
+      ],
+      "sides" : [
+        {
+          "field_effects" : [
+            {
+              "elapsed_turns" : 3,
+              "execute_id" : 366,
+              "execute_kind" : 1,
+              "lifespan_turns" : 4,
+              "md_id" : 8,
+              "step_or_count" : 0,
+              "target_execute_id" : 0,
+              "target_execute_kind" : 0
+            }
+          ],
+          "positions" : [
+            {
+              "field_effects" : [
+
+              ],
+              "position_index" : 0,
+              "side_index" : 0
+            },
+            {
+              "field_effects" : [
+
+              ],
+              "position_index" : 1,
+              "registered_group_index" : 3,
+              "registered_user_index" : 0,
+              "side_index" : 0
+            },
+            {
+              "field_effects" : [
+
+              ],
+              "position_index" : 2,
+              "registered_group_index" : 5,
+              "registered_user_index" : 0,
+              "side_index" : 0
+            }
+          ],
+          "side_index" : 0
+        },
+        {
+          "field_effects" : [
+
+          ],
+          "positions" : [
+            {
+              "field_effects" : [
+
+              ],
+              "position_index" : 0,
+              "side_index" : 1
+            },
+            {
+              "field_effects" : [
+
+              ],
+              "position_index" : 1,
+              "registered_group_index" : 3,
+              "registered_user_index" : 1,
+              "side_index" : 1
+            },
+            {
+              "field_effects" : [
+
+              ],
+              "position_index" : 2,
+              "registered_group_index" : 0,
+              "registered_user_index" : 1,
+              "side_index" : 1
+            }
+          ],
+          "side_index" : 1
+        }
+      ],
+      "weather_elapsed_turns" : 3,
+      "weather_lifespan_turns" : 5,
+      "weather_md_id" : 2
+    }
+  },
+  "state_hash" : "1c2e180424d18113"
+}

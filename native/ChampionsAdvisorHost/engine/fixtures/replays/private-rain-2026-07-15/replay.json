@@ -1,0 +1,942 @@
+{
+  "schema_version": 1,
+  "name": "private-rain-doubles-2026-07-15",
+  "notes": [
+    "Captured over the USB probe from a sanctioned private match controlled by the user on both sides.",
+    "The rosters overlapped heavily but were not identical: the local roster included Garchomp while the remote roster included Kingambit.",
+    "Local numeric HP is authoritative. Remote numeric HP is stale and this fixture validates only the remote HP-bar ratio.",
+    "Action provenance distinguishes user-confirmed choices, local PP deltas, state transitions, and outcome-based inference.",
+    "Every transition has an executable exact-state prediction. Four of seven match an exact successor; the three strict mismatches are retained as capture/action evidence inconsistencies rather than hidden behind tolerance or invented state."
+  ],
+  "transitions": [
+    {
+      "label": "turn-0-mega-tailwind-flip-turn",
+      "before": "snapshots/private-identical-six-turn0.json",
+      "after": "snapshots/private-identical-six-turn1.json",
+      "actions": [
+        {
+          "actor": { "team_index": 0, "group_index": 0 },
+          "kind": "use_move",
+          "md_id": 834,
+          "target": {
+            "kind": "pokemon",
+            "key": { "team_index": 1, "group_index": 0 }
+          },
+          "mega": true,
+          "provenance": "user_confirmed",
+          "notes": ["Local Swampert used Wave Crash into opposing Swampert and Mega evolved."]
+        },
+        {
+          "actor": { "team_index": 0, "group_index": 1 },
+          "kind": "use_move",
+          "md_id": 366,
+          "target": { "kind": "automatic" },
+          "mega": false,
+          "provenance": "user_confirmed",
+          "notes": ["Pelipper used Tailwind."]
+        },
+        {
+          "actor": { "team_index": 1, "group_index": 0 },
+          "kind": "unknown",
+          "description": "Move was not recorded; Mega evolution was user-confirmed and Swampertite plus Swift Swim were observed afterward.",
+          "provenance": "user_confirmed",
+          "notes": []
+        },
+        {
+          "actor": { "team_index": 1, "group_index": 5 },
+          "kind": "use_move",
+          "md_id": 812,
+          "target": {
+            "kind": "pokemon",
+            "key": { "team_index": 0, "group_index": 1 }
+          },
+          "replacement": { "team_index": 1, "group_index": 3 },
+          "mega": false,
+          "provenance": "user_confirmed",
+          "notes": ["Basculegion used Flip Turn into Pelipper and left the field."]
+        }
+      ],
+      "prediction": {
+        "scenario": "scenarios/turn-0.json",
+        "left_plan": {
+          "team_index": 0,
+          "actions": [
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 0, "group_index": 0 },
+              "md_id": 834,
+              "slot_index": 1,
+              "target": { "kind": "pokemon", "key": { "team_index": 1, "group_index": 0 } },
+              "mega": true
+            },
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 0, "group_index": 1 },
+              "md_id": 366,
+              "slot_index": 3,
+              "target": { "kind": "automatic" },
+              "mega": false
+            }
+          ]
+        },
+        "right_plan": {
+          "team_index": 1,
+          "actions": [
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 1, "group_index": 0 },
+              "md_id": 834,
+              "slot_index": 1,
+              "target": { "kind": "pokemon", "key": { "team_index": 0, "group_index": 0 } },
+              "mega": true
+            },
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 1, "group_index": 5 },
+              "md_id": 812,
+              "slot_index": 2,
+              "target": { "kind": "pokemon", "key": { "team_index": 0, "group_index": 1 } },
+              "replacement": { "team_index": 1, "group_index": 3 },
+              "mega": false
+            }
+          ]
+        },
+        "remote_hp_tolerance_basis_points": 100,
+        "critical_hit_mode": "never",
+        "forced_replacements": [
+          {
+            "actor": { "team_index": 0, "group_index": 0 },
+            "replacement": { "team_index": 0, "group_index": 5 }
+          }
+        ]
+      },
+      "expected_changes": [
+        {
+          "field": "world.elapsed_turns",
+          "before": 0,
+          "after": 1,
+          "note": "The first complete turn resolved."
+        },
+        {
+          "field": "world.weather",
+          "before": { "md_id": 2, "lifespan_turns": 5, "elapsed_turns": 0 },
+          "after": { "md_id": 2, "lifespan_turns": 5, "elapsed_turns": 1 },
+          "note": "Rain advanced by one turn."
+        },
+        {
+          "field": "pokemon[0/0].ability_md_id",
+          "before": 67,
+          "after": 33,
+          "note": "Local Swampert changed from Torrent to Swift Swim after Mega evolution."
+        },
+        {
+          "field": "pokemon[0/0].authoritative_hp",
+          "before": { "kind": "exact", "current": 189, "maximum": 189 },
+          "after": { "kind": "fainted" },
+          "note": "Local Swampert fainted during the turn."
+        },
+        {
+          "field": "pokemon[0/1].authoritative_hp",
+          "before": { "kind": "exact", "current": 167, "maximum": 167 },
+          "after": { "kind": "exact", "current": 106, "maximum": 167 },
+          "note": "Pelipper lost 61 exact HP."
+        },
+        {
+          "field": "pokemon[1/0].ability_md_id",
+          "before": 67,
+          "after": 33,
+          "note": "Opposing Swampert changed from Torrent to Swift Swim."
+        },
+        {
+          "field": "pokemon[1/0].item_md_id",
+          "before": "unknown",
+          "after": 752,
+          "note": "Swampertite became revealed."
+        },
+        {
+          "field": "pokemon[1/0].authoritative_hp",
+          "before": { "kind": "ratio_basis_points", "basis_points": 10000 },
+          "after": { "kind": "ratio_basis_points", "basis_points": 7447 },
+          "note": "The remote HP bar fell to 74.47 percent."
+        },
+        {
+          "field": "pokemon[1/5].position",
+          "before": { "side_index": 1, "position_index": 1 },
+          "after": null,
+          "note": "Flip Turn removed Basculegion from its active position."
+        }
+      ],
+      "expected_blockers": [
+        "complete_remote_scenario_missing",
+        "mega_transformation",
+        "tailwind_action",
+        "flip_turn_switching"
+      ]
+    },
+    {
+      "label": "turn-1-electro-shot-stamina",
+      "before": "snapshots/private-identical-six-turn1.json",
+      "after": "snapshots/private-identical-six-turn2.json",
+      "actions": [
+        {
+          "actor": { "team_index": 0, "group_index": 1 },
+          "kind": "use_move",
+          "md_id": 542,
+          "target": null,
+          "mega": false,
+          "provenance": "local_pp_delta",
+          "notes": ["Hurricane PP fell from 12 to 11; the target was not recorded."]
+        },
+        {
+          "actor": { "team_index": 0, "group_index": 5 },
+          "kind": "use_move",
+          "md_id": 905,
+          "target": null,
+          "mega": false,
+          "provenance": "local_pp_delta",
+          "notes": ["Electro Shot PP fell from 12 to 11 in rain."]
+        },
+        {
+          "actor": { "team_index": 1, "group_index": 0 },
+          "kind": "unknown",
+          "description": "Opposing Mega Swampert action was not recorded.",
+          "provenance": "unknown",
+          "notes": []
+        },
+        {
+          "actor": { "team_index": 1, "group_index": 3 },
+          "kind": "unknown",
+          "description": "Opposing Archaludon action was not recorded.",
+          "provenance": "unknown",
+          "notes": []
+        }
+      ],
+      "prediction": {
+        "scenario": "scenarios/turn-1.json",
+        "left_plan": {
+          "team_index": 0,
+          "actions": [
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 0, "group_index": 1 },
+              "md_id": 542,
+              "slot_index": 0,
+              "target": { "kind": "pokemon", "key": { "team_index": 1, "group_index": 0 } },
+              "mega": false
+            },
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 0, "group_index": 5 },
+              "md_id": 905,
+              "slot_index": 0,
+              "target": { "kind": "pokemon", "key": { "team_index": 1, "group_index": 3 } },
+              "mega": false
+            }
+          ]
+        },
+        "right_plan": {
+          "team_index": 1,
+          "actions": [
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 1, "group_index": 0 },
+              "md_id": 834,
+              "slot_index": 1,
+              "target": { "kind": "pokemon", "key": { "team_index": 0, "group_index": 5 } },
+              "mega": false
+            },
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 1, "group_index": 3 },
+              "md_id": 905,
+              "slot_index": 0,
+              "target": { "kind": "pokemon", "key": { "team_index": 0, "group_index": 1 } },
+              "mega": false
+            }
+          ]
+        },
+        "remote_hp_tolerance_basis_points": 100,
+        "critical_hit_mode": "never",
+        "forced_replacements": [
+          {
+            "actor": { "team_index": 0, "group_index": 1 },
+            "replacement": { "team_index": 0, "group_index": 3 }
+          }
+        ]
+      },
+      "expected_changes": [
+        {
+          "field": "world.elapsed_turns",
+          "before": 1,
+          "after": 2,
+          "note": "The second complete turn resolved."
+        },
+        {
+          "field": "pokemon[0/1].authoritative_hp",
+          "before": { "kind": "exact", "current": 106, "maximum": 167 },
+          "after": { "kind": "fainted" },
+          "note": "Pelipper fainted."
+        },
+        {
+          "field": "pokemon[0/5].authoritative_hp",
+          "before": { "kind": "exact", "current": 197, "maximum": 197 },
+          "after": { "kind": "exact", "current": 126, "maximum": 197 },
+          "note": "Archaludon took damage and then received end-of-turn recovery."
+        },
+        {
+          "field": "pokemon[0/5].stat_stages",
+          "before": { "hp": 0, "attack": 0, "defense": 0, "special_attack": 0, "special_defense": 0, "speed": 0, "accuracy": 0, "evasion": 0, "critical": 0 },
+          "after": { "hp": 0, "attack": 0, "defense": 1, "special_attack": 1, "special_defense": 0, "speed": 0, "accuracy": 0, "evasion": 0, "critical": 0 },
+          "note": "Stamina and Electro Shot each raised one stage."
+        },
+        {
+          "field": "pokemon[1/0].authoritative_hp",
+          "before": { "kind": "ratio_basis_points", "basis_points": 7447 },
+          "after": { "kind": "ratio_basis_points", "basis_points": 1354 },
+          "note": "Opposing Mega Swampert fell to 13.54 percent."
+        },
+        {
+          "field": "pokemon[1/3].stat_stages",
+          "before": { "hp": 0, "attack": 0, "defense": 0, "special_attack": 0, "special_defense": 0, "speed": 0, "accuracy": 0, "evasion": 0, "critical": 0 },
+          "after": { "hp": 0, "attack": 0, "defense": 1, "special_attack": 1, "special_defense": 0, "speed": 0, "accuracy": 0, "evasion": 0, "critical": 0 },
+          "note": "The opposing Archaludon also gained Stamina and Electro Shot boosts."
+        }
+      ],
+      "expected_blockers": [
+        "complete_remote_scenario_missing",
+        "hurricane_secondary"
+      ]
+    },
+    {
+      "label": "turn-2-protect-round",
+      "before": "snapshots/private-identical-six-turn2.json",
+      "after": "snapshots/private-identical-six-turn3.json",
+      "actions": [
+        {
+          "actor": { "team_index": 0, "group_index": 3 },
+          "kind": "use_move",
+          "md_id": 89,
+          "target": { "kind": "automatic" },
+          "mega": false,
+          "provenance": "local_pp_delta",
+          "notes": ["Earthquake PP fell from 12 to 11 and dealt no observed damage."]
+        },
+        {
+          "actor": { "team_index": 0, "group_index": 5 },
+          "kind": "use_move",
+          "md_id": 182,
+          "target": { "kind": "automatic" },
+          "mega": false,
+          "provenance": "local_pp_delta",
+          "notes": ["Local Archaludon used Protect."]
+        },
+        {
+          "actor": { "team_index": 1, "group_index": 0 },
+          "kind": "use_move",
+          "md_id": 182,
+          "target": { "kind": "automatic" },
+          "mega": false,
+          "provenance": "outcome_inferred",
+          "notes": ["Protect was inferred from the user-described Protect round and unchanged HP ratio."]
+        },
+        {
+          "actor": { "team_index": 1, "group_index": 3 },
+          "kind": "use_move",
+          "md_id": 182,
+          "target": { "kind": "automatic" },
+          "mega": false,
+          "provenance": "outcome_inferred",
+          "notes": ["Protect was inferred from the user-described Protect round and unchanged HP ratio."]
+        }
+      ],
+      "prediction": {
+        "scenario": "scenarios/turn-2.json",
+        "left_plan": {
+          "team_index": 0,
+          "actions": [
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 0, "group_index": 3 },
+              "md_id": 89,
+              "slot_index": 1,
+              "target": { "kind": "automatic" },
+              "mega": false
+            },
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 0, "group_index": 5 },
+              "md_id": 182,
+              "slot_index": 3,
+              "target": {
+                "kind": "pokemon",
+                "key": { "team_index": 0, "group_index": 5 }
+              },
+              "mega": false
+            }
+          ]
+        },
+        "right_plan": {
+          "team_index": 1,
+          "actions": [
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 1, "group_index": 0 },
+              "md_id": 182,
+              "slot_index": 3,
+              "target": {
+                "kind": "pokemon",
+                "key": { "team_index": 1, "group_index": 0 }
+              },
+              "mega": false
+            },
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 1, "group_index": 3 },
+              "md_id": 182,
+              "slot_index": 3,
+              "target": {
+                "kind": "pokemon",
+                "key": { "team_index": 1, "group_index": 3 }
+              },
+              "mega": false
+            }
+          ]
+        },
+        "remote_hp_tolerance_basis_points": 25,
+        "critical_hit_mode": "never"
+      },
+      "expected_changes": [
+        {
+          "field": "world.elapsed_turns",
+          "before": 2,
+          "after": 3,
+          "note": "The third complete turn resolved."
+        },
+        {
+          "field": "pokemon[0/5].authoritative_hp",
+          "before": { "kind": "exact", "current": 126, "maximum": 197 },
+          "after": { "kind": "exact", "current": 138, "maximum": 197 },
+          "note": "Local Archaludon recovered 12 HP with Leftovers."
+        },
+        {
+          "field": "pokemon[1/3].authoritative_hp",
+          "before": { "kind": "ratio_basis_points", "basis_points": 7411 },
+          "after": { "kind": "ratio_basis_points", "basis_points": 8020 },
+          "note": "Opposing Archaludon recovered approximately one sixteenth of its HP."
+        }
+      ],
+      "expected_blockers": [
+        "complete_remote_scenario_missing",
+        "protect_chain_state",
+        "protect"
+      ]
+    },
+    {
+      "label": "turn-3-controlled-four-attacks",
+      "before": "snapshots/private-identical-six-turn3.json",
+      "after": "snapshots/private-identical-six-turn4.json",
+      "actions": [
+        {
+          "actor": { "team_index": 0, "group_index": 3 },
+          "kind": "use_move",
+          "md_id": 337,
+          "target": {
+            "kind": "pokemon",
+            "key": { "team_index": 1, "group_index": 3 }
+          },
+          "mega": false,
+          "provenance": "user_confirmed",
+          "notes": ["Controlled action: Dragon Claw into opposing Archaludon."]
+        },
+        {
+          "actor": { "team_index": 0, "group_index": 5 },
+          "kind": "use_move",
+          "md_id": 406,
+          "target": {
+            "kind": "pokemon",
+            "key": { "team_index": 1, "group_index": 3 }
+          },
+          "mega": false,
+          "provenance": "user_confirmed",
+          "notes": ["Controlled action: Dragon Pulse into opposing Archaludon."]
+        },
+        {
+          "actor": { "team_index": 1, "group_index": 0 },
+          "kind": "use_move",
+          "md_id": 8,
+          "target": {
+            "kind": "pokemon",
+            "key": { "team_index": 0, "group_index": 3 }
+          },
+          "mega": false,
+          "provenance": "user_confirmed",
+          "notes": ["Controlled action: Ice Punch into Garchomp."]
+        },
+        {
+          "actor": { "team_index": 1, "group_index": 3 },
+          "kind": "use_move",
+          "md_id": 406,
+          "target": {
+            "kind": "pokemon",
+            "key": { "team_index": 0, "group_index": 3 }
+          },
+          "mega": false,
+          "provenance": "user_confirmed",
+          "notes": ["Controlled action: Dragon Pulse into Garchomp."]
+        }
+      ],
+      "prediction": {
+        "scenario": "scenarios/turn-3.json",
+        "left_plan": {
+          "team_index": 0,
+          "actions": [
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 0, "group_index": 3 },
+              "md_id": 337,
+              "slot_index": 0,
+              "target": { "kind": "pokemon", "key": { "team_index": 1, "group_index": 3 } },
+              "mega": false
+            },
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 0, "group_index": 5 },
+              "md_id": 406,
+              "slot_index": 1,
+              "target": { "kind": "pokemon", "key": { "team_index": 1, "group_index": 3 } },
+              "mega": false
+            }
+          ]
+        },
+        "right_plan": {
+          "team_index": 1,
+          "actions": [
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 1, "group_index": 0 },
+              "md_id": 8,
+              "slot_index": 2,
+              "target": { "kind": "pokemon", "key": { "team_index": 0, "group_index": 3 } },
+              "mega": false
+            },
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 1, "group_index": 3 },
+              "md_id": 406,
+              "slot_index": 1,
+              "target": { "kind": "pokemon", "key": { "team_index": 0, "group_index": 3 } },
+              "mega": false
+            }
+          ]
+        },
+        "remote_hp_tolerance_basis_points": 60,
+        "critical_hit_mode": "never",
+        "forced_replacements": [
+          {
+            "actor": { "team_index": 1, "group_index": 3 },
+            "replacement": { "team_index": 1, "group_index": 1 }
+          }
+        ]
+      },
+      "expected_changes": [
+        {
+          "field": "world.elapsed_turns",
+          "before": 3,
+          "after": 4,
+          "note": "The fourth complete turn resolved."
+        },
+        {
+          "field": "pokemon[0/3].authoritative_hp",
+          "before": { "kind": "exact", "current": 185, "maximum": 185 },
+          "after": { "kind": "fainted" },
+          "note": "Garchomp fainted."
+        },
+        {
+          "field": "pokemon[1/0].authoritative_hp",
+          "before": { "kind": "ratio_basis_points", "basis_points": 1354 },
+          "after": { "kind": "ratio_basis_points", "basis_points": 104 },
+          "note": "Opposing Mega Swampert survived at 1.04 percent."
+        },
+        {
+          "field": "pokemon[1/3].authoritative_hp",
+          "before": { "kind": "ratio_basis_points", "basis_points": 8020 },
+          "after": { "kind": "fainted" },
+          "note": "Opposing Archaludon fainted."
+        },
+        {
+          "field": "pokemon[1/1].position",
+          "before": null,
+          "after": { "side_index": 1, "position_index": 1 },
+          "note": "Kingambit entered as the forced replacement."
+        },
+        {
+          "field": "side[0].field_effects",
+          "before": [
+            {
+              "md_id": 8,
+              "lifespan_turns": 4,
+              "elapsed_turns": 3,
+              "step_or_count": 0,
+              "execute_kind": 1,
+              "execute_id": 366,
+              "target_execute_kind": 0,
+              "target_execute_id": 0
+            }
+          ],
+          "after": [],
+          "note": "Tailwind expired."
+        }
+      ],
+      "expected_blockers": [
+        "complete_remote_scenario_missing",
+        "mega_form_materialization"
+      ]
+    },
+    {
+      "label": "turn-4-recoil-faint",
+      "before": "snapshots/private-identical-six-turn4.json",
+      "after": "snapshots/private-identical-six-turn5.json",
+      "actions": [
+        {
+          "actor": { "team_index": 0, "group_index": 5 },
+          "kind": "use_move",
+          "md_id": 406,
+          "target": {
+            "kind": "pokemon",
+            "key": { "team_index": 1, "group_index": 1 }
+          },
+          "mega": false,
+          "provenance": "local_pp_delta",
+          "notes": ["User confirmed Dragon Pulse into Kingambit; PP fell from 11 to 10."]
+        },
+        {
+          "actor": { "team_index": 1, "group_index": 0 },
+          "kind": "unknown",
+          "description": "Opposing Mega Swampert used a recoil-producing action and fainted from recoil.",
+          "provenance": "user_confirmed",
+          "notes": []
+        },
+        {
+          "actor": { "team_index": 1, "group_index": 1 },
+          "kind": "unknown",
+          "description": "Kingambit action was not recorded.",
+          "provenance": "unknown",
+          "notes": []
+        }
+      ],
+      "prediction": {
+        "scenario": "scenarios/turn-4.json",
+        "left_plan": {
+          "team_index": 0,
+          "actions": [
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 0, "group_index": 5 },
+              "md_id": 406,
+              "slot_index": 1,
+              "target": { "kind": "pokemon", "key": { "team_index": 1, "group_index": 1 } },
+              "mega": false
+            }
+          ]
+        },
+        "right_plan": {
+          "team_index": 1,
+          "actions": [
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 1, "group_index": 0 },
+              "md_id": 834,
+              "slot_index": 1,
+              "target": { "kind": "pokemon", "key": { "team_index": 0, "group_index": 5 } },
+              "mega": false
+            },
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 1, "group_index": 1 },
+              "md_id": 389,
+              "slot_index": 2,
+              "target": { "kind": "pokemon", "key": { "team_index": 0, "group_index": 5 } },
+              "mega": false
+            }
+          ]
+        },
+        "remote_hp_tolerance_basis_points": 100,
+        "critical_hit_mode": "never"
+      },
+      "expected_changes": [
+        {
+          "field": "world.elapsed_turns",
+          "before": 4,
+          "after": 5,
+          "note": "The fifth complete turn resolved."
+        },
+        {
+          "field": "world.weather",
+          "before": { "md_id": 2, "lifespan_turns": 5, "elapsed_turns": 4 },
+          "after": { "md_id": 0, "lifespan_turns": 0, "elapsed_turns": 0 },
+          "note": "Rain expired."
+        },
+        {
+          "field": "pokemon[0/5].authoritative_hp",
+          "before": { "kind": "exact", "current": 150, "maximum": 197 },
+          "after": { "kind": "exact", "current": 48, "maximum": 197 },
+          "note": "Local Archaludon took heavy damage and then recovered with Leftovers."
+        },
+        {
+          "field": "pokemon[0/5].stat_stages",
+          "before": { "hp": 0, "attack": 0, "defense": 1, "special_attack": 1, "special_defense": 0, "speed": 0, "accuracy": 0, "evasion": 0, "critical": 0 },
+          "after": { "hp": 0, "attack": 0, "defense": 3, "special_attack": 1, "special_defense": 0, "speed": 0, "accuracy": 0, "evasion": 0, "critical": 0 },
+          "note": "Two physical hits triggered Stamina twice."
+        },
+        {
+          "field": "pokemon[1/0].authoritative_hp",
+          "before": { "kind": "ratio_basis_points", "basis_points": 104 },
+          "after": { "kind": "fainted" },
+          "note": "Opposing Mega Swampert fainted from recoil."
+        },
+        {
+          "field": "pokemon[1/1].authoritative_hp",
+          "before": { "kind": "ratio_basis_points", "basis_points": 10000 },
+          "after": { "kind": "ratio_basis_points", "basis_points": 6183 },
+          "note": "Kingambit fell to 61.83 percent."
+        }
+      ],
+      "expected_blockers": [
+        "complete_remote_scenario_missing",
+        "hidden_remote_action"
+      ]
+    },
+    {
+      "label": "turn-5-electro-shot-charge-life-orb",
+      "before": "snapshots/private-identical-six-turn5.json",
+      "after": "snapshots/private-identical-six-turn6.json",
+      "actions": [
+        {
+          "actor": { "team_index": 1, "group_index": 0 },
+          "kind": "switch",
+          "replacement": { "team_index": 1, "group_index": 5 },
+          "provenance": "state_transition",
+          "notes": ["Basculegion filled the empty position after Mega Swampert fainted."]
+        },
+        {
+          "actor": { "team_index": 0, "group_index": 5 },
+          "kind": "use_move",
+          "md_id": 905,
+          "target": {
+            "kind": "pokemon",
+            "key": { "team_index": 1, "group_index": 5 }
+          },
+          "mega": false,
+          "provenance": "local_pp_delta",
+          "notes": ["User confirmed Archaludon began charging Electro Shot into Basculegion; PP fell from 11 to 10 and Special Attack rose."]
+        },
+        {
+          "actor": { "team_index": 1, "group_index": 1 },
+          "kind": "use_move",
+          "md_id": 389,
+          "target": {
+            "kind": "pokemon",
+            "key": { "team_index": 0, "group_index": 5 }
+          },
+          "mega": false,
+          "provenance": "user_confirmed",
+          "notes": ["Kingambit used Sucker Punch; its roughly ten-percent loss is consistent with Life Orb recoil."]
+        },
+        {
+          "actor": { "team_index": 1, "group_index": 5 },
+          "kind": "unknown",
+          "description": "Basculegion's exact Choice Scarf-locked action was not recorded; the user confirmed it did not use Protect.",
+          "provenance": "user_confirmed",
+          "notes": ["The unchanged HP bar belongs to Electro Shot's charging turn, not a protected attack."]
+        }
+      ],
+      "prediction": {
+        "scenario": "scenarios/turn-5.json",
+        "initial_replacements": [
+          {
+            "actor": { "team_index": 1, "group_index": 0 },
+            "replacement": { "team_index": 1, "group_index": 5 },
+            "position": { "side_index": 1, "position_index": 2 }
+          }
+        ],
+        "left_plan": {
+          "team_index": 0,
+          "actions": [
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 0, "group_index": 5 },
+              "md_id": 905,
+              "slot_index": 0,
+              "target": { "kind": "pokemon", "key": { "team_index": 1, "group_index": 5 } },
+              "mega": false
+            }
+          ]
+        },
+        "right_plan": {
+          "team_index": 1,
+          "actions": [
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 1, "group_index": 1 },
+              "md_id": 389,
+              "slot_index": 2,
+              "target": { "kind": "pokemon", "key": { "team_index": 0, "group_index": 5 } },
+              "mega": false
+            },
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 1, "group_index": 5 },
+              "md_id": 453,
+              "slot_index": 3,
+              "target": { "kind": "pokemon", "key": { "team_index": 0, "group_index": 5 } },
+              "mega": false
+            }
+          ]
+        },
+        "remote_hp_tolerance_basis_points": 100,
+        "critical_hit_mode": "never"
+      },
+      "expected_changes": [
+        {
+          "field": "world.elapsed_turns",
+          "before": 5,
+          "after": 6,
+          "note": "The sixth complete turn resolved."
+        },
+        {
+          "field": "pokemon[0/5].authoritative_hp",
+          "before": { "kind": "exact", "current": 48, "maximum": 197 },
+          "after": { "kind": "exact", "current": 25, "maximum": 197 },
+          "note": "Archaludon survived and recovered with Leftovers."
+        },
+        {
+          "field": "pokemon[0/5].stat_stages",
+          "before": { "hp": 0, "attack": 0, "defense": 3, "special_attack": 1, "special_defense": 0, "speed": 0, "accuracy": 0, "evasion": 0, "critical": 0 },
+          "after": { "hp": 0, "attack": 0, "defense": 5, "special_attack": 2, "special_defense": 0, "speed": 0, "accuracy": 0, "evasion": 0, "critical": 0 },
+          "note": "Two Stamina triggers and Electro Shot's charging-turn Special Attack boost were observed."
+        },
+        {
+          "field": "pokemon[1/1].authoritative_hp",
+          "before": { "kind": "ratio_basis_points", "basis_points": 6183 },
+          "after": { "kind": "ratio_basis_points", "basis_points": 5217 },
+          "note": "Kingambit lost 9.66 percent, consistent with Life Orb recoil."
+        },
+        {
+          "field": "pokemon[1/5].position",
+          "before": null,
+          "after": { "side_index": 1, "position_index": 2 },
+          "note": "Basculegion returned to the field."
+        }
+      ],
+      "expected_blockers": [
+        "complete_remote_scenario_missing",
+        "forced_replacement_phase"
+      ]
+    },
+    {
+      "label": "turn-6-electro-shot-release-final-faint",
+      "before": "snapshots/private-identical-six-turn6.json",
+      "after": "snapshots/private-identical-six-turn7-final.json",
+      "actions": [
+        {
+          "actor": { "team_index": 0, "group_index": 5 },
+          "kind": "use_move",
+          "md_id": 905,
+          "target": {
+            "kind": "pokemon",
+            "key": { "team_index": 1, "group_index": 5 }
+          },
+          "mega": false,
+          "provenance": "user_confirmed",
+          "notes": ["The user confirmed that the charged Electro Shot released toward Basculegion on this turn; PP remained at 10 because the charge turn had already spent it. Basculegion's recorded HP ratio did not change, so damage is not inferred."]
+        },
+        {
+          "actor": { "team_index": 1, "group_index": 1 },
+          "kind": "unknown",
+          "description": "Kingambit attacked; the exact move was not recorded for this final transition.",
+          "provenance": "unknown",
+          "notes": []
+        },
+        {
+          "actor": { "team_index": 1, "group_index": 5 },
+          "kind": "unknown",
+          "description": "Basculegion attacked; the exact move was not recorded for this final transition.",
+          "provenance": "unknown",
+          "notes": []
+        }
+      ],
+      "prediction": {
+        "scenario": "scenarios/turn-6.json",
+        "left_plan": {
+          "team_index": 0,
+          "actions": [
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 0, "group_index": 5 },
+              "md_id": 905,
+              "slot_index": 0,
+              "target": { "kind": "pokemon", "key": { "team_index": 1, "group_index": 5 } },
+              "mega": false
+            }
+          ]
+        },
+        "right_plan": {
+          "team_index": 1,
+          "actions": [
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 1, "group_index": 1 },
+              "md_id": 389,
+              "slot_index": 2,
+              "target": { "kind": "pokemon", "key": { "team_index": 0, "group_index": 5 } },
+              "mega": false
+            },
+            {
+              "kind": "use_move",
+              "actor": { "team_index": 1, "group_index": 5 },
+              "md_id": 453,
+              "slot_index": 3,
+              "target": { "kind": "pokemon", "key": { "team_index": 0, "group_index": 5 } },
+              "mega": false
+            }
+          ]
+        },
+        "remote_hp_tolerance_basis_points": 100,
+        "critical_hit_mode": "never"
+      },
+      "expected_changes": [
+        {
+          "field": "world.elapsed_turns",
+          "before": 6,
+          "after": 7,
+          "note": "The seventh and final complete turn resolved."
+        },
+        {
+          "field": "pokemon[0/5].authoritative_hp",
+          "before": { "kind": "exact", "current": 25, "maximum": 197 },
+          "after": { "kind": "fainted" },
+          "note": "The final local Pokemon fainted."
+        },
+        {
+          "field": "pokemon[0/5].stat_stages",
+          "before": { "hp": 0, "attack": 0, "defense": 5, "special_attack": 2, "special_defense": 0, "speed": 0, "accuracy": 0, "evasion": 0, "critical": 0 },
+          "after": { "hp": 0, "attack": 0, "defense": 6, "special_attack": 2, "special_defense": 0, "speed": 0, "accuracy": 0, "evasion": 0, "critical": 0 },
+          "note": "Stamina reached the stage cap before the faint."
+        },
+        {
+          "field": "pokemon[1/1].authoritative_hp",
+          "before": { "kind": "ratio_basis_points", "basis_points": 5217 },
+          "after": { "kind": "ratio_basis_points", "basis_points": 4251 },
+          "note": "Kingambit lost another 9.66 percent, again consistent with Life Orb recoil."
+        }
+      ],
+      "expected_blockers": [
+        "complete_remote_scenario_missing",
+        "hidden_remote_actions",
+        "protect_bookkeeping_volatile_effects",
+        "electro_shot_release_target_not_exposed_by_snapshot",
+        "electro_shot_release_no_observed_hp_change"
+      ]
+    }
+  ]
+}

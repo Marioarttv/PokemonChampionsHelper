@@ -1,0 +1,9 @@
+Package: com.mariomanzocco.championsadvisorprobe
+Name: Champions Advisor Probe
+Version: 0.1.5
+Architecture: iphoneos-arm64
+Description: Version-locked Pokemon Champions state probe with a passive passthrough overlay.
+Maintainer: Mario Manzocco
+Author: Mario Manzocco
+Section: Tweaks
+Depends: firmware (>= 16.0), mobilesubstrate

@@ -5,7 +5,7 @@ import {
   isChampionsPlayableBaseForm,
   isChampionsSuppressedBaseForm,
 } from "./championsPlayableForms";
-import { isWeightBasedDamageMove } from "./damage";
+import { isHpBasedDamageMove, isWeightBasedDamageMove } from "./damage";
 import type { PokemonRecord } from "./pokemonDb";
 import type {
   PersistedAttackCategory,
@@ -238,7 +238,7 @@ function getImportedMoveBasePower(move: MoveRecord) {
     return move.basePower;
   }
 
-  return isWeightBasedDamageMove(move.name) ? 0 : undefined;
+  return isWeightBasedDamageMove(move.name) || isHpBasedDamageMove(move.name) ? 0 : undefined;
 }
 
 function buildImportedKnownMove(move: MoveRecord): PersistedKnownMove | null {

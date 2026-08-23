@@ -1,0 +1,161 @@
+{
+  "profile_id": "champions-1.1.4-25-arm64e-v1",
+  "bundle_id": "jp.pokemon.pokemonchampions",
+  "app_version": "1.1.4",
+  "app_build": "25",
+  "minimum_ios": "16.0",
+  "unity_version": "6000.0.74f1",
+  "architecture": "arm64e",
+  "unity_framework": {
+    "uuid": "30C1CBE3-025E-3590-88C3-2FEE8235D2A3",
+    "sha256": "e162bcd191a4a0fab1c131ed2d7b7755ecc675074da28868a7006c9b54e56dab",
+    "text_vmaddr": "0x00000000"
+  },
+  "il2cpp_metadata": {
+    "version": "31.1",
+    "sha256": "7e65c65cb8ab71bc79f01b095530036e7db1e681166b205530dc82af3da0c088"
+  },
+  "methods": {
+    "PKB.Battle.BattleLocalUserData.Get": "0x01A16FF8"
+  },
+  "layouts": {
+    "Il2CppArray": {
+      "max_length": "0x18",
+      "items": "0x20"
+    },
+    "System.Collections.Generic.List": {
+      "items": "0x10",
+      "size": "0x18"
+    },
+    "PKB.Battle.BattleUserData": {
+      "team_list": "0x10",
+      "world": "0x18",
+      "battle_rule": "0x20",
+      "battle_type": "0x21",
+      "battle_stage_md_id": "0x24",
+      "local_team_index": "0x40",
+      "replay_mode": "0x50",
+      "spectator_mode": "0x51",
+      "spectator_mode_type": "0x54"
+    },
+    "PKB.Battle.TeamData": {
+      "pokemon": "0x18",
+      "entry_pokemon": "0x20",
+      "battle_rule": "0x28",
+      "pokemon_order": "0x30",
+      "is_local_player": "0x5A",
+      "team_index": "0x5C",
+      "selected_entry": "0x78",
+      "waiting_for_action": "0x79"
+    },
+    "PKB.Battle.PokemonData": {
+      "item_md_id": "0x20",
+      "personal_md_index": "0x30",
+      "personal_id": "0x34",
+      "form_no": "0x38",
+      "gender": "0x3C",
+      "user_index": "0x40",
+      "team_group_index": "0x44",
+      "is_local_team": "0x48",
+      "ability_md_id": "0xC8",
+      "last_ability_md_id": "0xCC",
+      "group_index": "0xD0",
+      "team_info": "0xD4",
+      "position_info": "0xDC",
+      "max_hp": "0xE4",
+      "current_hp": "0xE8",
+      "raw_hp_ratio": "0xEC",
+      "rank_hp": "0xF8",
+      "rank_attack": "0xFC",
+      "rank_defense": "0x100",
+      "rank_special_attack": "0x104",
+      "rank_special_defense": "0x108",
+      "rank_speed": "0x10C",
+      "rank_accuracy": "0x110",
+      "rank_evasion": "0x114",
+      "rank_critical": "0x118",
+      "moves": "0x120",
+      "fainted": "0x130",
+      "needs_change": "0x131",
+      "move_select_auto": "0x132",
+      "change_select_locked": "0x133",
+      "substitute": "0x13C",
+      "can_mega": "0x13D",
+      "mega_locked": "0x13E",
+      "mega_mode": "0x13F",
+      "type_1": "0x140",
+      "type_2": "0x141",
+      "extra_type": "0x150",
+      "extra_type_cause": "0x151",
+      "illusion_active": "0x152",
+      "illusion_revealed": "0x153",
+      "status_condition": "0x154",
+      "volatile_effects": "0x158",
+      "field_effects": "0x160",
+      "base_points": "0x168",
+      "nature_correction_md_id": "0x170",
+      "selection_order": "0x180",
+      "entered_field": "0x190"
+    },
+    "PKB.Battle.MoveSlotData": {
+      "current_pp": "0x18",
+      "max_pp": "0x1C",
+      "locked": "0x20",
+      "lock_execute_kind": "0x22",
+      "lock_data_kind": "0x24",
+      "lock_data_md_id": "0x28",
+      "md_id": "0x2C",
+      "slot_index": "0x30",
+      "target": "0x48",
+      "move_type": "0x4A"
+    },
+    "PKB.Battle.EffectManagement": {
+      "effects": "0x10"
+    },
+    "PKB.Battle.EffectData": {
+      "md_id": "0x10",
+      "lifespan_turns": "0x14",
+      "elapsed_turns": "0x18",
+      "step_or_count": "0x1C",
+      "execute_kind": "0x20",
+      "execute_id": "0x24",
+      "target_execute_kind": "0x28",
+      "target_execute_id": "0x2C"
+    },
+    "PKB.Battle.WorldData": {
+      "sides": "0x10",
+      "battle_rule": "0x18",
+      "weather_md_id": "0x1C",
+      "weather_lifespan_turns": "0x20",
+      "weather_elapsed_turns": "0x24",
+      "field_effects": "0x28",
+      "elapsed_turns": "0x30"
+    },
+    "PKB.Battle.SideData": {
+      "side_index": "0x10",
+      "positions": "0x18",
+      "field_effects": "0x20"
+    },
+    "PKB.Battle.PositionData": {
+      "position_info": "0x10",
+      "registered_pokemon": "0x18",
+      "field_effects": "0x28"
+    },
+    "PKB.Pokemon.PokemonBasePoint": {
+      "hp": "0x10",
+      "attack": "0x11",
+      "defense": "0x12",
+      "special_attack": "0x13",
+      "special_defense": "0x14",
+      "speed": "0x15"
+    }
+  },
+  "privacy_exclusions": [
+    "PokemonData.UniqueID",
+    "TeamData.FriendId",
+    "TeamData.Name",
+    "TeamData.AnotherName",
+    "room identifiers",
+    "account identifiers"
+  ]
+}

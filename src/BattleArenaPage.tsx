@@ -57,7 +57,11 @@ import {
   getOpponentPreset,
   getOpponentPresetKnownMoves,
 } from "./lib/opponentMovePresets";
-import { getWeightBasedDamageMoveCategory, isWeightBasedDamageMove } from "./lib/damage";
+import {
+  getWeightBasedDamageMoveCategory,
+  isHpBasedDamageMove,
+  isWeightBasedDamageMove,
+} from "./lib/damage";
 import {
   recommendTeamPreview,
   type TeamPreviewRecommendation,
@@ -247,7 +251,14 @@ function toKnownMoveFromRecord(move: MoveRecord): PersistedKnownMove {
     name: move.name,
     label: move.name,
     type: getMovePokemonType(move) ?? undefined,
-    basePower: category === "status" ? undefined : move.basePower > 0 ? move.basePower : isWeightBasedDamageMove(move.name) ? 0 : undefined,
+    basePower:
+      category === "status"
+        ? undefined
+        : move.basePower > 0
+          ? move.basePower
+          : isWeightBasedDamageMove(move.name) || isHpBasedDamageMove(move.name)
+            ? 0
+            : undefined,
     category,
     isSpreadMove: isSpreadTarget(move.target),
   };
@@ -270,7 +281,10 @@ function normalizeKnownMove(
     name,
     label: name,
     type: type ?? undefined,
-    basePower: category === "status" ? undefined : move.basePower ?? (isWeightBasedDamageMove(name) ? 0 : undefined),
+    basePower:
+      category === "status"
+        ? undefined
+        : move.basePower ?? (isWeightBasedDamageMove(name) || isHpBasedDamageMove(name) ? 0 : undefined),
     category,
     isSpreadMove: Boolean(move.isSpreadMove),
   };

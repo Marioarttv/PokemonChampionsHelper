@@ -5,9 +5,20 @@
   "type": "module",
   "scripts": {
     "generate:data": "node scripts/generate-pokemon-db.mjs",
+    "generate:mechanics-pack": "node scripts/champions/generate-mechanics-pack.mjs",
+    "generate:replay-scenarios": "node scripts/champions/generate-replay-scenarios.mjs",
+    "infer:replay-plans": "node scripts/champions/infer-replay-plans.mjs",
+    "generate:perfect-knowledge-db": "node scripts/champions/generate-perfect-knowledge-db.mjs",
     "prebuild": "npm run generate:data",
     "dev": "vite",
-    "test": "vitest run",
+    "device:champions": "node scripts/champions/watch-device-state.mjs",
+    "advisor:champions": "node scripts/champions/watch-device-state.mjs --analyze",
+    "battle-lab:champions": "npm run build && node scripts/champions/battle-lab-server.mjs",
+    "serve:battle-lab:champions": "node scripts/champions/battle-lab-server.mjs",
+    "engine:champions": "cargo run --quiet --manifest-path native/ChampionsAdvisorHost/engine/Cargo.toml --",
+    "scenario:champions": "cargo run --quiet --manifest-path native/ChampionsAdvisorHost/engine/Cargo.toml -- scenario",
+    "replay:champions": "cargo run --quiet --manifest-path native/ChampionsAdvisorHost/engine/Cargo.toml -- replay",
+    "test": "vitest run && node --test scripts/champions/*.test.mjs",
     "bench:engine": "vitest bench src/lib/engine/__tests__/search.bench.ts",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
@@ -18,6 +29,7 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@pkmn/sim": "0.10.11",
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.8",
     "@types/react-dom": "^19.0.3",

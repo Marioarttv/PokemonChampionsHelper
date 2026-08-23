@@ -265,6 +265,124 @@ describe("move-specific damage handling", () => {
     expect(estimate.minDamage).toBeGreaterThan(0);
   });
 
+  it.each(["Eruption", "Water Spout", "Dragon Energy"])(
+    "%s scales from 150 BP with the user's current HP",
+    (moveName) => {
+    const attacker = makePokemon("HP Scaler", {
+      types: [moveName === "Eruption" ? "Fire" : moveName === "Water Spout" ? "Water" : "Dragon"],
+      baseStats: { hp: 100, spa: 120 },
+    });
+    const defender = makePokemon("Neutral Target", {
+      types: ["Normal"],
+      baseStats: { hp: 100, spd: 100 },
+    });
+    const full = calculateRoughDamage({
+      attacker,
+      defender,
+      attackType: moveName === "Eruption" ? "fire" : moveName === "Water Spout" ? "water" : "dragon",
+      moveName,
+      basePower: 150,
+      category: "special",
+      isSpreadMove: true,
+    });
+    const currentHp = Math.ceil(full.attackerHp / 2);
+    const damaged = calculateRoughDamage({
+      attacker,
+      defender,
+      attackType: moveName === "Eruption" ? "fire" : moveName === "Water Spout" ? "water" : "dragon",
+      moveName,
+      basePower: 150,
+      category: "special",
+      isSpreadMove: true,
+      attackerCurrentHp: currentHp,
+    });
+    const oneHp = calculateRoughDamage({
+      attacker,
+      defender,
+      attackType: moveName === "Eruption" ? "fire" : moveName === "Water Spout" ? "water" : "dragon",
+      moveName,
+      basePower: 150,
+      category: "special",
+      isSpreadMove: true,
+      attackerCurrentHp: 1,
+    });
+
+    expect(full.effectiveBasePower).toBe(150);
+    expect(damaged.effectiveBasePower).toBe(Math.floor((currentHp * 150) / full.attackerHp));
+    expect(oneHp.effectiveBasePower).toBe(1);
+    },
+  );
+
+  it.each(["Flail", "Reversal"])("%s follows its user-HP power brackets", (moveName) => {
+    const attacker = makePokemon("HP Bracket Attacker", {
+      types: [moveName === "Flail" ? "Normal" : "Fighting"],
+      baseStats: { hp: 100, atk: 120 },
+    });
+    const defender = makePokemon("Neutral Target", {
+      types: ["Normal"],
+      baseStats: { hp: 100, def: 100 },
+    });
+    const full = calculateRoughDamage({
+      attacker,
+      defender,
+      attackType: moveName === "Flail" ? "normal" : "fighting",
+      moveName,
+      basePower: 0,
+      category: "physical",
+      isSpreadMove: false,
+    });
+    const oneHp = calculateRoughDamage({
+      attacker,
+      defender,
+      attackType: moveName === "Flail" ? "normal" : "fighting",
+      moveName,
+      basePower: 0,
+      category: "physical",
+      isSpreadMove: false,
+      attackerCurrentHp: 1,
+    });
+
+    expect(full.effectiveBasePower).toBe(20);
+    expect(oneHp.effectiveBasePower).toBe(200);
+  });
+
+  it.each([
+    ["Wring Out", 120, "special"],
+    ["Crush Grip", 120, "physical"],
+    ["Hard Press", 100, "physical"],
+  ] as const)("%s scales with the target's current HP", (moveName, maximumPower, category) => {
+    const attacker = makePokemon("Target HP Attacker", {
+      types: [moveName === "Hard Press" ? "Steel" : "Normal"],
+      baseStats: { atk: 120, spa: 120 },
+    });
+    const defender = makePokemon("HP Target", {
+      types: ["Normal"],
+      baseStats: { hp: 100, def: 100, spd: 100 },
+    });
+    const full = calculateRoughDamage({
+      attacker,
+      defender,
+      attackType: moveName === "Hard Press" ? "steel" : "normal",
+      moveName,
+      basePower: 0,
+      category,
+      isSpreadMove: false,
+    });
+    const oneHp = calculateRoughDamage({
+      attacker,
+      defender,
+      attackType: moveName === "Hard Press" ? "steel" : "normal",
+      moveName,
+      basePower: 0,
+      category,
+      isSpreadMove: false,
+      defenderCurrentHp: 1,
+    });
+
+    expect(full.effectiveBasePower).toBe(maximumPower);
+    expect(oneHp.effectiveBasePower).toBe(1);
+  });
+
   it.each([
     ["sun", "fire"],
     ["rain", "water"],

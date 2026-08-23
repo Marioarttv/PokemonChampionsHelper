@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pokemonchampionshelper.local/schemas/exact-scenario-sheet-v1.json",
+  "title": "Pokemon Champions exact scenario sheet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "teams"],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "teams": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4,
+      "items": {
+        "$ref": "#/$defs/team"
+      }
+    }
+  },
+  "$defs": {
+    "team": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["team_index", "pokemon_order", "pokemon"],
+      "properties": {
+        "team_index": {
+          "type": "integer"
+        },
+        "pokemon_order": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer"
+          }
+        },
+        "pokemon": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "items": {
+            "$ref": "#/$defs/pokemon"
+          }
+        }
+      }
+    },
+    "pokemon": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "group_index",
+        "species_id",
+        "current_item_id",
+        "current_ability_id",
+        "nature_id",
+        "training_points",
+        "current_hp",
+        "moves"
+      ],
+      "properties": {
+        "group_index": {
+          "type": "integer"
+        },
+        "species_id": {
+          "$ref": "#/$defs/id"
+        },
+        "current_item_id": {
+          "$ref": "#/$defs/id"
+        },
+        "current_ability_id": {
+          "$ref": "#/$defs/id"
+        },
+        "supreme_overlord_fallen_allies": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "nature_id": {
+          "$ref": "#/$defs/id"
+        },
+        "training_points": {
+          "$ref": "#/$defs/trainingPoints"
+        },
+        "current_hp": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "moves": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/move"
+          }
+        }
+      }
+    },
+    "trainingPoints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hp", "attack", "defense", "special_attack", "special_defense", "speed"],
+      "properties": {
+        "hp": {
+          "$ref": "#/$defs/trainingValue"
+        },
+        "attack": {
+          "$ref": "#/$defs/trainingValue"
+        },
+        "defense": {
+          "$ref": "#/$defs/trainingValue"
+        },
+        "special_attack": {
+          "$ref": "#/$defs/trainingValue"
+        },
+        "special_defense": {
+          "$ref": "#/$defs/trainingValue"
+        },
+        "speed": {
+          "$ref": "#/$defs/trainingValue"
+        }
+      }
+    },
+    "trainingValue": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 32
+    },
+    "move": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["move_id", "current_pp", "max_pp"],
+      "properties": {
+        "move_id": {
+          "$ref": "#/$defs/id"
+        },
+        "current_pp": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_pp": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "locked": {
+          "type": "boolean"
+        }
+      }
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9]+$",
+      "minLength": 1
+    }
+  }
+}

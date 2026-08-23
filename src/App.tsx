@@ -74,6 +74,7 @@ import {
   getStatStageMultiplier,
   getWeightBasedDamageMoveCategory,
   isFinalGambitMove,
+  isHpBasedDamageMove,
   isWeightBasedDamageMove,
   type DamageCategory,
   type DamageTerrain,
@@ -200,10 +201,12 @@ import {
 import { exportShowdownTeamText } from "./lib/showdownTeamExport";
 import BattleArenaPage from "./BattleArenaPage";
 import BattleIntelPage, { type BattleIntelSlotInput } from "./BattleIntelPage";
+import { LiveBattleLabPage } from "./liveBattle/LiveBattleLabPage";
 
 type SiteMode =
   | "calculator"
   | "team"
+  | "live"
   | "battle"
   | "movesets"
   | "moveFinder"
@@ -225,6 +228,7 @@ type ShowdownBridgeStatus = "idle" | "ready" | "installed" | "waiting" | "error"
 type HiddenFeatureId =
   | "typeCalculator"
   | "teamBuilder"
+  | "liveBattleLab"
   | "battleArena"
   | "battleIntel"
   | "movesets"
@@ -391,6 +395,10 @@ type SingleDamageCalculatorPanelProps = {
   setDamageAttackerGrounded: Dispatch<SetStateAction<boolean>>;
   damageDefenderGrounded: boolean;
   setDamageDefenderGrounded: Dispatch<SetStateAction<boolean>>;
+  damageAttackerHpPercent: number;
+  setDamageAttackerHpPercent: Dispatch<SetStateAction<number>>;
+  damageDefenderHpPercent: number;
+  setDamageDefenderHpPercent: Dispatch<SetStateAction<number>>;
   damageAttackStage: number;
   setDamageAttackStage: Dispatch<SetStateAction<number>>;
   damageDefenseStage: number;
@@ -686,7 +694,7 @@ function getAttackBasePowerDisplay(basePower?: number) {
 }
 
 function isZeroBasePowerDamageMove(moveName: string | null | undefined) {
-  return isWeightBasedDamageMove(moveName) || isFinalGambitMove(moveName);
+  return isWeightBasedDamageMove(moveName) || isHpBasedDamageMove(moveName) || isFinalGambitMove(moveName);
 }
 
 function getMoveRecordDamageBasePower(move: Pick<MoveRecord, "name" | "basePower">) {
@@ -725,6 +733,10 @@ function formatMoveBasePowerLabel(basePower: number | null | undefined, moveName
     return "Fixed HP";
   }
 
+  if (isHpBasedDamageMove(moveName)) {
+    return "HP-based BP";
+  }
+
   return typeof normalizedBasePower === "number" ? `${normalizedBasePower} BP` : "Base power not set";
 }
 
@@ -739,6 +751,10 @@ function getDamageInputBasePower(
 
   if (isFinalGambitMove(moveName)) {
     return 0;
+  }
+
+  if (isHpBasedDamageMove(moveName)) {
+    return defaultPower ?? 0;
   }
 
   const parsedPower = configPower.trim() ? Number(configPower) : defaultPower;
@@ -1419,13 +1435,15 @@ function getBestDamageEstimateAgainstPokemon(
     attackerAbility?: DamageAbilityId;
     attackerAbilityName?: string | null;
     defenderAbility?: DamageAbilityId;
-  attackerItem?: DamageItemId;
-  defenderItem?: DamageItemId;
-  helpingHand?: boolean;
-  reflect?: boolean;
-  lightScreen?: boolean;
-  auroraVeil?: boolean;
-  attackerStatSpread?: ChampionsStatSpread | null;
+    attackerItem?: DamageItemId;
+    defenderItem?: DamageItemId;
+    helpingHand?: boolean;
+    reflect?: boolean;
+    lightScreen?: boolean;
+    auroraVeil?: boolean;
+    attackerCurrentHp?: number | null;
+    defenderCurrentHp?: number | null;
+    attackerStatSpread?: ChampionsStatSpread | null;
     defenderStatSpread?: ChampionsStatSpread | null;
   },
 ) {
@@ -1451,6 +1469,8 @@ function getBestDamageEstimateAgainstPokemon(
       basePower,
       category: getResolvedAttackCategory(attack, attackerPokemon),
       isSpreadMove: getResolvedAttackSpread(attack),
+      attackerCurrentHp: options.attackerCurrentHp,
+      defenderCurrentHp: options.defenderCurrentHp,
       multihit: getResolvedAttackMultihit(attack) ?? null,
       weather: options.weather,
       terrain: options.terrain,
@@ -4087,6 +4107,10 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
   setDamageAttackerGrounded,
   damageDefenderGrounded,
   setDamageDefenderGrounded,
+  damageAttackerHpPercent,
+  setDamageAttackerHpPercent,
+  damageDefenderHpPercent,
+  setDamageDefenderHpPercent,
   damageAttackStage,
   setDamageAttackStage,
   damageDefenseStage,
@@ -4141,22 +4165,28 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
     damageCalcMode === "attack" ? selectedDamageDefenderPokemon : selectedDamageAttackerPokemon;
   const currentDamageAttackerAbilityName =
     damageCalcMode === "attack" ? attackerSlot?.abilityName ?? null : defenderEntry?.abilityName ?? null;
-  const currentDamageAttackerSpread =
-    damageCalcMode === "attack" ? selectedDamageAttackerSpread : selectedDamageDefenderSpread;
-  const currentDamageDefenderSpread =
-    damageCalcMode === "attack" ? selectedDamageDefenderSpread : selectedDamageAttackerSpread;
-  const currentDamageAttackerStats = currentDamageAttackerPokemon
-    ? getChampionsComputedStats(currentDamageAttackerPokemon, {
-        baseStats: getEffectiveDamageBaseStats(currentDamageAttackerPokemon, "attacker"),
-        spread: currentDamageAttackerSpread,
+  const selectedDamageAttackerStats = selectedDamageAttackerPokemon
+    ? getChampionsComputedStats(selectedDamageAttackerPokemon, {
+        baseStats: getEffectiveDamageBaseStats(selectedDamageAttackerPokemon, "attacker"),
+        spread: selectedDamageAttackerSpread,
       })
     : null;
-  const currentDamageDefenderStats = currentDamageDefenderPokemon
-    ? getChampionsComputedStats(currentDamageDefenderPokemon, {
-        baseStats: getEffectiveDamageBaseStats(currentDamageDefenderPokemon, "defender"),
-        spread: currentDamageDefenderSpread,
+  const selectedDamageDefenderStats = selectedDamageDefenderPokemon
+    ? getChampionsComputedStats(selectedDamageDefenderPokemon, {
+        baseStats: getEffectiveDamageBaseStats(selectedDamageDefenderPokemon, "defender"),
+        spread: selectedDamageDefenderSpread,
       })
     : null;
+  const selectedDamageAttackerCurrentHp = selectedDamageAttackerStats
+    ? getLevel50CurrentHpFromPercent(selectedDamageAttackerStats.hp, damageAttackerHpPercent)
+    : null;
+  const selectedDamageDefenderCurrentHp = selectedDamageDefenderStats
+    ? getLevel50CurrentHpFromPercent(selectedDamageDefenderStats.hp, damageDefenderHpPercent)
+    : null;
+  const currentDamageAttackerStats =
+    damageCalcMode === "attack" ? selectedDamageAttackerStats : selectedDamageDefenderStats;
+  const currentDamageDefenderStats =
+    damageCalcMode === "attack" ? selectedDamageDefenderStats : selectedDamageAttackerStats;
   const defenseMoveConfigKey = getDamageConfigKey(
     defenderSlotIndex ?? -1,
     selectedDamageDefenderPokemon?.id ?? null,
@@ -4264,6 +4294,8 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
                 basePower,
                 category: config.category,
                 isSpreadMove: config.isSpreadMove,
+                attackerCurrentHp: selectedDamageAttackerCurrentHp,
+                defenderCurrentHp: selectedDamageDefenderCurrentHp,
                 multihit: getResolvedAttackMultihit(attack, moveByKey) ?? null,
                 weather: damageWeather,
                 terrain: damageTerrain,
@@ -4305,8 +4337,10 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
     damageTerrain,
     damageWeather,
     selectedDamageAttackerPokemon,
+    selectedDamageAttackerCurrentHp,
     selectedDamageAttackerSpread,
     selectedDamageDefenderPokemon,
+    selectedDamageDefenderCurrentHp,
     selectedDamageDefenderSpread,
     selectedDamageSavedAttacks,
   ]);
@@ -4333,6 +4367,8 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
         attackerItem: damageDefenderItem,
         defenderItem: damageAttackerItem,
         helpingHand: false,
+        attackerCurrentHp: selectedDamageDefenderCurrentHp,
+        defenderCurrentHp: selectedDamageAttackerCurrentHp,
         reflect: damageReflect,
         lightScreen: damageLightScreen,
         auroraVeil: damageAuroraVeil,
@@ -4354,8 +4390,10 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
     damageTerrain,
     damageWeather,
     selectedDamageAttackerPokemon,
+    selectedDamageAttackerCurrentHp,
     selectedDamageAttackerSpread,
     selectedDamageDefenderPokemon,
+    selectedDamageDefenderCurrentHp,
     selectedDamageDefenderSpread,
     selectedDamageEnemySavedAttacks,
   ]);
@@ -4379,6 +4417,8 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
               basePower,
               category,
               isSpreadMove,
+              attackerCurrentHp: selectedDamageDefenderCurrentHp,
+              defenderCurrentHp: selectedDamageAttackerCurrentHp,
               multihit: getResolvedAttackMultihit(attack, moveByKey) ?? null,
               weather: damageWeather,
               terrain: damageTerrain,
@@ -4425,8 +4465,10 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
     damageTerrain,
     damageWeather,
     selectedDamageAttackerPokemon,
+    selectedDamageAttackerCurrentHp,
     selectedDamageAttackerSpread,
     selectedDamageDefenderPokemon,
+    selectedDamageDefenderCurrentHp,
     selectedDamageDefenderSpread,
     selectedDamageEnemySavedAttacks,
   ]);
@@ -4446,6 +4488,8 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
       basePower,
       category: defenseMoveConfig.category,
       isSpreadMove: defenseMoveConfig.isSpreadMove,
+      attackerCurrentHp: selectedDamageDefenderCurrentHp,
+      defenderCurrentHp: selectedDamageAttackerCurrentHp,
       weather: damageWeather,
       terrain: damageTerrain,
       attackerGrounded: damageDefenderGrounded,
@@ -4482,8 +4526,10 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
     damageWeather,
     defenseMoveConfig,
     selectedDamageAttackerPokemon,
+    selectedDamageAttackerCurrentHp,
     selectedDamageAttackerSpread,
     selectedDamageDefenderPokemon,
+    selectedDamageDefenderCurrentHp,
   ]);
 
   if (!currentDamageAttackerPokemon || !currentDamageDefenderPokemon) {
@@ -4539,6 +4585,10 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
     const itemOptions = isAttacker ? attackerSideItemOptions : defenderSideItemOptions;
     const groundedValue = isAttacker ? attackerSideGrounded : defenderSideGrounded;
     const setGroundedValue = isAttacker ? setAttackerSideGrounded : setDefenderSideGrounded;
+    const hpPercentValue = sourceSide === "ally" ? damageAttackerHpPercent : damageDefenderHpPercent;
+    const setHpPercentValue =
+      sourceSide === "ally" ? setDamageAttackerHpPercent : setDamageDefenderHpPercent;
+    const currentHpValue = stats ? getLevel50CurrentHpFromPercent(stats.hp, hpPercentValue) : 0;
     const stageValue = isAttacker ? damageAttackStage : damageDefenseStage;
     const setStageValue = isAttacker ? setDamageAttackStage : setDamageDefenseStage;
     const stageLabel = isAttacker ? "Atk Boost" : "Def Boost";
@@ -4656,6 +4706,23 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
 
         <div className="damage-side-controls">
           <div className="damage-side-control-pair">
+            <label className="damage-inline-field tight">
+              <span>HP %</span>
+              <input
+                type="number"
+                min="1"
+                max="100"
+                step="1"
+                inputMode="numeric"
+                value={hpPercentValue}
+                onChange={(event) =>
+                  setHpPercentValue(Math.max(1, Math.min(100, Math.round(Number(event.target.value) || 1))))
+                }
+                title={`${currentHpValue}/${stats?.hp ?? 0} HP`}
+                aria-label={`${pokemon.name} current HP percent`}
+              />
+            </label>
+
             <label className="damage-inline-field tight">
               <span>Abl</span>
               <select
@@ -4906,8 +4973,10 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
               {damageMoveRows.map((row) => {
                 const effectiveType = row.estimate?.effectiveAttackType ?? row.attack.type;
                 const isWeightBasedPowerMove = isWeightBasedDamageMove(row.attack.label);
+                const isHpBasedPowerMove = isHpBasedDamageMove(row.attack.label);
                 const isFixedHpPowerMove = isFinalGambitMove(row.attack.label);
-                const isAutoResolvedPowerMove = isWeightBasedPowerMove || isFixedHpPowerMove;
+                const isAutoResolvedPowerMove =
+                  isWeightBasedPowerMove || isHpBasedPowerMove || isFixedHpPowerMove;
                 return (
                   <article key={`damage-row-${row.attack.id}`} className="damage-move-card">
                     <header className="damage-move-card-head">
@@ -4931,7 +5000,7 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
                         <span>BP</span>
                         <input
                           type="number"
-                          min={isWeightBasedPowerMove ? "0" : "1"}
+                          min={isWeightBasedPowerMove || isHpBasedPowerMove ? "0" : "1"}
                           step="1"
                           inputMode="numeric"
                           value={isAutoResolvedPowerMove ? "" : row.config.power || (row.defaultPower ? String(row.defaultPower) : "")}
@@ -4944,7 +5013,15 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
                               { power: event.target.value },
                             )
                           }
-                          placeholder={isWeightBasedPowerMove ? "Weight" : isFixedHpPowerMove ? "HP" : row.defaultPower ? String(row.defaultPower) : "80"}
+                          placeholder={
+                            isWeightBasedPowerMove
+                              ? "Weight"
+                              : isHpBasedPowerMove || isFixedHpPowerMove
+                                ? "HP"
+                                : row.defaultPower
+                                  ? String(row.defaultPower)
+                                  : "80"
+                          }
                         />
                       </label>
 
@@ -6140,8 +6217,10 @@ function TeamSlotCard({
                       const category = getKnownMoveCategory(move, pokemon);
                       const basePower = getKnownMoveBasePower(move);
                       const isWeightBasedPowerMove = isWeightBasedDamageMove(getKnownMoveName(move));
+                      const isHpBasedPowerMove = isHpBasedDamageMove(getKnownMoveName(move));
                       const isFixedHpPowerMove = isFinalGambitMove(getKnownMoveName(move));
-                      const isAutoResolvedPowerMove = isWeightBasedPowerMove || isFixedHpPowerMove;
+                      const isAutoResolvedPowerMove =
+                        isWeightBasedPowerMove || isHpBasedPowerMove || isFixedHpPowerMove;
 
                       return (
                         <article key={move.id} className="saved-attack-editor-card">
@@ -6224,7 +6303,7 @@ function TeamSlotCard({
                                   ? "Status"
                                   : isWeightBasedPowerMove
                                     ? "Weight"
-                                    : isFixedHpPowerMove
+                                    : isHpBasedPowerMove || isFixedHpPowerMove
                                       ? "HP"
                                       : "80"
                               }
@@ -7191,6 +7270,8 @@ function BattleLabMoveButton({
   const accent = move.type ? TYPE_META[move.type].accent : "#4b5472";
   const labelBp = isWeightBasedDamageMove(move.name)
     ? "Weight"
+    : isHpBasedDamageMove(move.name)
+      ? "HP"
     : isFinalGambitMove(move.name)
       ? "HP"
       : move.basePower ? `${move.basePower}` : move.effectKind === "damage" ? "—" : "STA";
@@ -8536,6 +8617,8 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBu
   const [damageTerrain, setDamageTerrain] = useState<DamageTerrain>("none");
   const [damageAttackerGrounded, setDamageAttackerGrounded] = useState(true);
   const [damageDefenderGrounded, setDamageDefenderGrounded] = useState(true);
+  const [damageAttackerHpPercent, setDamageAttackerHpPercent] = useState(100);
+  const [damageDefenderHpPercent, setDamageDefenderHpPercent] = useState(100);
   const [damageAttackStage, setDamageAttackStage] = useState(0);
   const [damageDefenseStage, setDamageDefenseStage] = useState(0);
   const [damageAttackerAbility, setDamageAttackerAbility] = useState<DamageAbilityId>("none");
@@ -9878,6 +9961,30 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBu
     damageCalcMode === "attack" ? selectedDamageDefenderPokemon : selectedDamageAttackerPokemon;
   const currentDamageAttackerAbilityName =
     damageCalcMode === "attack" ? selectedDamageAttacker?.abilityName ?? null : selectedDamageDefender?.abilityName ?? null;
+  const currentDamageAttackerHp = currentDamageAttackerPokemon
+    ? getLevel50CurrentHpFromPercent(
+        getChampionsComputedStats(currentDamageAttackerPokemon, {
+          baseStats: getEffectiveDamageBaseStats(currentDamageAttackerPokemon, "attacker"),
+          spread:
+            damageCalcMode === "attack"
+              ? selectedDamageAttacker?.resolvedStatSpread ?? null
+              : selectedDamageDefender?.statSpread ?? null,
+        }).hp,
+        damageCalcMode === "attack" ? damageAttackerHpPercent : damageDefenderHpPercent,
+      )
+    : null;
+  const currentDamageDefenderHp = currentDamageDefenderPokemon
+    ? getLevel50CurrentHpFromPercent(
+        getChampionsComputedStats(currentDamageDefenderPokemon, {
+          baseStats: getEffectiveDamageBaseStats(currentDamageDefenderPokemon, "defender"),
+          spread:
+            damageCalcMode === "attack"
+              ? selectedDamageDefender?.statSpread ?? null
+              : selectedDamageAttacker?.resolvedStatSpread ?? null,
+        }).hp,
+        damageCalcMode === "attack" ? damageDefenderHpPercent : damageAttackerHpPercent,
+      )
+    : null;
   const doublesAllyMembers = useMemo<DoublesSelectedMember[]>(
     () =>
       doublesAllySelection
@@ -11916,6 +12023,8 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBu
       basePower: quickMoveBasePower,
       category: quickMove.category.toLowerCase() as DamageCategory,
       isSpreadMove: isSpreadTarget(quickMove.target),
+      attackerCurrentHp: currentDamageAttackerHp,
+      defenderCurrentHp: currentDamageDefenderHp,
       multihit: getMoveMultihit(quickMove) ?? null,
       weather: damageWeather,
       terrain: damageTerrain,
@@ -11938,7 +12047,9 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBu
     damageAttackStage,
     damageAttackerAbility,
     currentDamageAttackerAbilityName,
+    currentDamageAttackerHp,
     currentDamageAttackerPokemon,
+    currentDamageDefenderHp,
     currentDamageDefenderPokemon,
     damageAttackerGrounded,
     damageAttackerItem,
@@ -13167,6 +13278,8 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBu
                     <span>
                       Power {isWeightBasedDamageMove(quickMove.name)
                         ? "Weight"
+                        : isHpBasedDamageMove(quickMove.name)
+                          ? "HP"
                         : isFinalGambitMove(quickMove.name)
                           ? "HP"
                           : quickMove.basePower > 0 ? quickMove.basePower : "--"}
@@ -14716,6 +14829,10 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBu
           setDamageAttackerGrounded={setDamageAttackerGrounded}
           damageDefenderGrounded={damageDefenderGrounded}
           setDamageDefenderGrounded={setDamageDefenderGrounded}
+          damageAttackerHpPercent={damageAttackerHpPercent}
+          setDamageAttackerHpPercent={setDamageAttackerHpPercent}
+          damageDefenderHpPercent={damageDefenderHpPercent}
+          setDamageDefenderHpPercent={setDamageDefenderHpPercent}
           damageAttackStage={damageAttackStage}
           setDamageAttackStage={setDamageAttackStage}
           damageDefenseStage={damageDefenseStage}
@@ -15160,6 +15277,8 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBu
                                               <strong className="scout-move-power-value">
                                                 {isWeightBasedDamageMove(moveEntry.move.name)
                                                   ? "Weight"
+                                                  : isHpBasedDamageMove(moveEntry.move.name)
+                                                    ? "HP"
                                                   : isFinalGambitMove(moveEntry.move.name)
                                                     ? "HP"
                                                     : moveEntry.move.basePower}
@@ -17162,6 +17281,8 @@ function MovesetDatabaseView() {
                                             ? ` • Power ${
                                                 isWeightBasedDamageMove(entry.move.name)
                                                   ? "Weight"
+                                                  : isHpBasedDamageMove(entry.move.name)
+                                                    ? "HP"
                                                   : isFinalGambitMove(entry.move.name)
                                                     ? "HP"
                                                     : entry.move.basePower
@@ -17191,8 +17312,10 @@ function MovesetDatabaseView() {
                         const category = getKnownMoveCategory(move, selectedPokemon);
                         const basePower = getKnownMoveBasePower(move);
                         const isWeightBasedPowerMove = isWeightBasedDamageMove(getKnownMoveName(move));
+                        const isHpBasedPowerMove = isHpBasedDamageMove(getKnownMoveName(move));
                         const isFixedHpPowerMove = isFinalGambitMove(getKnownMoveName(move));
-                        const isAutoResolvedPowerMove = isWeightBasedPowerMove || isFixedHpPowerMove;
+                        const isAutoResolvedPowerMove =
+                          isWeightBasedPowerMove || isHpBasedPowerMove || isFixedHpPowerMove;
 
                         return (
                           <article key={move.id} className="saved-attack-editor-card">
@@ -17270,7 +17393,15 @@ function MovesetDatabaseView() {
                                   min="0"
                                   step="1"
                                   inputMode="numeric"
-                                  placeholder={category === "status" ? "Status" : isWeightBasedPowerMove ? "Weight" : isFixedHpPowerMove ? "HP" : "80"}
+                                  placeholder={
+                                    category === "status"
+                                      ? "Status"
+                                      : isWeightBasedPowerMove
+                                        ? "Weight"
+                                        : isHpBasedPowerMove || isFixedHpPowerMove
+                                          ? "HP"
+                                          : "80"
+                                  }
                                   value={getAttackBasePowerDisplay(basePower ?? undefined)}
                                   disabled={category === "status" || isAutoResolvedPowerMove}
                                   onChange={(event) => {
@@ -17669,6 +17800,8 @@ function MoveFinderView() {
                       ? ` · Power ${
                           isWeightBasedDamageMove(selectedMove.name)
                             ? "Weight"
+                            : isHpBasedDamageMove(selectedMove.name)
+                              ? "HP"
                             : isFinalGambitMove(selectedMove.name)
                               ? "HP"
                               : selectedMove.basePower
@@ -20453,6 +20586,12 @@ const CUSTOMIZABLE_FEATURES: FeatureDefinition[] = [
     group: "Main pages",
   },
   {
+    id: "liveBattleLab",
+    label: "Live Battle Lab",
+    description: "Captured phone board state and native multi-turn recommendation controls.",
+    group: "Main pages",
+  },
+  {
     id: "battleArena",
     label: "Battle Arena",
     description: "Trainer battle simulator page.",
@@ -20529,6 +20668,7 @@ const CUSTOMIZABLE_FEATURES: FeatureDefinition[] = [
 const DEFAULT_FEATURE_VISIBILITY: FeatureVisibilitySettings = {
   typeCalculator: true,
   teamBuilder: true,
+  liveBattleLab: true,
   battleArena: true,
   battleIntel: true,
   movesets: true,
@@ -20546,15 +20686,16 @@ const DEFAULT_FEATURE_VISIBILITY: FeatureVisibilitySettings = {
 const SITE_SECTIONS: Array<{ id: SiteMode; index: string; label: string; featureId?: HiddenFeatureId }> = [
   { id: "calculator", index: "01", label: "Type Calculator", featureId: "typeCalculator" },
   { id: "team", index: "02", label: "Team Builder", featureId: "teamBuilder" },
-  { id: "battle", index: "03", label: "Battle Arena", featureId: "battleArena" },
-  { id: "movesets", index: "04", label: "Movesets DB", featureId: "movesets" },
-  { id: "moveFinder", index: "05", label: "Move Finder", featureId: "moveFinder" },
-  { id: "speed", index: "06", label: "Speed Tiers", featureId: "speedTiers" },
-  { id: "finalGambit", index: "07", label: "Final Gambit", featureId: "finalGambit" },
-  { id: "ohko", index: "08", label: "OHKO Finder", featureId: "ohkoFinder" },
-  { id: "training", index: "09", label: "Training Optimizer", featureId: "trainingOptimizer" },
-  { id: "history", index: "10", label: "Match History", featureId: "matchHistory" },
-  { id: "settings", index: "11", label: "Settings" },
+  { id: "live", index: "03", label: "Live Battle Lab", featureId: "liveBattleLab" },
+  { id: "battle", index: "04", label: "Battle Arena", featureId: "battleArena" },
+  { id: "movesets", index: "05", label: "Movesets DB", featureId: "movesets" },
+  { id: "moveFinder", index: "06", label: "Move Finder", featureId: "moveFinder" },
+  { id: "speed", index: "07", label: "Speed Tiers", featureId: "speedTiers" },
+  { id: "finalGambit", index: "08", label: "Final Gambit", featureId: "finalGambit" },
+  { id: "ohko", index: "09", label: "OHKO Finder", featureId: "ohkoFinder" },
+  { id: "training", index: "10", label: "Training Optimizer", featureId: "trainingOptimizer" },
+  { id: "history", index: "11", label: "Match History", featureId: "matchHistory" },
+  { id: "settings", index: "12", label: "Settings" },
 ];
 
 function createDefaultFeatureVisibility(): FeatureVisibilitySettings {
@@ -21546,6 +21687,14 @@ function App() {
           shouldMount={shouldMountSiteMode("calculator")}
         >
           <CalculatorView />
+        </SiteSectionPanel>
+
+        <SiteSectionPanel
+          mode="live"
+          activeMode={siteMode}
+          shouldMount={shouldMountSiteMode("live")}
+        >
+          <LiveBattleLabPage />
         </SiteSectionPanel>
 
         <SiteSectionPanel

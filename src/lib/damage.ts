@@ -40,6 +40,7 @@ export type DamageEstimateInput = {
   category: DamageCategory;
   isSpreadMove: boolean;
   attackerCurrentHp?: number | null;
+  defenderCurrentHp?: number | null;
   multihit?: MultihitInput | null;
   weather?: DamageWeather;
   terrain?: DamageTerrain;
@@ -179,6 +180,20 @@ export function isWeightBasedDamageMove(moveName: string | null | undefined) {
   return key === "lowkick" || key === "grassknot";
 }
 
+export function isHpBasedDamageMove(moveName: string | null | undefined) {
+  const key = moveName ? normalizeMoveNameKey(moveName) : "";
+  return (
+    key === "eruption" ||
+    key === "waterspout" ||
+    key === "dragonenergy" ||
+    key === "flail" ||
+    key === "reversal" ||
+    key === "crushgrip" ||
+    key === "wringout" ||
+    key === "hardpress"
+  );
+}
+
 export function getWeightBasedDamageMoveCategory(moveName: string | null | undefined): DamageCategory | null {
   if (isLowKickMove(moveName)) {
     return "physical";
@@ -313,6 +328,53 @@ export function resolveWeightBasedDamageInput({
   };
 }
 
+function getHpBasedBasePower({
+  basePower,
+  moveName,
+  attackerCurrentHp,
+  attackerMaxHp,
+  defenderCurrentHp,
+  defenderMaxHp,
+}: {
+  basePower: number;
+  moveName?: string | null;
+  attackerCurrentHp: number;
+  attackerMaxHp: number;
+  defenderCurrentHp: number;
+  defenderMaxHp: number;
+}) {
+  const key = moveName ? normalizeMoveNameKey(moveName) : "";
+  const safeAttackerMaxHp = Math.max(1, Math.floor(attackerMaxHp));
+  const safeDefenderMaxHp = Math.max(1, Math.floor(defenderMaxHp));
+  const safeAttackerCurrentHp = resolveCurrentHp(attackerCurrentHp, safeAttackerMaxHp);
+  const safeDefenderCurrentHp = resolveCurrentHp(defenderCurrentHp, safeDefenderMaxHp);
+
+  if (key === "eruption" || key === "waterspout" || key === "dragonenergy") {
+    return Math.max(1, Math.floor((safeAttackerCurrentHp * 150) / safeAttackerMaxHp));
+  }
+
+  if (key === "flail" || key === "reversal") {
+    const ratio = Math.max(Math.floor((safeAttackerCurrentHp * 48) / safeAttackerMaxHp), 1);
+    if (ratio < 2) return 200;
+    if (ratio < 5) return 150;
+    if (ratio < 10) return 100;
+    if (ratio < 17) return 80;
+    if (ratio < 33) return 40;
+    return 20;
+  }
+
+  const maximumPower =
+    key === "wringout" || key === "crushgrip" ? 120 : key === "hardpress" ? 100 : null;
+  if (maximumPower !== null) {
+    // Match Showdown's 12-bit fixed-point, round-half-down calculation.
+    const scaledHp = Math.floor((safeDefenderCurrentHp * 4096) / safeDefenderMaxHp);
+    const roundedFixedPoint = Math.floor((maximumPower * (100 * scaledHp) + 2048 - 1) / 4096);
+    return Math.max(1, Math.floor(roundedFixedPoint / 100));
+  }
+
+  return basePower;
+}
+
 export function normalizeMultihitInput(multihit: MultihitInput | null | undefined): MultihitInput | null {
   if (typeof multihit === "number" && Number.isFinite(multihit) && multihit > 1) {
     return multihit;
@@ -377,12 +439,20 @@ export function resolveDamageMoveInput({
   defender,
   moveName,
   weather = "none",
+  attackerCurrentHp,
+  attackerMaxHp,
+  defenderCurrentHp,
+  defenderMaxHp,
 }: {
   attackType: PokemonType;
   basePower: number;
   defender: PokemonRecord;
   moveName?: string | null;
   weather?: DamageWeather;
+  attackerCurrentHp: number;
+  attackerMaxHp: number;
+  defenderCurrentHp: number;
+  defenderMaxHp: number;
 }) {
   const weatherResolvedMove = resolveWeatherBallDamageInput({
     attackType,
@@ -395,10 +465,18 @@ export function resolveDamageMoveInput({
     defender,
     moveName,
   });
+  const hpResolvedBasePower = getHpBasedBasePower({
+    basePower: basePowerResolvedMove.basePower,
+    moveName,
+    attackerCurrentHp,
+    attackerMaxHp,
+    defenderCurrentHp,
+    defenderMaxHp,
+  });
 
   return {
     attackType: weatherResolvedMove.attackType,
-    basePower: basePowerResolvedMove.basePower,
+    basePower: hpResolvedBasePower,
   };
 }
 
@@ -424,6 +502,7 @@ export function calculateRoughDamage({
   category,
   isSpreadMove,
   attackerCurrentHp = null,
+  defenderCurrentHp = null,
   multihit = null,
   weather = "none",
   terrain = "none",
@@ -447,15 +526,6 @@ export function calculateRoughDamage({
     weather,
     attackerAbilityName,
   });
-  const resolvedMove = resolveDamageMoveInput({
-    attackType,
-    basePower,
-    defender,
-    moveName,
-    weather: attackerEffectiveWeather,
-  });
-  const weatherAdjustedAttackType = resolvedMove.attackType;
-  const effectiveBasePower = resolvedMove.basePower;
   const effectiveAttackerStats = getEffectiveDamageBaseStats(attacker, "attacker");
   const effectiveDefenderStats = getEffectiveDamageBaseStats(defender, "defender");
   const attackerStats = getChampionsComputedStats(attacker, {
@@ -469,6 +539,21 @@ export function calculateRoughDamage({
   const fixedDamageSource = isFinalGambitMove(moveName) ? "finalgambit" : null;
   const isFixedDamage = fixedDamageSource !== null;
   const attackerHp = resolveCurrentHp(attackerCurrentHp, attackerStats.hp);
+  const defenderHp = defenderStats.hp;
+  const resolvedDefenderCurrentHp = resolveCurrentHp(defenderCurrentHp, defenderHp);
+  const resolvedMove = resolveDamageMoveInput({
+    attackType,
+    basePower,
+    defender,
+    moveName,
+    weather: attackerEffectiveWeather,
+    attackerCurrentHp: attackerHp,
+    attackerMaxHp: attackerStats.hp,
+    defenderCurrentHp: resolvedDefenderCurrentHp,
+    defenderMaxHp: defenderHp,
+  });
+  const weatherAdjustedAttackType = resolvedMove.attackType;
+  const effectiveBasePower = resolvedMove.basePower;
   const baseAttackStat = category === "physical" ? attackerStats.atk : attackerStats.spa;
   const baseDefenseStat = category === "physical" ? defenderStats.def : defenderStats.spd;
   const weatherDefenseMultiplier =
@@ -481,7 +566,6 @@ export function calculateRoughDamage({
   const defenderStageMultiplier = getStatStageMultiplier(defenderStatStage);
   const attackStat = Math.floor(baseAttackStat * attackerStageMultiplier);
   const defenseStat = Math.floor(baseDefenseStat * weatherDefenseMultiplier * defenderStageMultiplier);
-  const defenderHp = defenderStats.hp;
   const primaryType = getTypeFromLabel(defender.types[0]);
   const secondaryType = defender.types[1] ? getTypeFromLabel(defender.types[1]) : null;
   const effectiveAttackType = getAbilityAdjustedAttackType(weatherAdjustedAttackType, attackerAbility);

@@ -99,6 +99,72 @@ describe("engine regression coverage", () => {
     expect(preview?.estimate.typeMultiplier).toBe(4);
   });
 
+  it("uses live attacker and target HP for HP-dependent move power", () => {
+    const attacker = makePokemon("HP Attacker", {
+      types: ["Fire", "Steel"],
+      baseStats: { hp: 100, atk: 120, spa: 120 },
+    });
+    const defender = makePokemon("HP Defender", {
+      types: ["Normal"],
+      baseStats: { hp: 100, def: 100, spd: 100 },
+    });
+    const eruption = makeMove("Eruption", {
+      type: "Fire",
+      category: "Special",
+      basePower: 150,
+      target: "allAdjacentFoes",
+    });
+    const hardPress = makeMove("Hard Press", {
+      type: "Steel",
+      category: "Physical",
+      basePower: 0,
+      target: "normal",
+    });
+    const tackle = makeMove("Tackle", {
+      type: "Normal",
+      category: "Physical",
+      basePower: 50,
+      target: "normal",
+    });
+    const state = createTestBattleState({
+      ally: [
+        makeMember({
+          side: "ally",
+          slot: 0,
+          pokemon: attacker,
+          moveNames: ["Eruption", "Hard Press"],
+          currentHpPercent: 50,
+        }),
+      ],
+      enemy: [
+        makeMember({
+          side: "enemy",
+          slot: 0,
+          pokemon: defender,
+          moveNames: ["Tackle"],
+          currentHpPercent: 50,
+        }),
+      ],
+      moves: [eruption, hardPress, tackle],
+    });
+
+    const eruptionPreview = getDamagePreview(
+      state,
+      "ally-0",
+      "enemy-0",
+      state.combatants["ally-0"].knownMoves[0]!,
+    );
+    const hardPressPreview = getDamagePreview(
+      state,
+      "ally-0",
+      "enemy-0",
+      state.combatants["ally-0"].knownMoves[1]!,
+    );
+
+    expect(eruptionPreview?.estimate.effectiveBasePower).toBe(75);
+    expect(hardPressPreview?.estimate.effectiveBasePower).toBe(50);
+  });
+
   it("resolves Mega Sol Weather Ball as user-only sun even while rain stays active", () => {
     const meganium = makePokemon("Meganium-Mega", {
       types: ["Grass", "Fairy"],

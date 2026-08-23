@@ -1,7 +1,13 @@
 import { getTypeFromLabel } from "../../data/typeChart";
 import { getMultiplier } from "../effectiveness";
 import type { MoveRecord } from "../battleData";
-import { calculateRoughDamage, getAttackerEffectiveWeather, isWeightBasedDamageMove, resolveWeatherBallDamageInput } from "../damage";
+import {
+  calculateRoughDamage,
+  getAttackerEffectiveWeather,
+  isHpBasedDamageMove,
+  isWeightBasedDamageMove,
+  resolveWeatherBallDamageInput,
+} from "../damage";
 import { getChampionsComputedStats } from "../championsStats";
 import {
   getDefaultDamageAbilityIdFromNames,
@@ -115,7 +121,7 @@ function getBattleMoveBasePower(move: MoveRecord) {
     return move.basePower;
   }
 
-  return isWeightBasedDamageMove(move.name) ? 0 : null;
+  return isWeightBasedDamageMove(move.name) || isHpBasedDamageMove(move.name) ? 0 : null;
 }
 
 function isSnowActive(state: BattleState) {
@@ -825,6 +831,8 @@ export function getDamagePreview(
     basePower: move.basePower,
     category: move.category,
     isSpreadMove: move.isSpreadMove,
+    attackerCurrentHp: attacker.currentHp,
+    defenderCurrentHp: defender.currentHp,
     weather: state.field.weather,
     terrain: state.field.terrain,
     attackerGrounded: isGrounded(attacker, state),
