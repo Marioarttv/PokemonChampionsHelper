@@ -58,6 +58,9 @@ const BURN_DAMAGE_FRACTION = 1 / 16;
 const POISON_DAMAGE_FRACTION = 1 / 8;
 const POISON_HEAL_FRACTION = 1 / 8;
 const STAGE_KEYS: Array<keyof BattleStatStages> = ["attack", "defense", "specialAttack", "specialDefense", "speed"];
+const TERRAIN_ENTRY_ABILITIES: Record<string, BattleState["field"]["terrain"]> = {
+  grassysurge: "grassy", psychicsurge: "psychic", electricsurge: "electric", mistysurge: "misty",
+};
 const WEATHER_ENTRY_ABILITIES: Record<string, BattleState["field"]["weather"]> = {
   drizzle: "rain",
   drought: "sun",
@@ -398,7 +401,7 @@ function createCombatantState(
       ? getDefaultDamageAbilityIdFromNames([explicitAbilityName])
       : getDefaultDamageAbilityIdFromNames(pokemonAbilityNames);
   const defaultAbilityName =
-    pokemonAbilityNames.find((abilityName) => WEATHER_ENTRY_ABILITIES[normalizeMoveKey(abilityName)] !== undefined) ??
+    pokemonAbilityNames.find((abilityName) => (WEATHER_ENTRY_ABILITIES[normalizeMoveKey(abilityName)] !== undefined || TERRAIN_ENTRY_ABILITIES[normalizeMoveKey(abilityName)] !== undefined)) ??
     (defaultAbilityId !== "none"
       ? pokemonAbilityNames.find((abilityName) => normalizeDamageAbilityId(abilityName) === defaultAbilityId)
       : undefined) ??
@@ -708,7 +711,15 @@ export function getMoveOption(state: BattleState, actorId: string, moveId: strin
     return null;
   }
 
-  return [...combatant.knownMoves, ...combatant.candidateMoves].find((move) => move.id === moveId) ?? null;
+  const move = [...combatant.knownMoves, ...combatant.candidateMoves].find((entry) => entry.id === moveId) ?? null;
+  if (!move) return null;
+  if (normalizeMoveKey(move.name) === "grassyglide") {
+    return { ...move, priority: state.field.terrain === "grassy" && isGrounded(combatant, state) ? 1 : 0 };
+  }
+  if (normalizeMoveKey(move.name) === "expandingforce" && state.field.terrain === "psychic" && isGrounded(combatant, state)) {
+    return { ...move, targetKind: "allOpponents" as const, isSpreadMove: true };
+  }
+  return move;
 }
 
 function isNonDamagingMove(move: BattleMoveOption) {
@@ -780,7 +791,7 @@ function scaleDamageEstimate(
 }
 
 function getPreviewDefenderItemId(defender: BattleCombatantState) {
-  if (defender.itemConsumed && isResistBerryItem(defender.itemId)) {
+  if (defender.itemConsumed) {
     return "none";
   }
 
@@ -842,13 +853,18 @@ export function getDamagePreview(
     attackerAbility: attacker.abilityId,
     attackerAbilityName: attacker.abilityName,
     defenderAbility: defender.abilityId,
-    attackerItem: attacker.itemId,
+    attackerItem: attacker.itemConsumed ? "none" : attacker.itemId,
     defenderItem: getPreviewDefenderItemId(defender),
     helpingHand: attacker.helpingHandTurns > 0,
   });
 
   let externalMultiplier = 1;
   externalMultiplier *= getScreenDamageMultiplier(state, defender, move);
+  if (move.type === "steel") {
+    for (const allyId of getActiveIds(state, attacker.side)) {
+      if (allyId !== actorId && getAbilityKey(state.combatants[allyId]!) === "steelyspirit") externalMultiplier *= 1.5;
+    }
+  }
 
   const attackerAbilityKey = getAbilityKey(attacker);
   if (attackerAbilityKey === "guts" && attacker.statusCondition !== "none" && move.category === "physical") {
@@ -973,7 +989,10 @@ function isTargetImmuneByTyping(
     }),
   });
 
-  return getMultiplier(resolvedMove.attackType, primaryType, secondaryType) === 0;
+  const actor = state.combatants[_actorId];
+  const scrappy = actor && getAbilityKey(actor) === "scrappy" && ["normal", "fighting"].includes(resolvedMove.attackType);
+  const types = [primaryType, secondaryType].filter((type) => type && !(scrappy && type === "ghost"));
+  return types.some((type) => getMultiplier(resolvedMove.attackType, type!, null) === 0);
 }
 
 function getIncomingThreatsAgainst(state: BattleState, targetIds: string[]) {
@@ -3364,6 +3383,12 @@ function triggerEntryAbility(state: BattleState, combatantId: string, events: Tu
     });
   }
 
+  const terrain = TERRAIN_ENTRY_ABILITIES[abilityKey];
+  if (terrain) {
+    state.field.terrain = terrain;
+    events.push({ actorId: combatant.id, text: `${combatant.pokemon.name}'s ${combatant.abilityName} creates ${terrain} terrain.` });
+  }
+
   if (abilityKey === "intimidate") {
     applyIntimidate(state, combatant, events);
   }
@@ -4174,6 +4199,11 @@ function executeMove(
         actedIds,
       );
       maybeTriggerOnHitAbility(target, actor, move, appliedDamage, previousHp, events);
+      if (getAbilityKey(target) === "seedsower") {
+        state.field.terrain = "grassy";
+        events.push({ targetId, text: `${target.pokemon.name}'s Seed Sower creates grassy terrain.` });
+      }
+      if (target.itemId === "airballoon" && !target.itemConsumed) consumeItem(target);
       maybeTriggerSitrusBerry(state, target, events);
     }
 
@@ -4186,6 +4216,9 @@ function executeMove(
       maybeTriggerKoAbility(actor, events);
     }
   }
+
+  if (actor.itemId === "normalgem" && !actor.itemConsumed && hitAnything && move.type === "normal"
+      && !["aerilate", "pixilate", "refrigerate", "galvanize"].includes(getAbilityKey(actor))) consumeItem(actor);
 
   if (actor.itemId === "lifeorb" && hitAnything && actor.currentHp > 0) {
     const recoil = Math.min(actor.currentHp, Math.max(1, Math.floor(actor.maxHp * 0.1)));

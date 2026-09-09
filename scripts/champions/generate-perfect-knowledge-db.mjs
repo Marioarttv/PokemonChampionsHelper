@@ -1,3 +1,4 @@
+import { regulationMC } from "../regulation-m-c.mjs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,6 +61,7 @@ function normalizeKey(value) {
 function championsMaximumPp(move) {
   // Champions exposes the fully boosted PP value directly. Most moves follow
   // 4 * (floor(base PP / 5) + 1), capped at 20; Protect is rebalanced to 8.
+  if (move.championsPp) return move.championsPp;
   if (move.id === "protect") return 8;
   return Math.min(20, 4 * (Math.floor(move.pp / 5) + 1));
 }
@@ -231,6 +233,16 @@ async function main() {
     };
   });
 
+  for (const profile of profiles) {
+    const preset = regulationMC.presets[profile.species_id];
+    if (preset) {
+      profile.current_item_id = preset.item;
+      profile.current_ability_id = preset.ability;
+      profile.nature_id = preset.nature;
+      profile.training_points = preset.trainingPoints;
+      profile.source = "curated_regulation_m_c";
+    }
+  }
   const document = {
     schema_version: 1,
     generated_at: new Date().toISOString(),

@@ -50,8 +50,8 @@ const REGULATION_MB_MEGA_FORM_IDS = [
 ] as const;
 
 describe("Pokemon Champions legal species", () => {
-  it("uses Regulation M-B as the active regulation", () => {
-    expect(POKEMON_CHAMPIONS_ACTIVE_REGULATION).toBe("Regulation M-B");
+  it("uses Regulation M-C as the active regulation", () => {
+    expect(POKEMON_CHAMPIONS_ACTIVE_REGULATION).toBe("Regulation M-C");
   });
 
   it("includes every Regulation M-B addition", () => {

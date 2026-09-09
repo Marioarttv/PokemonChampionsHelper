@@ -553,7 +553,9 @@ export function calculateRoughDamage({
     defenderMaxHp: defenderHp,
   });
   const weatherAdjustedAttackType = resolvedMove.attackType;
-  const effectiveBasePower = resolvedMove.basePower;
+  const moveKey = normalizeMoveNameKey(moveName ?? "");
+  const expandingForce = moveKey === "expandingforce" && terrain === "psychic" && attackerGrounded;
+  const effectiveBasePower = resolvedMove.basePower * (expandingForce ? 1.5 : moveKey === "risingvoltage" && terrain === "electric" && defenderGrounded ? 2 : 1);
   const baseAttackStat = category === "physical" ? attackerStats.atk : attackerStats.spa;
   const baseDefenseStat = category === "physical" ? defenderStats.def : defenderStats.spd;
   const weatherDefenseMultiplier =
@@ -569,14 +571,16 @@ export function calculateRoughDamage({
   const primaryType = getTypeFromLabel(defender.types[0]);
   const secondaryType = defender.types[1] ? getTypeFromLabel(defender.types[1]) : null;
   const effectiveAttackType = getAbilityAdjustedAttackType(weatherAdjustedAttackType, attackerAbility);
-  const baseTypeMultiplier = primaryType ? getMultiplier(effectiveAttackType, primaryType, secondaryType) : 1;
+  const defenderTypes = [primaryType, secondaryType].filter((type) => type && !(attackerAbility === "scrappy" && ["normal", "fighting"].includes(effectiveAttackType) && type === "ghost"));
+  const baseTypeMultiplier = defenderTypes.reduce((multiplier, type) => multiplier * getMultiplier(effectiveAttackType, type!, null), 1);
   const rawTypeMultiplier = getDefenderAbilityTypeMultiplier({
     typeMultiplier: baseTypeMultiplier,
     attackType: effectiveAttackType,
     defenderAbility,
     moveName,
   });
-  const typeMultiplier = isFixedDamage ? (rawTypeMultiplier === 0 ? 0 : 1) : rawTypeMultiplier;
+  const itemAdjustedTypeMultiplier = effectiveAttackType === "ground" && defenderItem === "airballoon" ? 0 : rawTypeMultiplier;
+  const typeMultiplier = isFixedDamage ? (itemAdjustedTypeMultiplier === 0 ? 0 : 1) : itemAdjustedTypeMultiplier;
   const stabMultiplier = isFixedDamage
     ? 1
     : attacker.types.some((typeLabel) => getTypeFromLabel(typeLabel) === effectiveAttackType)
@@ -584,7 +588,7 @@ export function calculateRoughDamage({
         ? 2
         : STAB_MULTIPLIER
       : 1;
-  const spreadMultiplier = isFixedDamage ? 1 : isSpreadMove ? SPREAD_MOVE_MULTIPLIER : 1;
+  const spreadMultiplier = isFixedDamage ? 1 : (isSpreadMove || expandingForce) ? SPREAD_MOVE_MULTIPLIER : 1;
   const weatherMultiplier =
     isFixedDamage
       ? 1
@@ -610,6 +614,8 @@ export function calculateRoughDamage({
         ? 1.3
         : terrain === "grassy" && effectiveAttackType === "grass" && attackerGrounded
           ? 1.3
+          : terrain === "grassy" && defenderGrounded && ["earthquake", "magnitude", "bulldoze"].includes(moveKey)
+            ? 0.5
           : terrain === "misty" && effectiveAttackType === "dragon" && defenderGrounded
             ? 0.5
             : 1;
@@ -632,7 +638,7 @@ export function calculateRoughDamage({
     : getDefenderAbilityModifier({
         attackType: effectiveAttackType,
         category,
-        defenderAbility,
+        defenderAbility: defenderAbility === "auraguard" && (attackerAbility === "longreach" || ["moldbreaker", "teravolt", "turboblaze"].includes(normalizeMoveNameKey(attackerAbilityName ?? ""))) ? "none" : defenderAbility,
         typeMultiplier,
         moveName,
       });

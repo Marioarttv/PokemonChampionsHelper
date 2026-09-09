@@ -48,7 +48,7 @@ npm run build
 
 ## Local Data
 
-The app uses reproducible local datasets generated from `@pkmn/dex`:
+The app uses reproducible local datasets generated from `@pkmn/dex` with the verified Champions corrections in `data/regulation-m-c.json`:
 
 - `public/data/pokemon-db.json`
 - `public/data/battle-data.json`
@@ -61,6 +61,8 @@ npm run generate:data
 ```
 
 This keeps the project independent from live runtime API requests for core species, typing, stat, move, item, and ability data.
+
+Regulation M-C (September 9–December 2, 2026) includes the new roster, Mega Z forms, and 35 curated doubles presets with Champions learnsets and training spreads. See [`docs/regulation-m-c.md`](docs/regulation-m-c.md) for sources and verification scope.
 
 ## Battle Engine Progress
 
@@ -97,13 +99,11 @@ The next major goals are:
 
 ## Deployment
 
-### GitHub Pages
-
-The repository includes a GitHub Actions workflow at `.github/workflows/deploy.yml` that builds the app and deploys the `dist/` output to GitHub Pages.
-
 ### Vercel
 
-Import the repository into Vercel and use the default settings:
+The live app is [Pokémon Champions Helper](https://pokemon-champions-helper.vercel.app/). Vercel deploys the connected repository's `main` branch with:
 
 - Build command: `npm run build`
 - Output directory: `dist`
+
+The old GitHub Pages workflow is archived as `.github/workflows/deploy.yml.disabled`.

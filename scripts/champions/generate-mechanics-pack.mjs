@@ -1,3 +1,4 @@
+import { applyNativeRegulationMC } from "../regulation-m-c.mjs";
 import { createHash } from "node:crypto";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -339,6 +340,8 @@ const pack = {
   moves,
 };
 
+applyNativeRegulationMC(pack);
+
 const serialized = `${JSON.stringify(pack, null, 2)}\n`;
 const checksum = createHash("sha256").update(serialized).digest("hex");
 await mkdir(outputDirectory, { recursive: true });
@@ -348,6 +351,6 @@ await Promise.all([
 ]);
 
 console.log(
-  `Generated mechanics pack: ${species.length} species, ${abilities.length} abilities, ${items.length} items, ${moves.length} moves`,
+  `Generated mechanics pack: ${pack.counts.species} species, ${pack.counts.abilities} abilities, ${pack.counts.items} items, ${pack.counts.moves} moves`,
 );
 console.log(`SHA-256 ${checksum}`);

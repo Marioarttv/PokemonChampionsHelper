@@ -8,6 +8,7 @@ export type AbilityRecord = {
 };
 
 export type ItemRecord = {
+  megaStone?: Record<string, string>;
   id: string;
   name: string;
   shortDesc: string;
@@ -17,6 +18,7 @@ export type ItemRecord = {
 export type MoveMultihit = number | [number, number];
 
 export type MoveRecord = {
+  flags?: Record<string, number>;
   id: string;
   name: string;
   type: string;

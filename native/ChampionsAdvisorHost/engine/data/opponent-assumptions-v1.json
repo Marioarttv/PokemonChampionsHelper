@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-15T21:40:40.675Z",
-  "regulation": "Regulation M-B",
+  "generated_at": "2026-09-09T11:59:22.462Z",
+  "regulation": "Regulation M-C",
   "source": "Pokemon Champions meta presets with legal-learnset fallbacks",
   "reconciliation": "Observed snapshot fields override assumptions on every calculation.",
-  "profile_count": 389,
+  "profile_count": 421,
   "profiles": [
     {
       "species_id": "abomasnow",
@@ -102,8 +102,8 @@
         },
         {
           "move_id": "nightslash",
-          "current_pp": 16,
-          "max_pp": 16
+          "current_pp": 20,
+          "max_pp": 20
         },
         {
           "move_id": "protect",
@@ -156,33 +156,33 @@
     },
     {
       "species_id": "absolmegaz",
-      "source": "learnset_fallback",
-      "current_item_id": "none",
-      "current_ability_id": "magicbounce",
-      "nature_id": "modest",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "absolitez",
+      "current_ability_id": "sharpness",
+      "nature_id": "jolly",
       "training_points": {
-        "hp": 32,
-        "attack": 0,
+        "hp": 2,
+        "attack": 32,
         "defense": 0,
-        "special_attack": 32,
+        "special_attack": 0,
         "special_defense": 0,
-        "speed": 2
+        "speed": 32
       },
       "moves": [
         {
-          "move_id": "foulplay",
+          "move_id": "nightslash",
+          "current_pp": 20,
+          "max_pp": 20
+        },
+        {
+          "move_id": "shadowclaw",
           "current_pp": 16,
           "max_pp": 16
         },
         {
-          "move_id": "darkpulse",
-          "current_pp": 16,
-          "max_pp": 16
-        },
-        {
-          "move_id": "shadowball",
-          "current_pp": 16,
-          "max_pp": 16
+          "move_id": "closecombat",
+          "current_pp": 8,
+          "max_pp": 8
         },
         {
           "move_id": "protect",
@@ -1186,6 +1186,43 @@
       ]
     },
     {
+      "species_id": "arboliva",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "leftovers",
+      "current_ability_id": "seedsower",
+      "nature_id": "modest",
+      "training_points": {
+        "hp": 32,
+        "attack": 0,
+        "defense": 0,
+        "special_attack": 32,
+        "special_defense": 2,
+        "speed": 0
+      },
+      "moves": [
+        {
+          "move_id": "gigadrain",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "hypervoice",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "earthpower",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "protect",
+          "current_pp": 8,
+          "max_pp": 8
+        }
+      ]
+    },
+    {
       "species_id": "arcanine",
       "source": "meta_preset",
       "current_item_id": "leftovers",
@@ -1885,6 +1922,80 @@
           "move_id": "wideguard",
           "current_pp": 12,
           "max_pp": 12
+        }
+      ]
+    },
+    {
+      "species_id": "baxcalibur",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "baxcalibrite",
+      "current_ability_id": "thermalexchange",
+      "nature_id": "adamant",
+      "training_points": {
+        "hp": 32,
+        "attack": 32,
+        "defense": 0,
+        "special_attack": 0,
+        "special_defense": 2,
+        "speed": 0
+      },
+      "moves": [
+        {
+          "move_id": "glaiverush",
+          "current_pp": 8,
+          "max_pp": 8
+        },
+        {
+          "move_id": "iciclecrash",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "iceshard",
+          "current_pp": 20,
+          "max_pp": 20
+        },
+        {
+          "move_id": "protect",
+          "current_pp": 8,
+          "max_pp": 8
+        }
+      ]
+    },
+    {
+      "species_id": "baxcaliburmega",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "baxcalibrite",
+      "current_ability_id": "thermalexchange",
+      "nature_id": "adamant",
+      "training_points": {
+        "hp": 32,
+        "attack": 32,
+        "defense": 0,
+        "special_attack": 0,
+        "special_defense": 2,
+        "speed": 0
+      },
+      "moves": [
+        {
+          "move_id": "glaiverush",
+          "current_pp": 8,
+          "max_pp": 8
+        },
+        {
+          "move_id": "iciclecrash",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "iceshard",
+          "current_pp": 20,
+          "max_pp": 20
+        },
+        {
+          "move_id": "protect",
+          "current_pp": 8,
+          "max_pp": 8
         }
       ]
     },
@@ -2842,6 +2953,43 @@
           "move_id": "dreameater",
           "current_pp": 16,
           "max_pp": 16
+        },
+        {
+          "move_id": "protect",
+          "current_pp": 8,
+          "max_pp": 8
+        }
+      ]
+    },
+    {
+      "species_id": "cinderace",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "lifeorb",
+      "current_ability_id": "libero",
+      "nature_id": "jolly",
+      "training_points": {
+        "hp": 2,
+        "attack": 32,
+        "defense": 0,
+        "special_attack": 0,
+        "special_defense": 0,
+        "speed": 32
+      },
+      "moves": [
+        {
+          "move_id": "pyroball",
+          "current_pp": 8,
+          "max_pp": 8
+        },
+        {
+          "move_id": "highjumpkick",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "uturn",
+          "current_pp": 20,
+          "max_pp": 20
         },
         {
           "move_id": "protect",
@@ -4131,6 +4279,43 @@
       ]
     },
     {
+      "species_id": "farfetchd",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "leek",
+      "current_ability_id": "defiant",
+      "nature_id": "adamant",
+      "training_points": {
+        "hp": 2,
+        "attack": 32,
+        "defense": 0,
+        "special_attack": 0,
+        "special_defense": 0,
+        "speed": 32
+      },
+      "moves": [
+        {
+          "move_id": "leafblade",
+          "current_pp": 16,
+          "max_pp": 16
+        },
+        {
+          "move_id": "bravebird",
+          "current_pp": 16,
+          "max_pp": 16
+        },
+        {
+          "move_id": "quickattack",
+          "current_pp": 20,
+          "max_pp": 20
+        },
+        {
+          "move_id": "protect",
+          "current_pp": 8,
+          "max_pp": 8
+        }
+      ]
+    },
+    {
       "species_id": "farigiraf",
       "source": "meta_preset",
       "current_item_id": "colburberry",
@@ -4872,17 +5057,17 @@
     },
     {
       "species_id": "garchompmegaz",
-      "source": "learnset_fallback",
-      "current_item_id": "none",
-      "current_ability_id": "sandforce",
-      "nature_id": "adamant",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "garchompitez",
+      "current_ability_id": "levitate",
+      "nature_id": "timid",
       "training_points": {
-        "hp": 32,
-        "attack": 32,
+        "hp": 2,
+        "attack": 0,
         "defense": 0,
-        "special_attack": 0,
+        "special_attack": 32,
         "special_defense": 0,
-        "speed": 2
+        "speed": 32
       },
       "moves": [
         {
@@ -4891,14 +5076,14 @@
           "max_pp": 8
         },
         {
-          "move_id": "outrage",
+          "move_id": "earthpower",
           "current_pp": 12,
           "max_pp": 12
         },
         {
-          "move_id": "dragonrush",
-          "current_pp": 12,
-          "max_pp": 12
+          "move_id": "flamethrower",
+          "current_pp": 16,
+          "max_pp": 16
         },
         {
           "move_id": "protect",
@@ -5389,6 +5574,117 @@
       ]
     },
     {
+      "species_id": "gogoat",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "leftovers",
+      "current_ability_id": "sapsipper",
+      "nature_id": "careful",
+      "training_points": {
+        "hp": 32,
+        "attack": 32,
+        "defense": 0,
+        "special_attack": 0,
+        "special_defense": 2,
+        "speed": 0
+      },
+      "moves": [
+        {
+          "move_id": "hornleech",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "highhorsepower",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "bulkup",
+          "current_pp": 20,
+          "max_pp": 20
+        },
+        {
+          "move_id": "milkdrink",
+          "current_pp": 8,
+          "max_pp": 8
+        }
+      ]
+    },
+    {
+      "species_id": "golisopod",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "golisopite",
+      "current_ability_id": "emergencyexit",
+      "nature_id": "adamant",
+      "training_points": {
+        "hp": 32,
+        "attack": 32,
+        "defense": 0,
+        "special_attack": 0,
+        "special_defense": 2,
+        "speed": 0
+      },
+      "moves": [
+        {
+          "move_id": "firstimpression",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "liquidation",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "aquajet",
+          "current_pp": 20,
+          "max_pp": 20
+        },
+        {
+          "move_id": "wideguard",
+          "current_pp": 12,
+          "max_pp": 12
+        }
+      ]
+    },
+    {
+      "species_id": "golisopodmega",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "golisopite",
+      "current_ability_id": "toughclaws",
+      "nature_id": "adamant",
+      "training_points": {
+        "hp": 32,
+        "attack": 32,
+        "defense": 0,
+        "special_attack": 0,
+        "special_defense": 2,
+        "speed": 0
+      },
+      "moves": [
+        {
+          "move_id": "firstimpression",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "liquidation",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "aquajet",
+          "current_pp": 20,
+          "max_pp": 20
+        },
+        {
+          "move_id": "wideguard",
+          "current_pp": 12,
+          "max_pp": 12
+        }
+      ]
+    },
+    {
       "species_id": "golurk",
       "source": "meta_preset",
       "current_item_id": "golurkite",
@@ -5676,6 +5972,43 @@
           "move_id": "powerwhip",
           "current_pp": 12,
           "max_pp": 12
+        },
+        {
+          "move_id": "protect",
+          "current_pp": 8,
+          "max_pp": 8
+        }
+      ]
+    },
+    {
+      "species_id": "grapploct",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "sitrusberry",
+      "current_ability_id": "technician",
+      "nature_id": "adamant",
+      "training_points": {
+        "hp": 32,
+        "attack": 32,
+        "defense": 0,
+        "special_attack": 0,
+        "special_defense": 2,
+        "speed": 0
+      },
+      "moves": [
+        {
+          "move_id": "drainpunch",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "suckerpunch",
+          "current_pp": 8,
+          "max_pp": 8
+        },
+        {
+          "move_id": "icepunch",
+          "current_pp": 16,
+          "max_pp": 16
         },
         {
           "move_id": "protect",
@@ -6499,6 +6832,80 @@
       ]
     },
     {
+      "species_id": "indeedee",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "choicescarf",
+      "current_ability_id": "psychicsurge",
+      "nature_id": "modest",
+      "training_points": {
+        "hp": 2,
+        "attack": 0,
+        "defense": 0,
+        "special_attack": 32,
+        "special_defense": 0,
+        "speed": 32
+      },
+      "moves": [
+        {
+          "move_id": "expandingforce",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "dazzlinggleam",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "mysticalfire",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "trick",
+          "current_pp": 12,
+          "max_pp": 12
+        }
+      ]
+    },
+    {
+      "species_id": "indeedeef",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "psychicseed",
+      "current_ability_id": "psychicsurge",
+      "nature_id": "bold",
+      "training_points": {
+        "hp": 32,
+        "attack": 0,
+        "defense": 32,
+        "special_attack": 0,
+        "special_defense": 2,
+        "speed": 0
+      },
+      "moves": [
+        {
+          "move_id": "followme",
+          "current_pp": 20,
+          "max_pp": 20
+        },
+        {
+          "move_id": "psychic",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "helpinghand",
+          "current_pp": 20,
+          "max_pp": 20
+        },
+        {
+          "move_id": "protect",
+          "current_pp": 8,
+          "max_pp": 8
+        }
+      ]
+    },
+    {
       "species_id": "infernape",
       "source": "meta_preset",
       "current_item_id": "whiteherb",
@@ -6527,6 +6934,43 @@
           "move_id": "overheat",
           "current_pp": 8,
           "max_pp": 8
+        },
+        {
+          "move_id": "protect",
+          "current_pp": 8,
+          "max_pp": 8
+        }
+      ]
+    },
+    {
+      "species_id": "inteleon",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "focussash",
+      "current_ability_id": "sniper",
+      "nature_id": "timid",
+      "training_points": {
+        "hp": 2,
+        "attack": 0,
+        "defense": 0,
+        "special_attack": 32,
+        "special_defense": 0,
+        "speed": 32
+      },
+      "moves": [
+        {
+          "move_id": "snipeshot",
+          "current_pp": 16,
+          "max_pp": 16
+        },
+        {
+          "move_id": "icebeam",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "airslash",
+          "current_pp": 16,
+          "max_pp": 16
         },
         {
           "move_id": "protect",
@@ -7092,33 +7536,33 @@
     },
     {
       "species_id": "lucariomegaz",
-      "source": "learnset_fallback",
-      "current_item_id": "none",
-      "current_ability_id": "adaptability",
-      "nature_id": "adamant",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "lucarionitez",
+      "current_ability_id": "auraguard",
+      "nature_id": "timid",
       "training_points": {
-        "hp": 32,
-        "attack": 32,
+        "hp": 2,
+        "attack": 0,
         "defense": 0,
-        "special_attack": 0,
+        "special_attack": 32,
         "special_defense": 0,
-        "speed": 2
+        "speed": 32
       },
       "moves": [
         {
-          "move_id": "focuspunch",
+          "move_id": "aurasphere",
           "current_pp": 20,
           "max_pp": 20
         },
         {
-          "move_id": "steelbeam",
-          "current_pp": 8,
-          "max_pp": 8
-        },
-        {
-          "move_id": "highjumpkick",
+          "move_id": "flashcannon",
           "current_pp": 12,
           "max_pp": 12
+        },
+        {
+          "move_id": "vacuumwave",
+          "current_pp": 20,
+          "max_pp": 20
         },
         {
           "move_id": "protect",
@@ -7267,6 +7711,43 @@
           "move_id": "focuspunch",
           "current_pp": 20,
           "max_pp": 20
+        },
+        {
+          "move_id": "protect",
+          "current_pp": 8,
+          "max_pp": 8
+        }
+      ]
+    },
+    {
+      "species_id": "mabosstiff",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "sitrusberry",
+      "current_ability_id": "intimidate",
+      "nature_id": "adamant",
+      "training_points": {
+        "hp": 32,
+        "attack": 32,
+        "defense": 0,
+        "special_attack": 0,
+        "special_defense": 2,
+        "speed": 0
+      },
+      "moves": [
+        {
+          "move_id": "jawlock",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "playrough",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "firefang",
+          "current_pp": 16,
+          "max_pp": 16
         },
         {
           "move_id": "protect",
@@ -8386,6 +8867,43 @@
       ]
     },
     {
+      "species_id": "mrmime",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "sitrusberry",
+      "current_ability_id": "filter",
+      "nature_id": "timid",
+      "training_points": {
+        "hp": 32,
+        "attack": 0,
+        "defense": 2,
+        "special_attack": 0,
+        "special_defense": 0,
+        "speed": 32
+      },
+      "moves": [
+        {
+          "move_id": "fakeout",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "psychic",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "wideguard",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "helpinghand",
+          "current_pp": 20,
+          "max_pp": 20
+        }
+      ]
+    },
+    {
       "species_id": "mudsdale",
       "source": "meta_preset",
       "current_item_id": "leftovers",
@@ -8867,6 +9385,43 @@
       ]
     },
     {
+      "species_id": "pawmot",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "focussash",
+      "current_ability_id": "voltabsorb",
+      "nature_id": "jolly",
+      "training_points": {
+        "hp": 2,
+        "attack": 32,
+        "defense": 0,
+        "special_attack": 0,
+        "special_defense": 0,
+        "speed": 32
+      },
+      "moves": [
+        {
+          "move_id": "fakeout",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "doubleshock",
+          "current_pp": 8,
+          "max_pp": 8
+        },
+        {
+          "move_id": "closecombat",
+          "current_pp": 8,
+          "max_pp": 8
+        },
+        {
+          "move_id": "revivalblessing",
+          "current_pp": 1,
+          "max_pp": 1
+        }
+      ]
+    },
+    {
       "species_id": "pelipper",
       "source": "meta_preset",
       "current_item_id": "sitrusberry",
@@ -8900,6 +9455,117 @@
           "move_id": "weatherball",
           "current_pp": 12,
           "max_pp": 12
+        }
+      ]
+    },
+    {
+      "species_id": "perrserker",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "assaultvest",
+      "current_ability_id": "steelyspirit",
+      "nature_id": "adamant",
+      "training_points": {
+        "hp": 32,
+        "attack": 32,
+        "defense": 0,
+        "special_attack": 0,
+        "special_defense": 2,
+        "speed": 0
+      },
+      "moves": [
+        {
+          "move_id": "fakeout",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "ironhead",
+          "current_pp": 16,
+          "max_pp": 16
+        },
+        {
+          "move_id": "closecombat",
+          "current_pp": 8,
+          "max_pp": 8
+        },
+        {
+          "move_id": "uturn",
+          "current_pp": 20,
+          "max_pp": 20
+        }
+      ]
+    },
+    {
+      "species_id": "persian",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "normalgem",
+      "current_ability_id": "technician",
+      "nature_id": "jolly",
+      "training_points": {
+        "hp": 2,
+        "attack": 32,
+        "defense": 0,
+        "special_attack": 0,
+        "special_defense": 0,
+        "speed": 32
+      },
+      "moves": [
+        {
+          "move_id": "fakeout",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "feint",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "uturn",
+          "current_pp": 20,
+          "max_pp": 20
+        },
+        {
+          "move_id": "taunt",
+          "current_pp": 20,
+          "max_pp": 20
+        }
+      ]
+    },
+    {
+      "species_id": "persianalola",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "sitrusberry",
+      "current_ability_id": "furcoat",
+      "nature_id": "timid",
+      "training_points": {
+        "hp": 32,
+        "attack": 0,
+        "defense": 2,
+        "special_attack": 0,
+        "special_defense": 0,
+        "speed": 32
+      },
+      "moves": [
+        {
+          "move_id": "fakeout",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "foulplay",
+          "current_pp": 16,
+          "max_pp": 16
+        },
+        {
+          "move_id": "partingshot",
+          "current_pp": 20,
+          "max_pp": 20
+        },
+        {
+          "move_id": "taunt",
+          "current_pp": 20,
+          "max_pp": 20
         }
       ]
     },
@@ -9607,6 +10273,43 @@
       ]
     },
     {
+      "species_id": "pincurchin",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "shucaberry",
+      "current_ability_id": "electricsurge",
+      "nature_id": "quiet",
+      "training_points": {
+        "hp": 32,
+        "attack": 0,
+        "defense": 0,
+        "special_attack": 32,
+        "special_defense": 2,
+        "speed": 0
+      },
+      "moves": [
+        {
+          "move_id": "risingvoltage",
+          "current_pp": 20,
+          "max_pp": 20
+        },
+        {
+          "move_id": "scald",
+          "current_pp": 16,
+          "max_pp": 16
+        },
+        {
+          "move_id": "recover",
+          "current_pp": 8,
+          "max_pp": 8
+        },
+        {
+          "move_id": "protect",
+          "current_pp": 8,
+          "max_pp": 8
+        }
+      ]
+    },
+    {
       "species_id": "pinsir",
       "source": "meta_preset",
       "current_item_id": "pinsirite",
@@ -10273,6 +10976,43 @@
       ]
     },
     {
+      "species_id": "rillaboom",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "miracleseed",
+      "current_ability_id": "grassysurge",
+      "nature_id": "adamant",
+      "training_points": {
+        "hp": 32,
+        "attack": 32,
+        "defense": 0,
+        "special_attack": 0,
+        "special_defense": 2,
+        "speed": 0
+      },
+      "moves": [
+        {
+          "move_id": "woodhammer",
+          "current_pp": 16,
+          "max_pp": 16
+        },
+        {
+          "move_id": "grassyglide",
+          "current_pp": 20,
+          "max_pp": 20
+        },
+        {
+          "move_id": "fakeout",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "protect",
+          "current_pp": 8,
+          "max_pp": 8
+        }
+      ]
+    },
+    {
       "species_id": "roserade",
       "source": "meta_preset",
       "current_item_id": "choicescarf",
@@ -10634,6 +11374,80 @@
           "move_id": "phantomforce",
           "current_pp": 12,
           "max_pp": 12
+        },
+        {
+          "move_id": "protect",
+          "current_pp": 8,
+          "max_pp": 8
+        }
+      ]
+    },
+    {
+      "species_id": "salamence",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "salamencite",
+      "current_ability_id": "intimidate",
+      "nature_id": "naive",
+      "training_points": {
+        "hp": 2,
+        "attack": 16,
+        "defense": 0,
+        "special_attack": 16,
+        "special_defense": 0,
+        "speed": 32
+      },
+      "moves": [
+        {
+          "move_id": "doubleedge",
+          "current_pp": 16,
+          "max_pp": 16
+        },
+        {
+          "move_id": "hypervoice",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "dracometeor",
+          "current_pp": 8,
+          "max_pp": 8
+        },
+        {
+          "move_id": "protect",
+          "current_pp": 8,
+          "max_pp": 8
+        }
+      ]
+    },
+    {
+      "species_id": "salamencemega",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "salamencite",
+      "current_ability_id": "aerilate",
+      "nature_id": "naive",
+      "training_points": {
+        "hp": 2,
+        "attack": 16,
+        "defense": 0,
+        "special_attack": 16,
+        "special_defense": 0,
+        "speed": 32
+      },
+      "moves": [
+        {
+          "move_id": "doubleedge",
+          "current_pp": 16,
+          "max_pp": 16
+        },
+        {
+          "move_id": "hypervoice",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "dracometeor",
+          "current_pp": 8,
+          "max_pp": 8
         },
         {
           "move_id": "protect",
@@ -11483,8 +12297,8 @@
         },
         {
           "move_id": "strengthsap",
-          "current_pp": 12,
-          "max_pp": 12
+          "current_pp": 8,
+          "max_pp": 8
         },
         {
           "move_id": "trickroom",
@@ -11522,6 +12336,43 @@
           "move_id": "poltergeist",
           "current_pp": 8,
           "max_pp": 8
+        },
+        {
+          "move_id": "protect",
+          "current_pp": 8,
+          "max_pp": 8
+        }
+      ]
+    },
+    {
+      "species_id": "sirfetchd",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "leek",
+      "current_ability_id": "scrappy",
+      "nature_id": "adamant",
+      "training_points": {
+        "hp": 32,
+        "attack": 32,
+        "defense": 0,
+        "special_attack": 0,
+        "special_defense": 2,
+        "speed": 0
+      },
+      "moves": [
+        {
+          "move_id": "closecombat",
+          "current_pp": 8,
+          "max_pp": 8
+        },
+        {
+          "move_id": "leafblade",
+          "current_pp": 16,
+          "max_pp": 16
+        },
+        {
+          "move_id": "firstimpression",
+          "current_pp": 12,
+          "max_pp": 12
         },
         {
           "move_id": "protect",
@@ -12012,6 +12863,154 @@
       ]
     },
     {
+      "species_id": "squawkabilly",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "focussash",
+      "current_ability_id": "intimidate",
+      "nature_id": "jolly",
+      "training_points": {
+        "hp": 32,
+        "attack": 0,
+        "defense": 2,
+        "special_attack": 0,
+        "special_defense": 0,
+        "speed": 32
+      },
+      "moves": [
+        {
+          "move_id": "bravebird",
+          "current_pp": 16,
+          "max_pp": 16
+        },
+        {
+          "move_id": "tailwind",
+          "current_pp": 16,
+          "max_pp": 16
+        },
+        {
+          "move_id": "partingshot",
+          "current_pp": 20,
+          "max_pp": 20
+        },
+        {
+          "move_id": "taunt",
+          "current_pp": 20,
+          "max_pp": 20
+        }
+      ]
+    },
+    {
+      "species_id": "squawkabillyblue",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "focussash",
+      "current_ability_id": "intimidate",
+      "nature_id": "jolly",
+      "training_points": {
+        "hp": 32,
+        "attack": 0,
+        "defense": 2,
+        "special_attack": 0,
+        "special_defense": 0,
+        "speed": 32
+      },
+      "moves": [
+        {
+          "move_id": "bravebird",
+          "current_pp": 16,
+          "max_pp": 16
+        },
+        {
+          "move_id": "tailwind",
+          "current_pp": 16,
+          "max_pp": 16
+        },
+        {
+          "move_id": "partingshot",
+          "current_pp": 20,
+          "max_pp": 20
+        },
+        {
+          "move_id": "taunt",
+          "current_pp": 20,
+          "max_pp": 20
+        }
+      ]
+    },
+    {
+      "species_id": "squawkabillywhite",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "focussash",
+      "current_ability_id": "intimidate",
+      "nature_id": "jolly",
+      "training_points": {
+        "hp": 32,
+        "attack": 0,
+        "defense": 2,
+        "special_attack": 0,
+        "special_defense": 0,
+        "speed": 32
+      },
+      "moves": [
+        {
+          "move_id": "bravebird",
+          "current_pp": 16,
+          "max_pp": 16
+        },
+        {
+          "move_id": "tailwind",
+          "current_pp": 16,
+          "max_pp": 16
+        },
+        {
+          "move_id": "partingshot",
+          "current_pp": 20,
+          "max_pp": 20
+        },
+        {
+          "move_id": "taunt",
+          "current_pp": 20,
+          "max_pp": 20
+        }
+      ]
+    },
+    {
+      "species_id": "squawkabillyyellow",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "focussash",
+      "current_ability_id": "intimidate",
+      "nature_id": "jolly",
+      "training_points": {
+        "hp": 32,
+        "attack": 0,
+        "defense": 2,
+        "special_attack": 0,
+        "special_defense": 0,
+        "speed": 32
+      },
+      "moves": [
+        {
+          "move_id": "bravebird",
+          "current_pp": 16,
+          "max_pp": 16
+        },
+        {
+          "move_id": "tailwind",
+          "current_pp": 16,
+          "max_pp": 16
+        },
+        {
+          "move_id": "partingshot",
+          "current_pp": 20,
+          "max_pp": 20
+        },
+        {
+          "move_id": "taunt",
+          "current_pp": 20,
+          "max_pp": 20
+        }
+      ]
+    },
+    {
       "species_id": "staraptor",
       "source": "learnset_fallback",
       "current_item_id": "none",
@@ -12308,22 +13307,32 @@
       ]
     },
     {
-      "species_id": "sylveon",
-      "source": "meta_preset",
-      "current_item_id": "fairyfeather",
-      "current_ability_id": "pixilate",
-      "nature_id": "modest",
+      "species_id": "swalot",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "blacksludge",
+      "current_ability_id": "stickyhold",
+      "nature_id": "bold",
       "training_points": {
         "hp": 32,
         "attack": 0,
-        "defense": 0,
-        "special_attack": 32,
-        "special_defense": 0,
-        "speed": 2
+        "defense": 32,
+        "special_attack": 0,
+        "special_defense": 2,
+        "speed": 0
       },
       "moves": [
         {
-          "move_id": "hypervoice",
+          "move_id": "sludgebomb",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "acidarmor",
+          "current_pp": 20,
+          "max_pp": 20
+        },
+        {
+          "move_id": "bodypress",
           "current_pp": 12,
           "max_pp": 12
         },
@@ -12331,16 +13340,6 @@
           "move_id": "protect",
           "current_pp": 8,
           "max_pp": 8
-        },
-        {
-          "move_id": "quickattack",
-          "current_pp": 20,
-          "max_pp": 20
-        },
-        {
-          "move_id": "yawn",
-          "current_pp": 12,
-          "max_pp": 12
         }
       ]
     },
@@ -12415,6 +13414,43 @@
           "move_id": "protect",
           "current_pp": 8,
           "max_pp": 8
+        }
+      ]
+    },
+    {
+      "species_id": "sylveon",
+      "source": "meta_preset",
+      "current_item_id": "fairyfeather",
+      "current_ability_id": "pixilate",
+      "nature_id": "modest",
+      "training_points": {
+        "hp": 32,
+        "attack": 0,
+        "defense": 0,
+        "special_attack": 32,
+        "special_defense": 0,
+        "speed": 2
+      },
+      "moves": [
+        {
+          "move_id": "hypervoice",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "protect",
+          "current_pp": 8,
+          "max_pp": 8
+        },
+        {
+          "move_id": "quickattack",
+          "current_pp": 20,
+          "max_pp": 20
+        },
+        {
+          "move_id": "yawn",
+          "current_pp": 12,
+          "max_pp": 12
         }
       ]
     },
@@ -12595,6 +13631,43 @@
           "move_id": "gigaimpact",
           "current_pp": 8,
           "max_pp": 8
+        },
+        {
+          "move_id": "protect",
+          "current_pp": 8,
+          "max_pp": 8
+        }
+      ]
+    },
+    {
+      "species_id": "thievul",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "psychicseed",
+      "current_ability_id": "unburden",
+      "nature_id": "timid",
+      "training_points": {
+        "hp": 2,
+        "attack": 0,
+        "defense": 0,
+        "special_attack": 32,
+        "special_defense": 0,
+        "speed": 32
+      },
+      "moves": [
+        {
+          "move_id": "snarl",
+          "current_pp": 16,
+          "max_pp": 16
+        },
+        {
+          "move_id": "darkpulse",
+          "current_pp": 16,
+          "max_pp": 16
+        },
+        {
+          "move_id": "nastyplot",
+          "current_pp": 20,
+          "max_pp": 20
         },
         {
           "move_id": "protect",
@@ -12817,6 +13890,80 @@
           "move_id": "icepunch",
           "current_pp": 16,
           "max_pp": 16
+        },
+        {
+          "move_id": "protect",
+          "current_pp": 8,
+          "max_pp": 8
+        }
+      ]
+    },
+    {
+      "species_id": "toxtricity",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "throatspray",
+      "current_ability_id": "punkrock",
+      "nature_id": "modest",
+      "training_points": {
+        "hp": 2,
+        "attack": 0,
+        "defense": 0,
+        "special_attack": 32,
+        "special_defense": 0,
+        "speed": 32
+      },
+      "moves": [
+        {
+          "move_id": "overdrive",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "boomburst",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "sludgebomb",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "protect",
+          "current_pp": 8,
+          "max_pp": 8
+        }
+      ]
+    },
+    {
+      "species_id": "toxtricitylowkey",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "throatspray",
+      "current_ability_id": "punkrock",
+      "nature_id": "modest",
+      "training_points": {
+        "hp": 2,
+        "attack": 0,
+        "defense": 0,
+        "special_attack": 32,
+        "special_defense": 0,
+        "speed": 32
+      },
+      "moves": [
+        {
+          "move_id": "overdrive",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "boomburst",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "sludgebomb",
+          "current_pp": 12,
+          "max_pp": 12
         },
         {
           "move_id": "protect",
@@ -13338,8 +14485,8 @@
         },
         {
           "move_id": "strengthsap",
-          "current_pp": 12,
-          "max_pp": 12
+          "current_pp": 8,
+          "max_pp": 8
         }
       ]
     },
@@ -13412,8 +14559,8 @@
         },
         {
           "move_id": "strengthsap",
-          "current_pp": 12,
-          "max_pp": 12
+          "current_pp": 8,
+          "max_pp": 8
         }
       ]
     },
@@ -14265,6 +15412,43 @@
           "move_id": "tailwind",
           "current_pp": 16,
           "max_pp": 16
+        }
+      ]
+    },
+    {
+      "species_id": "wigglytuff",
+      "source": "curated_regulation_m_c",
+      "current_item_id": "throatspray",
+      "current_ability_id": "competitive",
+      "nature_id": "modest",
+      "training_points": {
+        "hp": 32,
+        "attack": 0,
+        "defense": 0,
+        "special_attack": 32,
+        "special_defense": 2,
+        "speed": 0
+      },
+      "moves": [
+        {
+          "move_id": "hypervoice",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "dazzlinggleam",
+          "current_pp": 12,
+          "max_pp": 12
+        },
+        {
+          "move_id": "icywind",
+          "current_pp": 16,
+          "max_pp": 16
+        },
+        {
+          "move_id": "protect",
+          "current_pp": 8,
+          "max_pp": 8
         }
       ]
     },

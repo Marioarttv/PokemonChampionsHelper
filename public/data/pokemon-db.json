@@ -1,7 +1,56 @@
 {
   "meta": {
-    "generatedAt": "2026-05-27T06:33:55.804Z",
-    "source": "@pkmn/dex",
+    "generatedAt": "2026-09-09T12:10:19.900Z",
+    "source": "@pkmn/dex with verified Champions M-C corrections",
+    "corrections": {
+      "regulation": "https://www.serebii.net/pokemonchampions/rankedbattle/regulationm-c.shtml",
+      "species": {
+        "wigglytuff": "https://www.serebii.net/pokedex-champions/wigglytuff/",
+        "persian": "https://www.serebii.net/pokedex-champions/persian/",
+        "persianalola": "https://www.serebii.net/pokedex-champions/persian/",
+        "farfetchd": "https://www.serebii.net/pokedex-champions/farfetch'd/",
+        "mrmime": "https://www.serebii.net/pokedex-champions/mr.mime/",
+        "swalot": "https://www.serebii.net/pokedex-champions/swalot/",
+        "absol": "https://www.serebii.net/pokedex-champions/absol/",
+        "absolmega": "https://www.serebii.net/pokedex-champions/absol/",
+        "absolmegaz": "https://www.serebii.net/pokedex-champions/absol/",
+        "salamence": "https://www.serebii.net/pokedex-champions/salamence/",
+        "salamencemega": "https://www.serebii.net/pokedex-champions/salamence/",
+        "garchomp": "https://www.serebii.net/pokedex-champions/garchomp/",
+        "garchompmega": "https://www.serebii.net/pokedex-champions/garchomp/",
+        "garchompmegaz": "https://www.serebii.net/pokedex-champions/garchomp/",
+        "lucario": "https://www.serebii.net/pokedex-champions/lucario/",
+        "lucariomega": "https://www.serebii.net/pokedex-champions/lucario/",
+        "lucariomegaz": "https://www.serebii.net/pokedex-champions/lucario/",
+        "gogoat": "https://www.serebii.net/pokedex-champions/gogoat/",
+        "golisopod": "https://www.serebii.net/pokedex-champions/golisopod/",
+        "golisopodmega": "https://www.serebii.net/pokedex-champions/golisopod/",
+        "rillaboom": "https://www.serebii.net/pokedex-champions/rillaboom/",
+        "cinderace": "https://www.serebii.net/pokedex-champions/cinderace/",
+        "inteleon": "https://www.serebii.net/pokedex-champions/inteleon/",
+        "thievul": "https://www.serebii.net/pokedex-champions/thievul/",
+        "toxtricity": "https://www.serebii.net/pokedex-champions/toxtricity/",
+        "toxtricitylowkey": "https://www.serebii.net/pokedex-champions/toxtricity/",
+        "grapploct": "https://www.serebii.net/pokedex-champions/grapploct/",
+        "perrserker": "https://www.serebii.net/pokedex-champions/perrserker/",
+        "sirfetchd": "https://www.serebii.net/pokedex-champions/sirfetch'd/",
+        "pincurchin": "https://www.serebii.net/pokedex-champions/pincurchin/",
+        "indeedee": "https://www.serebii.net/pokedex-champions/indeedee/",
+        "indeedeef": "https://www.serebii.net/pokedex-champions/indeedee/",
+        "pawmot": "https://www.serebii.net/pokedex-champions/pawmot/",
+        "arboliva": "https://www.serebii.net/pokedex-champions/arboliva/",
+        "squawkabilly": "https://www.serebii.net/pokedex-champions/squawkabilly/",
+        "squawkabillyblue": "https://www.serebii.net/pokedex-champions/squawkabilly/",
+        "squawkabillyyellow": "https://www.serebii.net/pokedex-champions/squawkabilly/",
+        "squawkabillywhite": "https://www.serebii.net/pokedex-champions/squawkabilly/",
+        "mabosstiff": "https://www.serebii.net/pokedex-champions/mabosstiff/",
+        "baxcalibur": "https://www.serebii.net/pokedex-champions/baxcalibur/",
+        "baxcaliburmega": "https://www.serebii.net/pokedex-champions/baxcalibur/"
+      },
+      "items": "https://www.serebii.net/pokemonchampions/items.shtml",
+      "itemNumbers": "https://github.com/smogon/pokemon-showdown/blob/master/data/items.ts",
+      "auraGuard": "https://github.com/smogon/pokemon-showdown/blob/master/data/abilities.ts"
+    },
     "speciesCount": 1417
   },
   "pokemon": [
@@ -4698,7 +4747,7 @@
       "gen": 1,
       "tier": "Illegal",
       "doublesTier": "Illegal",
-      "isNonstandard": "Past"
+      "isNonstandard": null
     },
     {
       "id": "farfetchdgalar",
@@ -6507,7 +6556,7 @@
       "gen": 1,
       "tier": "Illegal",
       "doublesTier": "Illegal",
-      "isNonstandard": "Past"
+      "isNonstandard": null
     },
     {
       "id": "mrmimegalar",
@@ -16261,7 +16310,7 @@
       "gen": 3,
       "tier": "Illegal",
       "doublesTier": "Illegal",
-      "isNonstandard": "Past"
+      "isNonstandard": null
     },
     {
       "id": "absolmega",
@@ -16292,7 +16341,7 @@
       "gen": 6,
       "tier": "Illegal",
       "doublesTier": "Illegal",
-      "isNonstandard": "Past"
+      "isNonstandard": null
     },
     {
       "id": "absolmegaz",
@@ -16314,7 +16363,7 @@
       },
       "bst": 565,
       "abilities": {
-        "0": "Magic Bounce"
+        "0": "Sharpness"
       },
       "heightm": null,
       "weightkg": 49,
@@ -16324,7 +16373,7 @@
       "gen": 9,
       "tier": "Illegal",
       "doublesTier": "Illegal",
-      "isNonstandard": "Future"
+      "isNonstandard": null
     },
     {
       "id": "wynaut",
@@ -16862,7 +16911,7 @@
       "gen": 6,
       "tier": "Illegal",
       "doublesTier": "Illegal",
-      "isNonstandard": "Past"
+      "isNonstandard": null
     },
     {
       "id": "beldum",
@@ -19909,7 +19958,7 @@
       "gen": 6,
       "tier": "Illegal",
       "doublesTier": "Illegal",
-      "isNonstandard": "Past"
+      "isNonstandard": null
     },
     {
       "id": "garchompmegaz",
@@ -19930,7 +19979,7 @@
       },
       "bst": 700,
       "abilities": {
-        "0": "Sand Force"
+        "0": "Levitate"
       },
       "heightm": null,
       "weightkg": 99,
@@ -19940,7 +19989,7 @@
       "gen": 9,
       "tier": "Illegal",
       "doublesTier": "Illegal",
-      "isNonstandard": "Future"
+      "isNonstandard": null
     },
     {
       "id": "munchlax",
@@ -20076,7 +20125,7 @@
       "gen": 6,
       "tier": "Illegal",
       "doublesTier": "Illegal",
-      "isNonstandard": "Past"
+      "isNonstandard": null
     },
     {
       "id": "lucariomegaz",
@@ -20098,7 +20147,7 @@
       },
       "bst": 625,
       "abilities": {
-        "0": "Adaptability"
+        "0": "Aura Guard"
       },
       "heightm": null,
       "weightkg": 49.4,
@@ -20108,7 +20157,7 @@
       "gen": 9,
       "tier": "Illegal",
       "doublesTier": "Illegal",
-      "isNonstandard": "Future"
+      "isNonstandard": null
     },
     {
       "id": "hippopotas",
@@ -35252,7 +35301,7 @@
       "gen": 7,
       "tier": "Illegal",
       "doublesTier": "Illegal",
-      "isNonstandard": "Past"
+      "isNonstandard": null
     },
     {
       "id": "golisopodmega",
@@ -35274,7 +35323,7 @@
       },
       "bst": 630,
       "abilities": {
-        "0": "Emergency Exit"
+        "0": "Tough Claws"
       },
       "heightm": null,
       "weightkg": 148,
@@ -35284,7 +35333,7 @@
       "gen": 9,
       "tier": "Illegal",
       "doublesTier": "Illegal",
-      "isNonstandard": "Future"
+      "isNonstandard": null
     },
     {
       "id": "sandygast",
@@ -38623,7 +38672,7 @@
       "gen": 8,
       "tier": "Illegal",
       "doublesTier": "Illegal",
-      "isNonstandard": "Past"
+      "isNonstandard": null
     },
     {
       "id": "gossifleur",
@@ -39847,7 +39896,7 @@
       "gen": 8,
       "tier": "Illegal",
       "doublesTier": "Illegal",
-      "isNonstandard": "Past"
+      "isNonstandard": null
     },
     {
       "id": "sinistea",
@@ -40388,7 +40437,7 @@
       "gen": 8,
       "tier": "Illegal",
       "doublesTier": "Illegal",
-      "isNonstandard": "Past"
+      "isNonstandard": null
     },
     {
       "id": "mrrime",
@@ -46161,8 +46210,7 @@
       },
       "bst": 700,
       "abilities": {
-        "0": "Thermal Exchange",
-        "H": "Ice Body"
+        "0": "Thermal Exchange"
       },
       "heightm": null,
       "weightkg": 315,
@@ -46172,7 +46220,7 @@
       "gen": 9,
       "tier": "Illegal",
       "doublesTier": "Illegal",
-      "isNonstandard": "Future"
+      "isNonstandard": null
     },
     {
       "id": "gimmighoul",

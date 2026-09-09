@@ -1,3 +1,4 @@
+import regulationTraining from "../data/championsRegulationMCTraining.json";
 import { normalizePokemonNameKey } from "../data/championsLegalPokemon";
 import { getOpponentPreset } from "./opponentMovePresets";
 import type { PokemonRecord } from "./pokemonDb";
@@ -13,6 +14,7 @@ export type ChampionsNatureId =
   | "impish"
   | "jolly"
   | "modest"
+  | "naive"
   | "quiet"
   | "relaxed"
   | "sassy"
@@ -85,6 +87,7 @@ const NATURES: Record<ChampionsNatureId, NatureMeta> = {
   impish: { label: "Impish", increased: "def", decreased: "spa" },
   jolly: { label: "Jolly", increased: "spe", decreased: "spa" },
   modest: { label: "Modest", increased: "spa", decreased: "atk" },
+  naive: { label: "Naive", increased: "spe", decreased: "spd" },
   quiet: { label: "Quiet", increased: "spa", decreased: "spe" },
   relaxed: { label: "Relaxed", increased: "def", decreased: "spe" },
   sassy: { label: "Sassy", increased: "spd", decreased: "spe" },
@@ -525,7 +528,14 @@ export function getChampionsTemplateIdForPokemon(pokemon: PokemonRecord): Champi
 }
 
 export function getChampionsTemplateForPokemon(pokemon: PokemonRecord) {
-  return getChampionsTemplate(getChampionsTemplateIdForPokemon(pokemon));
+  const template = getChampionsTemplate(getChampionsTemplateIdForPokemon(pokemon));
+  const curated = (regulationTraining as Record<string, ChampionsStatSpread>)[pokemon.id];
+  return curated ? {
+    ...template,
+    label: "M-C Default",
+    description: "Curated Regulation M-C doubles nature and training points.",
+    ...normalizeChampionsStatSpread(curated),
+  } : template;
 }
 
 export function getDefaultChampionsStatSpreadForPokemon(pokemon: PokemonRecord): ChampionsStatSpread {

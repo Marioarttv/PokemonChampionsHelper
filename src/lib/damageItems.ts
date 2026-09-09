@@ -3,6 +3,12 @@ import type { DamageCategory } from "./damage";
 export type DamageItemRole = "attacker" | "defender";
 
 export type DamageItemId =
+  | "normalgem"
+  | "miracleseed"
+  | "silverpowder"
+  | "metalcoat"
+  | "twistedspoon"
+  | "hardstone"
   | "none"
   | "lifeorb"
   | "choiceband"
@@ -62,6 +68,12 @@ export type DamageItemOption = {
 };
 
 const DAMAGE_ITEM_OPTIONS: DamageItemOption[] = [
+  { id: "normalgem", label: "Normal Gem", roles: ["attacker"], description: "Boosts one Normal move by 1.3x before consumption." },
+  { id: "miracleseed", label: "Miracle Seed", roles: ["attacker"], description: "Boosts Grass damage by 1.2x." },
+  { id: "silverpowder", label: "Silver Powder", roles: ["attacker"], description: "Boosts Bug damage by 1.2x." },
+  { id: "metalcoat", label: "Metal Coat", roles: ["attacker"], description: "Boosts Steel damage by 1.2x." },
+  { id: "twistedspoon", label: "Twisted Spoon", roles: ["attacker"], description: "Boosts Psychic damage by 1.2x." },
+  { id: "hardstone", label: "Hard Stone", roles: ["attacker"], description: "Boosts Rock damage by 1.2x." },
   { id: "none", label: "None", roles: ["attacker", "defender"], description: "Ignore item-based damage modifiers." },
   { id: "lifeorb", label: "Life Orb", roles: ["attacker"], description: "Boosts move damage by 1.3x." },
   { id: "choiceband", label: "Choice Band", roles: ["attacker"], description: "Boosts physical damage by 1.5x." },
@@ -122,6 +134,11 @@ const DAMAGE_ITEM_OPTIONS: DamageItemOption[] = [
 const DAMAGE_ITEM_BY_ID = new Map(DAMAGE_ITEM_OPTIONS.map((option) => [option.id, option] as const));
 
 const TYPE_BOOST_ITEM_MULTIPLIERS: Partial<Record<DamageItemId, string>> = {
+  miracleseed: "grass",
+  silverpowder: "bug",
+  metalcoat: "steel",
+  twistedspoon: "psychic",
+  hardstone: "rock",
   charcoal: "fire",
   mysticwater: "water",
   magnet: "electric",
@@ -202,6 +219,8 @@ export function getAttackerItemModifier(options: {
   if (attackerItem === "choicespecs" && category === "special") {
     return 1.5;
   }
+
+  if (attackerItem === "normalgem" && attackType === "normal") return 1.3;
 
   if (attackerItem === "lifeorb") {
     return 1.3;

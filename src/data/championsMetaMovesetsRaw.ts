@@ -1,6 +1,6 @@
 export const CHAMPIONS_META_MOVESETS_RAW = String.raw`Pokemon Champions Meta Sets
-Source: https://www.pokemon-zone.com/champions/pokemon/; Regulation M-B additions hand-curated from Pokemon Zone learnsets and news
-Exported: 2026-06-17T14:22:00.000Z
+Source: https://www.pokemon-zone.com/champions/pokemon/; M-B additions from Pokemon Zone; M-C curated defaults verified against https://www.serebii.net/pokemonchampions/rankedbattle/regulationm-c.shtml and Champions learnsets (not usage statistics)
+Exported: 2026-09-09T00:00:00.000Z
 
 Incineroar
 Types: Fire / Dark
@@ -2035,4 +2035,319 @@ Ability: Good as Gold
 Item: Life Orb
 Moves: Make It Rain / Nasty Plot / Protect / Shadow Ball
 Usage: 0 rating · 0 teams
+
+Wigglytuff
+Types: Normal / Fairy
+Usage: 0 uses
+Set #1
+Ability: Competitive
+Item: Throat Spray
+Moves: Hyper Voice / Dazzling Gleam / Icy Wind / Protect
+Usage: 0.0 rating · 0 teams
+
+Persian
+Types: Normal
+Usage: 0 uses
+Set #1
+Ability: Technician
+Item: Normal Gem
+Moves: Fake Out / Feint / U-turn / Taunt
+Usage: 0.0 rating · 0 teams
+
+Persian-Alola
+Types: Dark
+Usage: 0 uses
+Set #1
+Ability: Fur Coat
+Item: Sitrus Berry
+Moves: Fake Out / Foul Play / Parting Shot / Taunt
+Usage: 0.0 rating · 0 teams
+
+Farfetch’d
+Types: Normal / Flying
+Usage: 0 uses
+Set #1
+Ability: Defiant
+Item: Leek
+Moves: Leaf Blade / Brave Bird / Quick Attack / Protect
+Usage: 0.0 rating · 0 teams
+
+Mr. Mime
+Types: Psychic / Fairy
+Usage: 0 uses
+Set #1
+Ability: Filter
+Item: Sitrus Berry
+Moves: Fake Out / Psychic / Wide Guard / Helping Hand
+Usage: 0.0 rating · 0 teams
+
+Swalot
+Types: Poison
+Usage: 0 uses
+Set #1
+Ability: Sticky Hold
+Item: Black Sludge
+Moves: Sludge Bomb / Acid Armor / Body Press / Protect
+Usage: 0.0 rating · 0 teams
+
+Absol-Mega-Z
+Types: Dark / Ghost
+Usage: 0 uses
+Set #1
+Ability: Sharpness
+Item: Absolite Z
+Moves: Night Slash / Shadow Claw / Close Combat / Protect
+Usage: 0.0 rating · 0 teams
+
+Salamence
+Types: Dragon / Flying
+Usage: 0 uses
+Set #1
+Ability: Intimidate
+Item: Salamencite
+Moves: Double-Edge / Hyper Voice / Draco Meteor / Protect
+Usage: 0.0 rating · 0 teams
+
+Salamence-Mega
+Types: Dragon / Flying
+Usage: 0 uses
+Set #1
+Ability: Aerilate
+Item: Salamencite
+Moves: Double-Edge / Hyper Voice / Draco Meteor / Protect
+Usage: 0.0 rating · 0 teams
+
+Garchomp-Mega-Z
+Types: Dragon
+Usage: 0 uses
+Set #1
+Ability: Levitate
+Item: Garchompite Z
+Moves: Draco Meteor / Earth Power / Flamethrower / Protect
+Usage: 0.0 rating · 0 teams
+
+Lucario-Mega-Z
+Types: Fighting / Steel
+Usage: 0 uses
+Set #1
+Ability: Aura Guard
+Item: Lucarionite Z
+Moves: Aura Sphere / Flash Cannon / Vacuum Wave / Protect
+Usage: 0.0 rating · 0 teams
+
+Gogoat
+Types: Grass
+Usage: 0 uses
+Set #1
+Ability: Sap Sipper
+Item: Leftovers
+Moves: Horn Leech / High Horsepower / Bulk Up / Milk Drink
+Usage: 0.0 rating · 0 teams
+
+Golisopod
+Types: Bug / Water
+Usage: 0 uses
+Set #1
+Ability: Emergency Exit
+Item: Golisopite
+Moves: First Impression / Liquidation / Aqua Jet / Wide Guard
+Usage: 0.0 rating · 0 teams
+
+Golisopod-Mega
+Types: Bug / Steel
+Usage: 0 uses
+Set #1
+Ability: Tough Claws
+Item: Golisopite
+Moves: First Impression / Liquidation / Aqua Jet / Wide Guard
+Usage: 0.0 rating · 0 teams
+
+Rillaboom
+Types: Grass
+Usage: 0 uses
+Set #1
+Ability: Grassy Surge
+Item: Miracle Seed
+Moves: Wood Hammer / Grassy Glide / Fake Out / Protect
+Usage: 0.0 rating · 0 teams
+
+Cinderace
+Types: Fire
+Usage: 0 uses
+Set #1
+Ability: Libero
+Item: Life Orb
+Moves: Pyro Ball / High Jump Kick / U-turn / Protect
+Usage: 0.0 rating · 0 teams
+
+Inteleon
+Types: Water
+Usage: 0 uses
+Set #1
+Ability: Sniper
+Item: Focus Sash
+Moves: Snipe Shot / Ice Beam / Air Slash / Protect
+Usage: 0.0 rating · 0 teams
+
+Thievul
+Types: Dark
+Usage: 0 uses
+Set #1
+Ability: Unburden
+Item: Psychic Seed
+Moves: Snarl / Dark Pulse / Nasty Plot / Protect
+Usage: 0.0 rating · 0 teams
+
+Toxtricity
+Types: Electric / Poison
+Usage: 0 uses
+Set #1
+Ability: Punk Rock
+Item: Throat Spray
+Moves: Overdrive / Boomburst / Sludge Bomb / Protect
+Usage: 0.0 rating · 0 teams
+
+Toxtricity-Low-Key
+Types: Electric / Poison
+Usage: 0 uses
+Set #1
+Ability: Punk Rock
+Item: Throat Spray
+Moves: Overdrive / Boomburst / Sludge Bomb / Protect
+Usage: 0.0 rating · 0 teams
+
+Grapploct
+Types: Fighting
+Usage: 0 uses
+Set #1
+Ability: Technician
+Item: Sitrus Berry
+Moves: Drain Punch / Sucker Punch / Ice Punch / Protect
+Usage: 0.0 rating · 0 teams
+
+Perrserker
+Types: Steel
+Usage: 0 uses
+Set #1
+Ability: Steely Spirit
+Item: Assault Vest
+Moves: Fake Out / Iron Head / Close Combat / U-turn
+Usage: 0.0 rating · 0 teams
+
+Sirfetch’d
+Types: Fighting
+Usage: 0 uses
+Set #1
+Ability: Scrappy
+Item: Leek
+Moves: Close Combat / Leaf Blade / First Impression / Protect
+Usage: 0.0 rating · 0 teams
+
+Pincurchin
+Types: Electric
+Usage: 0 uses
+Set #1
+Ability: Electric Surge
+Item: Shuca Berry
+Moves: Rising Voltage / Scald / Recover / Protect
+Usage: 0.0 rating · 0 teams
+
+Indeedee
+Types: Psychic / Normal
+Usage: 0 uses
+Set #1
+Ability: Psychic Surge
+Item: Choice Scarf
+Moves: Expanding Force / Dazzling Gleam / Mystical Fire / Trick
+Usage: 0.0 rating · 0 teams
+
+Indeedee-F
+Types: Psychic / Normal
+Usage: 0 uses
+Set #1
+Ability: Psychic Surge
+Item: Psychic Seed
+Moves: Follow Me / Psychic / Helping Hand / Protect
+Usage: 0.0 rating · 0 teams
+
+Pawmot
+Types: Electric / Fighting
+Usage: 0 uses
+Set #1
+Ability: Volt Absorb
+Item: Focus Sash
+Moves: Fake Out / Double Shock / Close Combat / Revival Blessing
+Usage: 0.0 rating · 0 teams
+
+Arboliva
+Types: Grass / Normal
+Usage: 0 uses
+Set #1
+Ability: Seed Sower
+Item: Leftovers
+Moves: Giga Drain / Hyper Voice / Earth Power / Protect
+Usage: 0.0 rating · 0 teams
+
+Squawkabilly
+Types: Normal / Flying
+Usage: 0 uses
+Set #1
+Ability: Intimidate
+Item: Focus Sash
+Moves: Brave Bird / Tailwind / Parting Shot / Taunt
+Usage: 0.0 rating · 0 teams
+
+Mabosstiff
+Types: Dark
+Usage: 0 uses
+Set #1
+Ability: Intimidate
+Item: Sitrus Berry
+Moves: Jaw Lock / Play Rough / Fire Fang / Protect
+Usage: 0.0 rating · 0 teams
+
+Baxcalibur
+Types: Dragon / Ice
+Usage: 0 uses
+Set #1
+Ability: Thermal Exchange
+Item: Baxcalibrite
+Moves: Glaive Rush / Icicle Crash / Ice Shard / Protect
+Usage: 0.0 rating · 0 teams
+
+Baxcalibur-Mega
+Types: Dragon / Ice
+Usage: 0 uses
+Set #1
+Ability: Thermal Exchange
+Item: Baxcalibrite
+Moves: Glaive Rush / Icicle Crash / Ice Shard / Protect
+Usage: 0.0 rating · 0 teams
+
+Squawkabilly-Blue
+Types: Normal / Flying
+Usage: 0 uses
+Set #1
+Ability: Intimidate
+Item: Focus Sash
+Moves: Brave Bird / Tailwind / Parting Shot / Taunt
+Usage: 0.0 rating · 0 teams
+
+Squawkabilly-Yellow
+Types: Normal / Flying
+Usage: 0 uses
+Set #1
+Ability: Intimidate
+Item: Focus Sash
+Moves: Brave Bird / Tailwind / Parting Shot / Taunt
+Usage: 0.0 rating · 0 teams
+
+Squawkabilly-White
+Types: Normal / Flying
+Usage: 0 uses
+Set #1
+Ability: Intimidate
+Item: Focus Sash
+Moves: Brave Bird / Tailwind / Parting Shot / Taunt
+Usage: 0.0 rating · 0 teams
 `;

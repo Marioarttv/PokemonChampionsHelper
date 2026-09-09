@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Dex } from "@pkmn/dex";
 import * as ts from "typescript";
+import { regulationMC, applyWebSpeciesCorrections, applyWebBattleCorrections, isRegulationMCForm } from "./regulation-m-c.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -142,7 +143,7 @@ const championsLegalOrderByKey = new Map(
   championsLegalSpeciesNames.map((name, index) => [toDexId(name), index]),
 );
 
-const species = Dex.species
+let species = Dex.species
   .all()
   .filter((pokemon) => pokemon.exists && pokemon.num > 0)
   .sort((a, b) => {
@@ -173,16 +174,19 @@ const species = Dex.species
     isNonstandard: pokemon.isNonstandard ?? null,
   }));
 
+species = applyWebSpeciesCorrections(species);
+
 const database = {
   meta: {
     generatedAt: new Date().toISOString(),
-    source: "@pkmn/dex",
+    source: "@pkmn/dex with verified Champions M-C corrections",
+    corrections: regulationMC.sources,
     speciesCount: species.length,
   },
   pokemon: species,
 };
 
-const abilities = Dex.abilities
+let abilities = Dex.abilities
   .all()
   .filter((ability) => ability.exists)
   .sort((a, b) => a.name.localeCompare(b.name))
@@ -193,13 +197,14 @@ const abilities = Dex.abilities
     desc: ability.desc || "",
   }));
 
-const items = Dex.items
+let items = Dex.items
   .all()
   .filter((item) => item.exists)
   .sort((a, b) => a.name.localeCompare(b.name))
   .map((item) => ({
     id: item.id,
     name: item.name,
+    megaStone: Object.fromEntries(Object.entries(item.megaStone ?? {}).map(([base, mega]) => [toDexId(base), toDexId(mega)])),
     shortDesc: item.shortDesc || "",
     desc: item.desc || "",
   }));
@@ -226,7 +231,7 @@ function normalizeMultihit(raw) {
   return null;
 }
 
-const moves = Dex.moves
+let moves = Dex.moves
   .all()
   .filter((move) => move.exists)
   .sort((a, b) => a.name.localeCompare(b.name))
@@ -245,12 +250,16 @@ const moves = Dex.moves
       priority: move.priority,
       target: move.target,
       multihit,
+      flags: move.flags,
       shortDesc: move.shortDesc || "",
       desc: move.desc || "",
     };
   });
 
+({ abilities, items, moves } = applyWebBattleCorrections(abilities, items, moves));
+
 const championsLearnsetSpecies = species
+  .filter(isRegulationMCForm)
   .filter((pokemon) => championsLegalSpeciesKeySet.has(toDexId(pokemon.baseSpecies || pokemon.name)))
   .sort((left, right) => {
     const leftOrder = championsLegalOrderByKey.get(toDexId(left.baseSpecies || left.name)) ?? Number.MAX_SAFE_INTEGER;
@@ -261,7 +270,7 @@ const championsLearnsetSpecies = species
 const championsLearnsets = [];
 
 for (const pokemon of championsLearnsetSpecies) {
-  const moveIds = await collectLearnsetMoveIds(pokemon);
+  const moveIds = regulationMC.learnsets[pokemon.id] ?? await collectLearnsetMoveIds(pokemon);
 
   if (moveIds.length > 0) {
     championsLearnsets.push({
@@ -274,7 +283,8 @@ for (const pokemon of championsLearnsetSpecies) {
 const battleData = {
   meta: {
     generatedAt: new Date().toISOString(),
-    source: "@pkmn/dex",
+    source: "@pkmn/dex with verified Champions M-C corrections",
+    corrections: regulationMC.sources,
     abilityCount: abilities.length,
     itemCount: items.length,
     moveCount: moves.length,
@@ -287,7 +297,8 @@ const battleData = {
 const championsLearnsetsData = {
   meta: {
     generatedAt: new Date().toISOString(),
-    source: "@pkmn/dex gen9 learnsets",
+    source: "@pkmn/dex gen9 learnsets; M-C additions use verified Champions learnsets",
+    corrections: regulationMC.sources,
     regulation: championsActiveRegulation,
     regulationWindow: championsActiveRegulationWindow,
     legalSpeciesCount: championsLegalSpeciesNames.length,
@@ -308,3 +319,14 @@ console.log(
 console.log(
   `Generated ${championsLearnsets.length} ${championsActiveRegulation} learnsets at ${path.relative(rootDir, championsLearnsetsOutputFile)}`,
 );
+
+await writeFile(path.join(rootDir, "src/data/championsMoveTraits.json"), `${JSON.stringify(Object.fromEntries(moves.map((move) => [move.id, move.flags ?? {}])), null, 2)}\n`, "utf8");
+
+const regulationTraining = Object.fromEntries(Object.entries(regulationMC.presets).map(([id, preset]) => [id, {
+  nature: preset.nature,
+  statPoints: {
+    hp: preset.trainingPoints.hp, atk: preset.trainingPoints.attack, def: preset.trainingPoints.defense,
+    spa: preset.trainingPoints.special_attack, spd: preset.trainingPoints.special_defense, spe: preset.trainingPoints.speed,
+  },
+}]));
+await writeFile(path.join(rootDir, "src/data/championsRegulationMCTraining.json"), `${JSON.stringify(regulationTraining, null, 2)}\n`, "utf8");

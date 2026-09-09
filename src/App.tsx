@@ -1,3 +1,4 @@
+import { isChampionsMegaEntry, inferMegaEvolutionItemName } from "./lib/championsMegaForms";
 import {
   memo,
   startTransition,
@@ -912,22 +913,6 @@ function getInheritedMovesetKey(pokemon: Pick<PokemonRecord, "baseSpecies" | "fo
   return baseSpeciesKey !== getPokemonMovesetKey(pokemon) ? baseSpeciesKey : null;
 }
 
-function isChampionsMegaEntry(pokemon: Pick<PokemonRecord, "baseSpecies" | "name" | "forme">) {
-  if (!pokemon.forme) {
-    return false;
-  }
-
-  if (!POKEMON_CHAMPIONS_LEGAL_SPECIES_KEY_SET.has(getPokemonBaseSpeciesKey(pokemon))) {
-    return false;
-  }
-
-  return (
-    /^Mega(?:-[XY])?$/.test(pokemon.forme) ||
-    /^[FM]-Mega$/.test(pokemon.forme) ||
-    pokemon.forme === "Original-Mega" ||
-    pokemon.forme === "Primal"
-  );
-}
 
 function getBasePokemonForBattleForm(
   pokemon: PokemonRecord,
@@ -1026,56 +1011,6 @@ function getSavedMegaFormOptions(
   );
 }
 
-function inferMegaEvolutionItemName(
-  megaPokemon: PokemonRecord | null | undefined,
-  itemOptions: readonly ItemRecord[] = [],
-) {
-  if (!megaPokemon || !isChampionsMegaEntry(megaPokemon)) {
-    return null;
-  }
-
-  const baseSpecies = megaPokemon.baseSpecies || megaPokemon.name;
-  const baseSpeciesKey = normalizePokemonNameKey(baseSpecies);
-
-  if (megaPokemon.forme === "Primal") {
-    if (baseSpeciesKey === "groudon") {
-      return "Red Orb";
-    }
-    if (baseSpeciesKey === "kyogre") {
-      return "Blue Orb";
-    }
-  }
-
-  const formSuffix =
-    megaPokemon.forme === "Mega-X"
-      ? "x"
-      : megaPokemon.forme === "Mega-Y"
-        ? "y"
-        : null;
-  const candidateItems = itemOptions.filter((item) => {
-    const itemKey = normalizePokemonNameKey(item.name);
-    const itemTextKey = normalizePokemonNameKey(`${item.shortDesc} ${item.desc}`);
-    return (
-      itemKey.includes(baseSpeciesKey) ||
-      itemTextKey.includes(`heldbya${baseSpeciesKey}`) ||
-      itemTextKey.includes(`heldbyan${baseSpeciesKey}`)
-    );
-  });
-  const matchedItem =
-    (formSuffix
-      ? candidateItems.find((item) => normalizePokemonNameKey(item.name).endsWith(formSuffix))
-      : candidateItems.find((item) => !/[xy]$/.test(normalizePokemonNameKey(item.name)))) ??
-    candidateItems[0] ??
-    null;
-
-  if (matchedItem) {
-    return matchedItem.name;
-  }
-
-  const spacedSuffix =
-    megaPokemon.forme === "Mega-X" ? " X" : megaPokemon.forme === "Mega-Y" ? " Y" : "";
-  return `${baseSpecies}ite${spacedSuffix}`;
-}
 
 function isMegaEvolutionItemForBasePokemon(
   itemName: string | null | undefined,

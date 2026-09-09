@@ -1,3 +1,4 @@
+import moveTraits from "../data/championsMoveTraits.json";
 import type { PokemonType } from "../data/typeChart";
 import type { DamageCategory, DamageWeather } from "./damage";
 import type { PokemonRecord } from "./pokemonDb";
@@ -5,6 +6,10 @@ import type { PokemonRecord } from "./pokemonDb";
 export type DamageAbilityRole = "attacker" | "defender";
 
 export type DamageAbilityId =
+  | "auraguard"
+  | "steelyspirit"
+  | "scrappy"
+  | "longreach"
   | "none"
   | "adaptability"
   | "aerilate"
@@ -55,6 +60,10 @@ export type DamageAbilityOption = {
 };
 
 const DAMAGE_ABILITY_OPTIONS: DamageAbilityOption[] = [
+  { id: "auraguard", label: "Aura Guard", roles: ["defender"], description: "Halves damage from moves that make contact." },
+  { id: "steelyspirit", label: "Steely Spirit", roles: ["attacker"], description: "Boosts the holder's Steel damage by 1.5x; active allies also benefit in the battle engine." },
+  { id: "scrappy", label: "Scrappy", roles: ["attacker"], description: "Normal and Fighting moves can hit Ghost types." },
+  { id: "longreach", label: "Long Reach", roles: ["attacker"], description: "Moves do not make contact." },
   {
     id: "none",
     label: "None",
@@ -473,7 +482,13 @@ function isSupportedMoveKey(set: ReadonlySet<string>, moveName?: string | null) 
     return false;
   }
 
-  return set.has(normalizeKey(moveName));
+  const key = normalizeKey(moveName);
+  const flag = set === CONTACT_MOVE_KEYS ? "contact" : set === PUNCHING_MOVE_KEYS ? "punch"
+    : set === BITING_MOVE_KEYS ? "bite" : set === PULSE_MOVE_KEYS ? "pulse"
+    : set === SLICING_MOVE_KEYS ? "slicing" : set === SOUND_MOVE_KEYS ? "sound" : null;
+  const traits = (moveTraits as Record<string, Record<string, number>>)[key];
+  if (flag && traits) return Boolean(traits[flag]);
+  return set.has(key);
 }
 
 export function getDamageAbilityOptions(role?: DamageAbilityRole) {
@@ -608,6 +623,8 @@ export function getAttackerAbilityModifier(options: {
     return category === "physical" ? 2 : 1;
   }
 
+  if (attackerAbility === "steelyspirit" && effectiveAttackType === "steel") return 1.5;
+
   if (attackerAbility === "toughclaws") {
     return isSupportedMoveKey(CONTACT_MOVE_KEYS, moveName) ? 1.3 : 1;
   }
@@ -708,7 +725,7 @@ export function getDefenderAbilityTypeMultiplier(options: {
     return 0;
   }
 
-  if ((defenderAbility === "soundproof" || defenderAbility === "punkrock") && isSupportedMoveKey(SOUND_MOVE_KEYS, moveName)) {
+  if (defenderAbility === "soundproof" && isSupportedMoveKey(SOUND_MOVE_KEYS, moveName)) {
     return 0;
   }
 
@@ -727,6 +744,8 @@ export function getDefenderAbilityModifier(options: {
   if (typeMultiplier === 0) {
     return 1;
   }
+
+  if (defenderAbility === "auraguard") return isSupportedMoveKey(CONTACT_MOVE_KEYS, moveName) ? 0.5 : 1;
 
   if (defenderAbility === "thickfat") {
     return attackType === "fire" || attackType === "ice" ? 0.5 : 1;

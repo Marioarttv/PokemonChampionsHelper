@@ -1,0 +1,387 @@
+{
+  "wigglytuff": {
+    "nature": "modest",
+    "statPoints": {
+      "hp": 32,
+      "atk": 0,
+      "def": 0,
+      "spa": 32,
+      "spd": 2,
+      "spe": 0
+    }
+  },
+  "persian": {
+    "nature": "jolly",
+    "statPoints": {
+      "hp": 2,
+      "atk": 32,
+      "def": 0,
+      "spa": 0,
+      "spd": 0,
+      "spe": 32
+    }
+  },
+  "persianalola": {
+    "nature": "timid",
+    "statPoints": {
+      "hp": 32,
+      "atk": 0,
+      "def": 2,
+      "spa": 0,
+      "spd": 0,
+      "spe": 32
+    }
+  },
+  "farfetchd": {
+    "nature": "adamant",
+    "statPoints": {
+      "hp": 2,
+      "atk": 32,
+      "def": 0,
+      "spa": 0,
+      "spd": 0,
+      "spe": 32
+    }
+  },
+  "mrmime": {
+    "nature": "timid",
+    "statPoints": {
+      "hp": 32,
+      "atk": 0,
+      "def": 2,
+      "spa": 0,
+      "spd": 0,
+      "spe": 32
+    }
+  },
+  "swalot": {
+    "nature": "bold",
+    "statPoints": {
+      "hp": 32,
+      "atk": 0,
+      "def": 32,
+      "spa": 0,
+      "spd": 2,
+      "spe": 0
+    }
+  },
+  "absolmegaz": {
+    "nature": "jolly",
+    "statPoints": {
+      "hp": 2,
+      "atk": 32,
+      "def": 0,
+      "spa": 0,
+      "spd": 0,
+      "spe": 32
+    }
+  },
+  "salamence": {
+    "nature": "naive",
+    "statPoints": {
+      "hp": 2,
+      "atk": 16,
+      "def": 0,
+      "spa": 16,
+      "spd": 0,
+      "spe": 32
+    }
+  },
+  "salamencemega": {
+    "nature": "naive",
+    "statPoints": {
+      "hp": 2,
+      "atk": 16,
+      "def": 0,
+      "spa": 16,
+      "spd": 0,
+      "spe": 32
+    }
+  },
+  "garchompmegaz": {
+    "nature": "timid",
+    "statPoints": {
+      "hp": 2,
+      "atk": 0,
+      "def": 0,
+      "spa": 32,
+      "spd": 0,
+      "spe": 32
+    }
+  },
+  "lucariomegaz": {
+    "nature": "timid",
+    "statPoints": {
+      "hp": 2,
+      "atk": 0,
+      "def": 0,
+      "spa": 32,
+      "spd": 0,
+      "spe": 32
+    }
+  },
+  "gogoat": {
+    "nature": "careful",
+    "statPoints": {
+      "hp": 32,
+      "atk": 32,
+      "def": 0,
+      "spa": 0,
+      "spd": 2,
+      "spe": 0
+    }
+  },
+  "golisopod": {
+    "nature": "adamant",
+    "statPoints": {
+      "hp": 32,
+      "atk": 32,
+      "def": 0,
+      "spa": 0,
+      "spd": 2,
+      "spe": 0
+    }
+  },
+  "golisopodmega": {
+    "nature": "adamant",
+    "statPoints": {
+      "hp": 32,
+      "atk": 32,
+      "def": 0,
+      "spa": 0,
+      "spd": 2,
+      "spe": 0
+    }
+  },
+  "rillaboom": {
+    "nature": "adamant",
+    "statPoints": {
+      "hp": 32,
+      "atk": 32,
+      "def": 0,
+      "spa": 0,
+      "spd": 2,
+      "spe": 0
+    }
+  },
+  "cinderace": {
+    "nature": "jolly",
+    "statPoints": {
+      "hp": 2,
+      "atk": 32,
+      "def": 0,
+      "spa": 0,
+      "spd": 0,
+      "spe": 32
+    }
+  },
+  "inteleon": {
+    "nature": "timid",
+    "statPoints": {
+      "hp": 2,
+      "atk": 0,
+      "def": 0,
+      "spa": 32,
+      "spd": 0,
+      "spe": 32
+    }
+  },
+  "thievul": {
+    "nature": "timid",
+    "statPoints": {
+      "hp": 2,
+      "atk": 0,
+      "def": 0,
+      "spa": 32,
+      "spd": 0,
+      "spe": 32
+    }
+  },
+  "toxtricity": {
+    "nature": "modest",
+    "statPoints": {
+      "hp": 2,
+      "atk": 0,
+      "def": 0,
+      "spa": 32,
+      "spd": 0,
+      "spe": 32
+    }
+  },
+  "toxtricitylowkey": {
+    "nature": "modest",
+    "statPoints": {
+      "hp": 2,
+      "atk": 0,
+      "def": 0,
+      "spa": 32,
+      "spd": 0,
+      "spe": 32
+    }
+  },
+  "grapploct": {
+    "nature": "adamant",
+    "statPoints": {
+      "hp": 32,
+      "atk": 32,
+      "def": 0,
+      "spa": 0,
+      "spd": 2,
+      "spe": 0
+    }
+  },
+  "perrserker": {
+    "nature": "adamant",
+    "statPoints": {
+      "hp": 32,
+      "atk": 32,
+      "def": 0,
+      "spa": 0,
+      "spd": 2,
+      "spe": 0
+    }
+  },
+  "sirfetchd": {
+    "nature": "adamant",
+    "statPoints": {
+      "hp": 32,
+      "atk": 32,
+      "def": 0,
+      "spa": 0,
+      "spd": 2,
+      "spe": 0
+    }
+  },
+  "pincurchin": {
+    "nature": "quiet",
+    "statPoints": {
+      "hp": 32,
+      "atk": 0,
+      "def": 0,
+      "spa": 32,
+      "spd": 2,
+      "spe": 0
+    }
+  },
+  "indeedee": {
+    "nature": "modest",
+    "statPoints": {
+      "hp": 2,
+      "atk": 0,
+      "def": 0,
+      "spa": 32,
+      "spd": 0,
+      "spe": 32
+    }
+  },
+  "indeedeef": {
+    "nature": "bold",
+    "statPoints": {
+      "hp": 32,
+      "atk": 0,
+      "def": 32,
+      "spa": 0,
+      "spd": 2,
+      "spe": 0
+    }
+  },
+  "pawmot": {
+    "nature": "jolly",
+    "statPoints": {
+      "hp": 2,
+      "atk": 32,
+      "def": 0,
+      "spa": 0,
+      "spd": 0,
+      "spe": 32
+    }
+  },
+  "arboliva": {
+    "nature": "modest",
+    "statPoints": {
+      "hp": 32,
+      "atk": 0,
+      "def": 0,
+      "spa": 32,
+      "spd": 2,
+      "spe": 0
+    }
+  },
+  "squawkabilly": {
+    "nature": "jolly",
+    "statPoints": {
+      "hp": 32,
+      "atk": 0,
+      "def": 2,
+      "spa": 0,
+      "spd": 0,
+      "spe": 32
+    }
+  },
+  "mabosstiff": {
+    "nature": "adamant",
+    "statPoints": {
+      "hp": 32,
+      "atk": 32,
+      "def": 0,
+      "spa": 0,
+      "spd": 2,
+      "spe": 0
+    }
+  },
+  "baxcalibur": {
+    "nature": "adamant",
+    "statPoints": {
+      "hp": 32,
+      "atk": 32,
+      "def": 0,
+      "spa": 0,
+      "spd": 2,
+      "spe": 0
+    }
+  },
+  "baxcaliburmega": {
+    "nature": "adamant",
+    "statPoints": {
+      "hp": 32,
+      "atk": 32,
+      "def": 0,
+      "spa": 0,
+      "spd": 2,
+      "spe": 0
+    }
+  },
+  "squawkabillyblue": {
+    "nature": "jolly",
+    "statPoints": {
+      "hp": 32,
+      "atk": 0,
+      "def": 2,
+      "spa": 0,
+      "spd": 0,
+      "spe": 32
+    }
+  },
+  "squawkabillyyellow": {
+    "nature": "jolly",
+    "statPoints": {
+      "hp": 32,
+      "atk": 0,
+      "def": 2,
+      "spa": 0,
+      "spd": 0,
+      "spe": 32
+    }
+  },
+  "squawkabillywhite": {
+    "nature": "jolly",
+    "statPoints": {
+      "hp": 32,
+      "atk": 0,
+      "def": 2,
+      "spa": 0,
+      "spd": 0,
+      "spe": 32
+    }
+  }
+}

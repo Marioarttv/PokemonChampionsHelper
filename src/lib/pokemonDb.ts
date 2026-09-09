@@ -40,6 +40,7 @@ let pokemonDbPromise: Promise<PokemonDatabase> | null = null;
 const SPRITE_FORM_SUFFIXES = [
   "megax",
   "megay",
+  "megaz",
   "gmax",
   "mega",
   "alola",
