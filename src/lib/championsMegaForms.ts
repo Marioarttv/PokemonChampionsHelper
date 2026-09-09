@@ -2,6 +2,15 @@ import { POKEMON_CHAMPIONS_LEGAL_SPECIES_KEY_SET, normalizePokemonNameKey } from
 import type { PokemonRecord } from "./pokemonDb";
 import type { ItemRecord } from "./battleData";
 
+export function getMegaBasePokemon(pokemon: PokemonRecord, species: readonly PokemonRecord[], items: readonly ItemRecord[]) {
+  if (!isChampionsMegaEntry(pokemon)) return null;
+  // Stones preserve the exact pre-Mega form (e.g. female Meowstic or Eternal Floette).
+  const mappedBase = items.flatMap((item) => Object.entries(item.megaStone ?? {}))
+    .find(([, megaId]) => megaId === pokemon.id)?.[0];
+  const baseId = mappedBase ?? normalizePokemonNameKey(pokemon.baseSpecies);
+  return species.find((entry) => entry.id === baseId && !isChampionsMegaEntry(entry)) ?? null;
+}
+
 export function isChampionsMegaEntry(pokemon: Pick<PokemonRecord, "baseSpecies" | "name" | "forme">) {
   if (!pokemon.forme) {
     return false;
@@ -73,4 +82,3 @@ export function inferMegaEvolutionItemName(
     megaPokemon.forme === "Mega-X" ? " X" : megaPokemon.forme === "Mega-Y" ? " Y" : megaPokemon.forme === "Mega-Z" ? " Z" : "";
   return `${baseSpecies}ite${spacedSuffix}`;
 }
-

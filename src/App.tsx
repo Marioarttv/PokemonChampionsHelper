@@ -1,4 +1,4 @@
-import { isChampionsMegaEntry, inferMegaEvolutionItemName } from "./lib/championsMegaForms";
+import { isChampionsMegaEntry, inferMegaEvolutionItemName, getMegaBasePokemon } from "./lib/championsMegaForms";
 import {
   memo,
   startTransition,
@@ -16441,6 +16441,13 @@ function TeamBuilderView({ onStartNewTeam, featureVisibility, isActive }: TeamBu
   );
 }
 
+function MegaStatDelta({ value, baseValue }: { value: number; baseValue: number | undefined }) {
+  if (baseValue === undefined || value === baseValue) return null;
+  const delta = value - baseValue;
+  return <small className={`mega-stat-delta ${delta > 0 ? "positive" : "negative"}`}
+    title={`Compared with the non-Mega form: ${baseValue}`}> ({delta > 0 ? "+" : ""}{delta})</small>;
+}
+
 function MovesetDatabaseView() {
   const [database, setDatabase] = useState<PokemonRecord[] | null>(null);
   const [battleData, setBattleData] = useState<{
@@ -16584,6 +16591,10 @@ function MovesetDatabaseView() {
     selectedSpeciesKey !== null
       ? legalPokemon.find((pokemon) => getPokemonMovesetKey(pokemon) === selectedSpeciesKey) ?? null
       : null;
+  const selectedMegaBase = useMemo(
+    () => selectedPokemon ? getMegaBasePokemon(selectedPokemon, database ?? [], battleData?.items ?? []) : null,
+    [selectedPokemon, database, battleData?.items],
+  );
 
   const selectedCustomMoveset =
     selectedSpeciesKey !== null ? speciesMovesetByKey.get(selectedSpeciesKey) ?? null : null;
@@ -16685,6 +16696,10 @@ function MovesetDatabaseView() {
   const draftSpreadComputedStats = useMemo(
     () => (selectedPokemon && draftSpread ? getChampionsComputedStats(selectedPokemon, { spread: draftSpread }) : null),
     [draftSpread, selectedPokemon],
+  );
+  const megaBaseComputedStats = useMemo(
+    () => selectedMegaBase && draftSpread ? getChampionsComputedStats(selectedMegaBase, { spread: draftSpread }) : null,
+    [selectedMegaBase, draftSpread],
   );
   const draftSpreadTotalPoints = draftSpread ? getTotalChampionsStatPoints(draftSpread.statPoints) : 0;
   const draftSpreadRemainingPoints = CHAMPIONS_TOTAL_STAT_POINTS - draftSpreadTotalPoints;
@@ -17019,11 +17034,13 @@ function MovesetDatabaseView() {
                 </div>
 
                 <div className="quick-meta-row">
-                  <span>HP {selectedPokemon.baseStats.hp}</span>
-                  <span>Atk {selectedPokemon.baseStats.atk}</span>
-                  <span>SpA {selectedPokemon.baseStats.spa}</span>
-                  <span>Spe {selectedPokemon.baseStats.spe}</span>
+                  {CHAMPIONS_STAT_ORDER.map((statId) => (
+                    <span key={statId}>{CHAMPIONS_STAT_LABELS[statId]} {selectedPokemon.baseStats[statId]}
+                      <MegaStatDelta value={selectedPokemon.baseStats[statId]} baseValue={selectedMegaBase?.baseStats[statId]} />
+                    </span>
+                  ))}
                 </div>
+                {selectedMegaBase ? <p className="selector-note">Changes vs. {selectedMegaBase.name}. Calculated stats below compare the same nature and training points.</p> : null}
 
                 {draftSpread && draftSpreadComputedStats ? (
                   <section className="moveset-stat-panel">
@@ -17074,7 +17091,7 @@ function MovesetDatabaseView() {
                             <div className="moveset-stat-slider-top">
                               <strong>{CHAMPIONS_STAT_LABELS[statId]}</strong>
                               <span>{points} SP</span>
-                              <em>{finalValue}</em>
+                              <em>{finalValue}<MegaStatDelta value={finalValue} baseValue={megaBaseComputedStats?.[statId]} /></em>
                             </div>
                             <input
                               type="range"

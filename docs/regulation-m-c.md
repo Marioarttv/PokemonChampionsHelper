@@ -12,6 +12,8 @@ Run `npm run generate:data` for the website JSON and move-trait/training data. R
 
 ## Behavior
 
+In Movesets DB, Mega forms show bracketed stat differences beside all six base stats and calculated training stats. Increases are green, decreases are red, and unchanged stats have no badge. Calculated comparisons use the selected Mega's nature and training points for both forms. The Mega Stone mapping selects the exact original form, including Eternal Floette and female Meowstic.
+
 Mega Z forms appear alongside the existing Mega forms and resolve their exact stones. Corrected data feeds team building, movesets, move lookup, speed/stat calculations, and tactical analysis. The damage helpers recognize new contact/slicing/sound move flags, Aura Guard, Steely Spirit, Scrappy, the new presets' damage items, and terrain-sensitive moves. The approximate engine also handles terrain entry abilities, Grassy Glide priority, allied Steely Spirit, Seed Sower, Air Balloon consumption, and Normal Gem consumption.
 
 The tactical engine remains an approximation. This update does not claim complete cartridge mechanics or replace the separate authoritative simulator scaffold. Artwork uses the existing sprite fallback where a new form's sprite is unavailable.

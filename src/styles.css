@@ -2660,6 +2660,15 @@ img {
   gap: 0.5rem;
 }
 
+.mega-stat-delta {
+  font-size: 0.85em;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.mega-stat-delta.positive { color: #79e8a2; }
+.mega-stat-delta.negative { color: #ff939d; }
+
 .moveset-stat-slider-card {
   display: grid;
   gap: 0.3rem;
