@@ -4132,8 +4132,7 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
     ? getPokemonAttackTypeOptions(selectedDamageDefenderPokemon)
     : [];
   const damageAbilityOptions = useMemo(() => getDamageAbilityOptions(), []);
-  const damageAttackerItemOptions = useMemo(() => getDamageItemOptions("attacker"), []);
-  const damageDefenderItemOptions = useMemo(() => getDamageItemOptions("defender"), []);
+  const damageItemOptions = useMemo(() => getDamageItemOptions(), []);
 
   useEffect(() => {
     setDamageAttackerGrounded(isLikelyGrounded(selectedDamageAttackerPokemon));
@@ -4487,9 +4486,6 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
   const defenderSideItem = damageCalcMode === "attack" ? damageDefenderItem : damageAttackerItem;
   const setDefenderSideItem = damageCalcMode === "attack" ? setDamageDefenderItem : setDamageAttackerItem;
 
-  const attackerSideItemOptions = damageCalcMode === "attack" ? damageAttackerItemOptions : damageDefenderItemOptions;
-  const defenderSideItemOptions = damageCalcMode === "attack" ? damageDefenderItemOptions : damageAttackerItemOptions;
-
   const attackerSideGrounded = damageCalcMode === "attack" ? damageAttackerGrounded : damageDefenderGrounded;
   const setAttackerSideGrounded = damageCalcMode === "attack" ? setDamageAttackerGrounded : setDamageDefenderGrounded;
   const defenderSideGrounded = damageCalcMode === "attack" ? damageDefenderGrounded : damageAttackerGrounded;
@@ -4517,7 +4513,6 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
     const setAbilityValue = isAttacker ? setAttackerSideAbility : setDefenderSideAbility;
     const itemValue = isAttacker ? attackerSideItem : defenderSideItem;
     const setItemValue = isAttacker ? setAttackerSideItem : setDefenderSideItem;
-    const itemOptions = isAttacker ? attackerSideItemOptions : defenderSideItemOptions;
     const groundedValue = isAttacker ? attackerSideGrounded : defenderSideGrounded;
     const setGroundedValue = isAttacker ? setAttackerSideGrounded : setDefenderSideGrounded;
     const hpPercentValue = sourceSide === "ally" ? damageAttackerHpPercent : damageDefenderHpPercent;
@@ -4679,8 +4674,9 @@ const SingleDamageCalculatorPanel = memo(function SingleDamageCalculatorPanel({
                 value={itemValue}
                 onChange={(event) => setItemValue(event.target.value as DamageItemId)}
                 title={getDamageItemDescription(itemValue)}
+                aria-label={`${roleLabel} item`}
               >
-                {itemOptions.map((option) => (
+                {damageItemOptions.map((option) => (
                   <option key={`damage-${side}-item-${option.id}`} value={option.id}>
                     {option.label}
                   </option>
