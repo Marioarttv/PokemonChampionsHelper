@@ -60,6 +60,15 @@ describe("Pokemon Champions legal species", () => {
     }
   });
 
+  it("lists Watchog, which the game fields in ranked battles, and not Patrat", () => {
+    // https://www.serebii.net/pokemonchampions/pokemon.shtml (231 species,
+    // checked 22 November 2026) and the game's Season M-7 Battle Data both
+    // include Watchog (#505); neither lists Patrat (#504).
+    expect(POKEMON_CHAMPIONS_LEGAL_SPECIES_KEY_SET.has("watchog")).toBe(true);
+    expect(POKEMON_CHAMPIONS_LEGAL_SPECIES_KEY_SET.has("patrat")).toBe(false);
+    expect(POKEMON_CHAMPIONS_LEGAL_SPECIES_NAMES).toHaveLength(231);
+  });
+
   it("keeps the legal base-species list deduplicated", () => {
     const uniqueKeys = new Set(POKEMON_CHAMPIONS_LEGAL_SPECIES_NAMES.map(normalizePokemonNameKey));
 

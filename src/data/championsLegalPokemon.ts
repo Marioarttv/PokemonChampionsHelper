@@ -1,6 +1,6 @@
 export const POKEMON_CHAMPIONS_ACTIVE_REGULATION = "Regulation M-C";
 export const POKEMON_CHAMPIONS_ACTIVE_REGULATION_WINDOW = "September 9, 2026 - December 2, 2026";
-export const POKEMON_CHAMPIONS_LEGAL_LIST_SOURCED_AT = "September 9, 2026";
+export const POKEMON_CHAMPIONS_LEGAL_LIST_SOURCED_AT = "November 22, 2026";
 
 // Regulation M-A base roster plus the announced M-B and M-C additions.
 export const POKEMON_CHAMPIONS_LEGAL_SPECIES_NAMES = [
@@ -151,7 +151,6 @@ export const POKEMON_CHAMPIONS_LEGAL_SPECIES_NAMES = [
   "Palafin",
   "Pangoro",
   "Passimian",
-  "Patrat",
   "Pawmot",
   "Pelipper",
   "Perrserker",
@@ -230,6 +229,9 @@ export const POKEMON_CHAMPIONS_LEGAL_SPECIES_NAMES = [
   "Vileplume",
   "Vivillon",
   "Volcarona",
+  // Serebii's Available Pokémon list has Watchog (#505); "Patrat" was a
+  // transcription slip that left Watchog out of every generated pack.
+  "Watchog",
   "Weavile",
   "Whimsicott",
   "Wigglytuff",

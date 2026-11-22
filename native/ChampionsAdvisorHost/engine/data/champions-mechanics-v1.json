@@ -7651,28 +7651,28 @@
       "weightKg": 58.2
     },
     {
-      "num": 504,
-      "id": "patrat",
-      "name": "Patrat",
-      "baseSpecies": "Patrat",
+      "num": 505,
+      "id": "watchog",
+      "name": "Watchog",
+      "baseSpecies": "Watchog",
       "forme": null,
       "types": [
         "Normal"
       ],
       "baseStats": {
-        "hp": 45,
-        "atk": 55,
-        "def": 39,
-        "spa": 35,
-        "spd": 39,
-        "spe": 42
+        "hp": 60,
+        "atk": 85,
+        "def": 69,
+        "spa": 60,
+        "spd": 69,
+        "spe": 77
       },
       "abilities": [
         {
           "slot": "0",
-          "num": 50,
-          "id": "runaway",
-          "name": "Run Away"
+          "num": 35,
+          "id": "illuminate",
+          "name": "Illuminate"
         },
         {
           "slot": "1",
@@ -7688,7 +7688,7 @@
         }
       ],
       "heightM": null,
-      "weightKg": 11.6
+      "weightKg": 27
     },
     {
       "num": 510,
