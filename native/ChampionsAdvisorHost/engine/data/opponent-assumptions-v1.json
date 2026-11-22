@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-09-09T11:59:22.462Z",
+  "generated_at": "2026-11-22T01:06:21.470Z",
   "regulation": "Regulation M-C",
   "source": "Pokemon Champions meta presets with legal-learnset fallbacks",
   "reconciliation": "Observed snapshot fields override assumptions on every calculation.",
@@ -9348,43 +9348,6 @@
       ]
     },
     {
-      "species_id": "patrat",
-      "source": "meta_preset",
-      "current_item_id": "focussash",
-      "current_ability_id": "analytic",
-      "nature_id": "adamant",
-      "training_points": {
-        "hp": 32,
-        "attack": 32,
-        "defense": 0,
-        "special_attack": 0,
-        "special_defense": 0,
-        "speed": 2
-      },
-      "moves": [
-        {
-          "move_id": "superfang",
-          "current_pp": 12,
-          "max_pp": 12
-        },
-        {
-          "move_id": "hypnosis",
-          "current_pp": 20,
-          "max_pp": 20
-        },
-        {
-          "move_id": "crunch",
-          "current_pp": 16,
-          "max_pp": 16
-        },
-        {
-          "move_id": "detect",
-          "current_pp": 8,
-          "max_pp": 8
-        }
-      ]
-    },
-    {
       "species_id": "pawmot",
       "source": "curated_regulation_m_c",
       "current_item_id": "focussash",
@@ -15338,6 +15301,43 @@
           "move_id": "tailwind",
           "current_pp": 16,
           "max_pp": 16
+        }
+      ]
+    },
+    {
+      "species_id": "watchog",
+      "source": "learnset_fallback",
+      "current_item_id": "none",
+      "current_ability_id": "illuminate",
+      "nature_id": "adamant",
+      "training_points": {
+        "hp": 32,
+        "attack": 32,
+        "defense": 0,
+        "special_attack": 0,
+        "special_defense": 0,
+        "speed": 2
+      },
+      "moves": [
+        {
+          "move_id": "gigaimpact",
+          "current_pp": 8,
+          "max_pp": 8
+        },
+        {
+          "move_id": "hyperbeam",
+          "current_pp": 8,
+          "max_pp": 8
+        },
+        {
+          "move_id": "lastresort",
+          "current_pp": 8,
+          "max_pp": 8
+        },
+        {
+          "move_id": "protect",
+          "current_pp": 8,
+          "max_pp": 8
         }
       ]
     },
